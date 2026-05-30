@@ -16,6 +16,7 @@ export namespace se
         std::string name;
         std::function<void()> onAttach;
         std::function<void(TimeSpan)> onUpdate;
+        std::function<void()> onRender;  // submit GPU work; runs inside the frame
         std::function<void()> onUi;
         std::function<void()> onDetach;
     };
@@ -137,6 +138,13 @@ export namespace se
             const bool minimized = app.window.width == 0 || app.window.height == 0;
             if (!minimized && beginFrame(app.renderer))
             {
+                for (Layer& layer : app.layers)
+                {
+                    if (layer.onRender)
+                    {
+                        layer.onRender();
+                    }
+                }
                 uiBeginFrame(app.ui);
                 for (Layer& layer : app.layers)
                 {

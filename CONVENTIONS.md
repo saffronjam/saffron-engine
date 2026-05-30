@@ -25,14 +25,23 @@ are not our source.)
 - **Closures / `std::function`** for behavior injection and *runtime* interfaces.
 - `std::variant` for sum types; `std::expected<T, Error>` for fallible returns.
 - Generics via templates/concepts (Go has generics) — keep them simple and flat.
+- **RAII wrapper types for GPU / data-plane resources** (the rendering "meta-layer"):
+  a `struct` that owns a Vulkan handle and frees it in its destructor. These are
+  move-only (deleted copy, defaulted/explicit move) — the destructor + move
+  assignment are *resource management*, NOT the prohibited operator overloading.
+  Vulkan is used via **Vulkan-Hpp `vk::`** with `VULKAN_HPP_NO_EXCEPTIONS` (calls
+  return results, converted to `std::expected`); never `vk::raii` (it throws).
 
 ## Prohibited — Go does not have these
 - **Inheritance.** No `: public Base`, no class hierarchies.
 - **`virtual` / abstract base classes.** Model a *runtime* interface as a struct of
   function values (an explicit itable — which is exactly what a Go interface is),
   or as a `concept` for compile-time dispatch.
-- **Exceptions for control flow.** Return `std::expected<T, Error>` — `(value, err)`
-  like Go. Third-party boundaries that throw are wrapped at the seam.
+- **Exceptions — entirely.** Never `throw`, `try`, or `catch` in our code. Every
+  fallible operation returns `std::expected<T, std::string>` (or `std::expected<void, …>`),
+  and the result MUST be checked at the call site **immediately** — never propagate an
+  unchecked expected. Third-party libraries that can throw are driven through their
+  no-throw APIs/configs and converted to `std::expected` at the boundary.
 - **The ternary operator `?:`.** Use `if`/`else`.
 - **Operator overloading on our own types.** Use named free functions (`add(a, b)`).
   Third-party libs (e.g. GLM) may use operators internally; that's fine.

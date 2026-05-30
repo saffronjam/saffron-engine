@@ -43,20 +43,22 @@ optional**, the whole codebase follows it.
 | Compiler | Clang + libc++ | 21.1.8 | libc++ ships the `std` module; GCC 16 isn't in F43 |
 | Build | CMake + Ninja | 3.31 / 1.13 | FetchContent for vendored static deps |
 | Windowing/input | SDL3 | 3.4.8 | System package (C ABI) |
-| Vulkan | raw C API | headers 1.4.341, target **1.3** | dynamic rendering + synchronization2 |
+| Vulkan | **Vulkan-Hpp (`vk::`)** | headers 1.4.341, target **1.3** | dynamic rendering + synchronization2 |
 | Vulkan bootstrap | vk-bootstrap | 1.4.352 | instance/device/swapchain selection |
 | GPU allocation | VMA | 3.3.0 | one impl TU in `cmake/vma_impl.cpp` |
-| ECS | EnTT | 3.16.0 | (not wired in yet) |
+| ECS | EnTT | 3.16.0 | scene/entity + value components |
 | UI | Dear ImGui | 1.92.8-**docking** | `imgui_impl_sdl3` + `imgui_impl_vulkan`, dynamic rendering |
-| Shaders | Slang | 2026.10 | `slangc -target spirv` (prebuilt, not yet wired) |
+| Shaders | Slang | 2026.10 | `slangc -target spirv`, compiled in CMake |
 | Math | GLM | 1.0.1 | |
 | Serialization | nlohmann/json | 3.12.0 | (not wired in yet) |
 
-**We intentionally do NOT use Vulkan-Hpp / vk::raii** — its exception-throwing
-RAII conflicts with the Go-style "no exceptions, explicit cleanup" rule. The
-renderer uses the raw C API with explicit `destroy*` functions and
-`std::expected<T, std::string>` at boundaries. `volk` is also not used yet (we
-link the system loader directly); it can be added later as a dispatch optimization.
+**Vulkan via Vulkan-Hpp (`vk::`) with `VULKAN_HPP_NO_EXCEPTIONS`** — every call
+returns a result we convert to `std::expected` and check immediately. We do **not**
+use `vk::raii` (it throws). Instead, data-plane resources are owned by small **RAII
+meta-layer** wrapper types (e.g. `Pipeline`: move-only, destructor frees its `vk::`
+handles). The renderer owns these (e.g. `std::vector<Pipeline>`) and frees them
+before the device. `volk` is not used (we link the system loader); it can be added
+later as a dispatch optimization.
 
 ---
 
@@ -151,16 +153,20 @@ Modules form a DAG (real imports, not a single chain): `Signal→Core`,
 Working and verified (validation-clean) in the toolbox:
 - ✅ Build system + all vendored deps under Clang 21 + libc++ + `import std`.
 - ✅ SDL3 window + Go-style App/Layer lifecycle + signal/slot events.
-- ✅ Vulkan 1.3 device/swapchain (vk-bootstrap), VMA allocator, sync2 + dynamic
-  rendering, clears the screen and presents, swapchain recreation on resize.
-- ✅ ImGui docking integrated (SDL3 + Vulkan backends, dynamic rendering) — *being
-  built/verified at time of writing.*
+- ✅ Vulkan 1.3 via Vulkan-Hpp `vk::` (no-exceptions): device/swapchain (vk-bootstrap),
+  VMA allocator, sync2 + dynamic rendering, clears + presents, swapchain recreation,
+  per-image-fence sync.
+- ✅ RAII meta-layer (`Pipeline`), renderer-owned, freed before the device.
+- ✅ Slang shader compiled to SPIR-V in CMake → graphics pipeline → triangle drawn
+  via the `onRender` layer hook + the `submit(lambda)` seam.
+- ✅ ImGui docking (SDL3 + Vulkan backends, dynamic rendering), dockspace over the triangle.
+- ✅ entt `Scene`/`Entity` + value components + `forEach`.
 
 Not done yet (planned):
-- entt `Scene`/`Entity` + value components + JSON serialization.
-- `RenderGraph` / `RenderPass` typed-handle frame graph + `SceneRenderer` facade.
-- Slang shader compile step (CMake rule) + a triangle/mesh pipeline.
-- Editor panels (viewport image, entity inspector, hierarchy) wired via signals.
+- Scene JSON serialization (nlohmann); `RenderGraph` / `RenderPass` frame graph + `SceneRenderer` facade.
+- Editor panels: offscreen-rendered **Viewport** (ImGui_ImplVulkan_AddTexture — 1.92.8
+  takes no sampler), entity inspector, hierarchy — wired via signals. Needs an `Image`
+  RAII meta-layer wrapper.
 - `volk`, multi-viewport ImGui, hardware GPU in the toolbox, framebuffer capture.
 
 See the memory notes (`build-environment`, `saffron-rewrite-plan`,

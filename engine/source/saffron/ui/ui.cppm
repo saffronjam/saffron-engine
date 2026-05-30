@@ -1,12 +1,16 @@
 module;
 
-#include <vulkan/vulkan.h>
+#define VULKAN_HPP_NO_EXCEPTIONS
+#define VULKAN_HPP_NO_SMART_HANDLE
+#include <vulkan/vulkan.hpp>
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <backends/imgui_impl_sdl3.h>
 #include <backends/imgui_impl_vulkan.h>
 
+#include <array>
 #include <expected>
+#include <format>
 #include <string>
 
 export module Saffron.Ui;
@@ -19,7 +23,7 @@ export namespace se
 {
     struct Ui
     {
-        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        vk::DescriptorPool descriptorPool;
         bool initialized = false;
     };
 
@@ -37,20 +41,21 @@ namespace se
     {
         Ui ui;
 
-        VkDescriptorPoolSize poolSizes[] = {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-            { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
-            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+        std::array<vk::DescriptorPoolSize, 3> poolSizes{
+            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, 1000 },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eSampler, 1000 },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eSampledImage, 1000 },
         };
-        VkDescriptorPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        vk::DescriptorPoolCreateInfo poolInfo{};
+        poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
         poolInfo.maxSets = 1000;
-        poolInfo.poolSizeCount = static_cast<u32>(std::size(poolSizes));
-        poolInfo.pPoolSizes = poolSizes;
-        if (vkCreateDescriptorPool(renderer.device, &poolInfo, nullptr, &ui.descriptorPool) != VK_SUCCESS)
+        poolInfo.setPoolSizes(poolSizes);
+        vk::ResultValue<vk::DescriptorPool> pool = renderer.device.createDescriptorPool(poolInfo);
+        if (pool.result != vk::Result::eSuccess)
         {
-            return std::unexpected(std::string{ "failed to create ImGui descriptor pool" });
+            return std::unexpected(std::format("createDescriptorPool: {}", vk::to_string(pool.result)));
         }
+        ui.descriptorPool = pool.value;
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -63,9 +68,13 @@ namespace se
             return std::unexpected(std::string{ "ImGui_ImplSDL3_InitForVulkan failed" });
         }
 
+        // ImGui consumes the color format during Init (when it builds its pipeline),
+        // so a local is fine — the pointer is not read afterwards.
+        VkFormat colorFormat = static_cast<VkFormat>(renderer.swapchainFormat);
+
         ImGui_ImplVulkan_InitInfo init{};
         init.ApiVersion = VK_API_VERSION_1_3;
-        init.Instance = renderer.vkbInstance.instance;
+        init.Instance = renderer.instance;
         init.PhysicalDevice = renderer.physicalDevice;
         init.Device = renderer.device;
         init.QueueFamily = renderer.graphicsQueueFamily;
@@ -74,17 +83,15 @@ namespace se
         init.MinImageCount = 2;
         init.ImageCount = static_cast<u32>(renderer.swapchainImages.size());
         init.UseDynamicRendering = true;
-        // ImGui 1.92.8 moved the dynamic-rendering pipeline config into PipelineInfoMain.
         init.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         init.PipelineInfoMain.PipelineRenderingCreateInfo = VkPipelineRenderingCreateInfo{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
         init.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-        init.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &renderer.swapchainFormat;
+        init.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &colorFormat;
         if (!ImGui_ImplVulkan_Init(&init))
         {
             return std::unexpected(std::string{ "ImGui_ImplVulkan_Init failed" });
         }
 
-        // Feed SDL events to ImGui without the window module knowing about ImGui.
         window.eventSinks.push_back([](const SDL_Event& event) { ImGui_ImplSDL3_ProcessEvent(&event); });
 
         ui.initialized = true;
@@ -98,12 +105,12 @@ namespace se
         {
             return;
         }
-        vkDeviceWaitIdle(renderer.device);
+        static_cast<void>(renderer.device.waitIdle());
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
-        vkDestroyDescriptorPool(renderer.device, ui.descriptorPool, nullptr);
-        ui.descriptorPool = VK_NULL_HANDLE;
+        renderer.device.destroyDescriptorPool(ui.descriptorPool);
+        ui.descriptorPool = nullptr;
         ui.initialized = false;
     }
 
@@ -124,8 +131,9 @@ namespace se
 
     void uiRecordDrawData(Renderer& renderer)
     {
-        submit(renderer, [](VkCommandBuffer cmd) {
-            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+        submit(renderer, [](vk::CommandBuffer cmd)
+        {
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), static_cast<VkCommandBuffer>(cmd));
         });
     }
 }

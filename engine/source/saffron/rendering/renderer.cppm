@@ -1,9 +1,10 @@
 module;
 
-// This module wraps the heavy C/C++ graphics headers, so it uses classic
-// includes (no `import std`) to stay clear of the import-std/third-party-header
-// friction. The rest of the engine imports it normally.
-#include <vulkan/vulkan.h>
+// Vulkan-Hpp in no-exceptions mode: every call returns a result we convert to
+// std::expected. We never use vk::raii (it throws). Classic includes (no import std).
+#define VULKAN_HPP_NO_EXCEPTIONS
+#define VULKAN_HPP_NO_SMART_HANDLE
+#include <vulkan/vulkan.hpp>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <VkBootstrap.h>
@@ -13,8 +14,11 @@ module;
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 export module Saffron.Rendering;
@@ -24,19 +28,78 @@ import Saffron.Window;
 
 export namespace se
 {
-    // A unit of GPU work recorded into the active command buffer. This is the
-    // deferred-submission seam carried over from the old engine: the public API
-    // records intent as a closure; the backend supplies the command buffer.
-    using RenderFn = std::function<void(VkCommandBuffer)>;
+    // A unit of GPU work recorded into the active command buffer — the deferred
+    // submission seam. The backend supplies the command buffer.
+    using RenderFn = std::function<void(vk::CommandBuffer)>;
 
     inline constexpr u32 MaxFramesInFlight = 2;
 
     struct FrameData
     {
-        VkCommandPool commandPool = VK_NULL_HANDLE;
-        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-        VkSemaphore imageAvailable = VK_NULL_HANDLE;
-        VkFence inFlight = VK_NULL_HANDLE;
+        vk::CommandPool commandPool;
+        vk::CommandBuffer commandBuffer;
+        vk::Semaphore imageAvailable;
+        vk::Fence inFlight;
+    };
+
+    // --- RAII meta-layer ------------------------------------------------------
+    // A graphics pipeline that owns its vk handles and frees them on destruction.
+    // Move-only: the destructor + move-assignment are resource management. Owned
+    // by the Renderer (never crosses to client code), destroyed before the device.
+    struct Pipeline
+    {
+        vk::Device device;  // borrowed
+        vk::Pipeline pipeline;
+        vk::PipelineLayout layout;
+
+        Pipeline() = default;
+        Pipeline(const Pipeline&) = delete;
+        Pipeline& operator=(const Pipeline&) = delete;
+
+        Pipeline(Pipeline&& other) noexcept
+            : device(other.device), pipeline(other.pipeline), layout(other.layout)
+        {
+            other.device = nullptr;
+            other.pipeline = nullptr;
+            other.layout = nullptr;
+        }
+
+        Pipeline& operator=(Pipeline&& other) noexcept
+        {
+            if (this != &other)
+            {
+                reset();
+                device = other.device;
+                pipeline = other.pipeline;
+                layout = other.layout;
+                other.device = nullptr;
+                other.pipeline = nullptr;
+                other.layout = nullptr;
+            }
+            return *this;
+        }
+
+        ~Pipeline()
+        {
+            reset();
+        }
+
+        void reset()
+        {
+            if (device)
+            {
+                if (pipeline)
+                {
+                    device.destroyPipeline(pipeline);
+                }
+                if (layout)
+                {
+                    device.destroyPipelineLayout(layout);
+                }
+            }
+            pipeline = nullptr;
+            layout = nullptr;
+        }
     };
 
     struct Renderer
@@ -45,61 +108,85 @@ export namespace se
         vkb::Instance vkbInstance;
         vkb::Device vkbDevice;
 
-        VkSurfaceKHR surface = VK_NULL_HANDLE;
-        VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-        VkDevice device = VK_NULL_HANDLE;
-        VkQueue graphicsQueue = VK_NULL_HANDLE;
+        vk::Instance instance;
+        vk::SurfaceKHR surface;
+        vk::PhysicalDevice physicalDevice;
+        vk::Device device;
+        vk::Queue graphicsQueue;
         u32 graphicsQueueFamily = 0;
         VmaAllocator allocator = nullptr;
 
-        VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-        VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
-        VkExtent2D swapchainExtent{};
-        std::vector<VkImage> swapchainImages;
-        std::vector<VkImageView> swapchainImageViews;
-        std::vector<VkSemaphore> renderFinished;  // one per swapchain image
-        std::vector<VkFence> imagesInFlight;       // borrowed per-frame fence per image (no ownership)
+        vk::SwapchainKHR swapchain;
+        vk::Format swapchainFormat = vk::Format::eUndefined;
+        vk::Extent2D swapchainExtent;
+        std::vector<vk::Image> swapchainImages;
+        std::vector<vk::ImageView> swapchainImageViews;
+        std::vector<vk::Semaphore> renderFinished;  // one per swapchain image
+        std::vector<vk::Fence> imagesInFlight;       // borrowed per-frame fence per image
 
         std::array<FrameData, MaxFramesInFlight> frames{};
         u32 frameIndex = 0;
         u32 imageIndex = 0;
 
         std::array<f32, 4> clearColor{ 0.05f, 0.06f, 0.08f, 1.0f };
-        std::vector<RenderFn> submissions;  // recorded this frame
+        std::vector<RenderFn> submissions;
+        std::vector<Pipeline> pipelines;  // owned; destroyed before the device
 
-        Window* window = nullptr;  // borrowed, not owned
+        Window* window = nullptr;  // borrowed
     };
 
     std::expected<Renderer, std::string> newRenderer(Window& window);
     void destroyRenderer(Renderer& renderer);
 
-    // Frame lifecycle. beginFrame returns false when the frame was skipped
-    // (e.g. the swapchain was just recreated); callers should not submit then.
     bool beginFrame(Renderer& renderer);
     void submit(Renderer& renderer, RenderFn fn);
     void endFrame(Renderer& renderer);
+
+    std::string assetPath(std::string_view relative);
+
+    // Creates a pipeline owned by the renderer; returns its handle (index).
+    std::expected<u32, std::string> newTrianglePipeline(Renderer& renderer, std::string_view shaderName);
+    void drawTriangle(Renderer& renderer, u32 pipelineHandle);
 }
 
 // ---------------------------------------------------------------------------
-// Implementation (kept in this same unit to avoid std-module mixing across
-// translation units of the module).
+// Implementation
 // ---------------------------------------------------------------------------
 namespace se
 {
     namespace
     {
-        // Records a synchronization2 image layout transition.
-        void transitionImage(
-            VkCommandBuffer cmd,
-            VkImage image,
-            VkImageLayout oldLayout,
-            VkImageLayout newLayout,
-            VkPipelineStageFlags2 srcStage,
-            VkAccessFlags2 srcAccess,
-            VkPipelineStageFlags2 dstStage,
-            VkAccessFlags2 dstAccess)
+        // Converts a Vulkan-Hpp ResultValue to std::expected, checked at the call site.
+        template <typename T>
+        std::expected<T, std::string> checked(vk::ResultValue<T> rv, std::string_view what)
         {
-            VkImageMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            if (rv.result != vk::Result::eSuccess)
+            {
+                return std::unexpected(std::format("{}: {}", what, vk::to_string(rv.result)));
+            }
+            return std::move(rv.value);
+        }
+
+        std::expected<void, std::string> checked(vk::Result result, std::string_view what)
+        {
+            if (result != vk::Result::eSuccess)
+            {
+                return std::unexpected(std::format("{}: {}", what, vk::to_string(result)));
+            }
+            return {};
+        }
+
+        void transitionImage(
+            vk::CommandBuffer cmd,
+            vk::Image image,
+            vk::ImageLayout oldLayout,
+            vk::ImageLayout newLayout,
+            vk::PipelineStageFlags2 srcStage,
+            vk::AccessFlags2 srcAccess,
+            vk::PipelineStageFlags2 dstStage,
+            vk::AccessFlags2 dstAccess)
+        {
+            vk::ImageMemoryBarrier2 barrier{};
             barrier.srcStageMask = srcStage;
             barrier.srcAccessMask = srcAccess;
             barrier.dstStageMask = dstStage;
@@ -107,35 +194,31 @@ namespace se
             barrier.oldLayout = oldLayout;
             barrier.newLayout = newLayout;
             barrier.image = image;
-            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            barrier.subresourceRange.levelCount = 1;
-            barrier.subresourceRange.layerCount = 1;
+            barrier.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
 
-            VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-            dependency.imageMemoryBarrierCount = 1;
-            dependency.pImageMemoryBarriers = &barrier;
-
-            vkCmdPipelineBarrier2(cmd, &dependency);
+            vk::DependencyInfo dependency{};
+            dependency.setImageMemoryBarriers(barrier);
+            cmd.pipelineBarrier2(dependency);
         }
 
         void destroySwapchainResources(Renderer& renderer)
         {
-            for (VkImageView view : renderer.swapchainImageViews)
+            for (vk::ImageView view : renderer.swapchainImageViews)
             {
-                vkDestroyImageView(renderer.device, view, nullptr);
+                renderer.device.destroyImageView(view);
             }
             renderer.swapchainImageViews.clear();
 
-            for (VkSemaphore semaphore : renderer.renderFinished)
+            for (vk::Semaphore semaphore : renderer.renderFinished)
             {
-                vkDestroySemaphore(renderer.device, semaphore, nullptr);
+                renderer.device.destroySemaphore(semaphore);
             }
             renderer.renderFinished.clear();
 
-            if (renderer.swapchain != VK_NULL_HANDLE)
+            if (renderer.swapchain)
             {
-                vkDestroySwapchainKHR(renderer.device, renderer.swapchain, nullptr);
-                renderer.swapchain = VK_NULL_HANDLE;
+                renderer.device.destroySwapchainKHR(renderer.swapchain);
+                renderer.swapchain = nullptr;
             }
         }
 
@@ -149,9 +232,9 @@ namespace se
                 .set_desired_extent(width, height)
                 .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 
-            if (renderer.swapchain != VK_NULL_HANDLE)
+            if (renderer.swapchain)
             {
-                builder.set_old_swapchain(renderer.swapchain);
+                builder.set_old_swapchain(static_cast<VkSwapchainKHR>(renderer.swapchain));
             }
 
             auto result = builder.build();
@@ -160,24 +243,47 @@ namespace se
                 return std::unexpected(std::format("swapchain build failed: {}", result.error().message()));
             }
 
-            // Old swapchain handle is consumed by the builder; drop our resources.
             destroySwapchainResources(renderer);
 
             vkb::Swapchain swapchain = result.value();
-            renderer.swapchain = swapchain.swapchain;
-            renderer.swapchainFormat = swapchain.image_format;
-            renderer.swapchainExtent = swapchain.extent;
-            renderer.swapchainImages = swapchain.get_images().value();
-            renderer.swapchainImageViews = swapchain.get_image_views().value();
+            renderer.swapchain = vk::SwapchainKHR{ swapchain.swapchain };
+            renderer.swapchainFormat = vk::Format{ static_cast<vk::Format>(swapchain.image_format) };
+            renderer.swapchainExtent = vk::Extent2D{ swapchain.extent.width, swapchain.extent.height };
 
-            renderer.renderFinished.resize(renderer.swapchainImages.size());
-            VkSemaphoreCreateInfo semaphoreInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-            for (VkSemaphore& semaphore : renderer.renderFinished)
+            renderer.swapchainImages.clear();
+            for (VkImage image : swapchain.get_images().value())
             {
-                vkCreateSemaphore(renderer.device, &semaphoreInfo, nullptr, &semaphore);
+                renderer.swapchainImages.push_back(vk::Image{ image });
             }
-            renderer.imagesInFlight.assign(renderer.swapchainImages.size(), VK_NULL_HANDLE);
 
+            renderer.swapchainImageViews.clear();
+            for (vk::Image image : renderer.swapchainImages)
+            {
+                vk::ImageViewCreateInfo viewInfo{};
+                viewInfo.image = image;
+                viewInfo.viewType = vk::ImageViewType::e2D;
+                viewInfo.format = renderer.swapchainFormat;
+                viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+                auto view = checked(renderer.device.createImageView(viewInfo), "createImageView");
+                if (!view)
+                {
+                    return std::unexpected(view.error());
+                }
+                renderer.swapchainImageViews.push_back(*view);
+            }
+
+            renderer.renderFinished.clear();
+            for (std::size_t i = 0; i < renderer.swapchainImages.size(); i = i + 1)
+            {
+                auto semaphore = checked(renderer.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
+                if (!semaphore)
+                {
+                    return std::unexpected(semaphore.error());
+                }
+                renderer.renderFinished.push_back(*semaphore);
+            }
+
+            renderer.imagesInFlight.assign(renderer.swapchainImages.size(), vk::Fence{});
             return {};
         }
 
@@ -189,12 +295,34 @@ namespace se
             {
                 return;  // minimized — keep the old swapchain, retry once restored
             }
-            vkDeviceWaitIdle(renderer.device);
+            static_cast<void>(renderer.device.waitIdle());
             auto built = buildSwapchain(renderer, width, height);
             if (!built)
             {
                 logError(built.error());
             }
+        }
+
+        std::expected<vk::ShaderModule, std::string> loadShaderModule(vk::Device device, const std::string& path)
+        {
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (!file)
+            {
+                return std::unexpected(std::format("cannot open shader '{}'", path));
+            }
+            std::streamsize size = file.tellg();
+            if (size <= 0 || (size % 4) != 0)
+            {
+                return std::unexpected(std::format("invalid spir-v size for '{}'", path));
+            }
+            std::vector<u32> code(static_cast<std::size_t>(size) / 4);
+            file.seekg(0);
+            file.read(reinterpret_cast<char*>(code.data()), size);
+
+            vk::ShaderModuleCreateInfo info{};
+            info.codeSize = static_cast<std::size_t>(size);
+            info.pCode = code.data();
+            return checked(device.createShaderModule(info), std::format("createShaderModule '{}'", path));
         }
     }
 
@@ -203,7 +331,6 @@ namespace se
         Renderer renderer;
         renderer.window = &window;
 
-        // Instance extensions SDL needs to create a Vulkan surface for this platform.
         u32 sdlExtensionCount = 0;
         const char* const* sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
 
@@ -224,11 +351,17 @@ namespace se
             return std::unexpected(std::format("instance creation failed: {}", instanceResult.error().message()));
         }
         renderer.vkbInstance = instanceResult.value();
+        renderer.instance = vk::Instance{ renderer.vkbInstance.instance };
 
-        if (!SDL_Vulkan_CreateSurface(window.handle, renderer.vkbInstance.instance, nullptr, &renderer.surface))
+        VkSurfaceKHR rawSurface = VK_NULL_HANDLE;
+        if (!SDL_Vulkan_CreateSurface(window.handle, renderer.vkbInstance.instance, nullptr, &rawSurface))
         {
             return std::unexpected(std::format("SDL_Vulkan_CreateSurface failed: {}", SDL_GetError()));
         }
+        renderer.surface = vk::SurfaceKHR{ rawSurface };
+
+        VkPhysicalDeviceVulkan11Features features11{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+        features11.shaderDrawParameters = VK_TRUE;  // Slang SV_VertexID emits the DrawParameters capability
 
         VkPhysicalDeviceVulkan13Features features13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         features13.dynamicRendering = VK_TRUE;
@@ -237,8 +370,9 @@ namespace se
         vkb::PhysicalDeviceSelector selector{ renderer.vkbInstance };
         auto physicalResult = selector
                                   .set_minimum_version(1, 3)
+                                  .set_required_features_11(features11)
                                   .set_required_features_13(features13)
-                                  .set_surface(renderer.surface)
+                                  .set_surface(rawSurface)
                                   .select();
         if (!physicalResult)
         {
@@ -252,21 +386,21 @@ namespace se
             return std::unexpected(std::format("device creation failed: {}", deviceResult.error().message()));
         }
         renderer.vkbDevice = deviceResult.value();
-        renderer.physicalDevice = physicalResult.value().physical_device;
-        renderer.device = renderer.vkbDevice.device;
+        renderer.physicalDevice = vk::PhysicalDevice{ physicalResult.value().physical_device };
+        renderer.device = vk::Device{ renderer.vkbDevice.device };
 
         auto queueResult = renderer.vkbDevice.get_queue(vkb::QueueType::graphics);
         if (!queueResult)
         {
             return std::unexpected(std::format("no graphics queue: {}", queueResult.error().message()));
         }
-        renderer.graphicsQueue = queueResult.value();
+        renderer.graphicsQueue = vk::Queue{ queueResult.value() };
         renderer.graphicsQueueFamily = renderer.vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
         VmaAllocatorCreateInfo allocatorInfo{};
         allocatorInfo.instance = renderer.vkbInstance.instance;
-        allocatorInfo.physicalDevice = renderer.physicalDevice;
-        allocatorInfo.device = renderer.device;
+        allocatorInfo.physicalDevice = physicalResult.value().physical_device;
+        allocatorInfo.device = renderer.vkbDevice.device;
         allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
         if (vmaCreateAllocator(&allocatorInfo, &renderer.allocator) != VK_SUCCESS)
         {
@@ -279,26 +413,44 @@ namespace se
             return std::unexpected(swapchainBuilt.error());
         }
 
-        // Per-frame command buffers + sync.
         for (FrameData& frame : renderer.frames)
         {
-            VkCommandPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-            poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            vk::CommandPoolCreateInfo poolInfo{};
+            poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
             poolInfo.queueFamilyIndex = renderer.graphicsQueueFamily;
-            vkCreateCommandPool(renderer.device, &poolInfo, nullptr, &frame.commandPool);
+            auto pool = checked(renderer.device.createCommandPool(poolInfo), "createCommandPool");
+            if (!pool)
+            {
+                return std::unexpected(pool.error());
+            }
+            frame.commandPool = *pool;
 
-            VkCommandBufferAllocateInfo allocInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+            vk::CommandBufferAllocateInfo allocInfo{};
             allocInfo.commandPool = frame.commandPool;
-            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocInfo.level = vk::CommandBufferLevel::ePrimary;
             allocInfo.commandBufferCount = 1;
-            vkAllocateCommandBuffers(renderer.device, &allocInfo, &frame.commandBuffer);
+            auto buffers = checked(renderer.device.allocateCommandBuffers(allocInfo), "allocateCommandBuffers");
+            if (!buffers)
+            {
+                return std::unexpected(buffers.error());
+            }
+            frame.commandBuffer = (*buffers)[0];
 
-            VkSemaphoreCreateInfo semaphoreInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-            vkCreateSemaphore(renderer.device, &semaphoreInfo, nullptr, &frame.imageAvailable);
+            auto imageAvailable = checked(renderer.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
+            if (!imageAvailable)
+            {
+                return std::unexpected(imageAvailable.error());
+            }
+            frame.imageAvailable = *imageAvailable;
 
-            VkFenceCreateInfo fenceInfo{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-            fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-            vkCreateFence(renderer.device, &fenceInfo, nullptr, &frame.inFlight);
+            vk::FenceCreateInfo fenceInfo{};
+            fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+            auto fence = checked(renderer.device.createFence(fenceInfo), "createFence");
+            if (!fence)
+            {
+                return std::unexpected(fence.error());
+            }
+            frame.inFlight = *fence;
         }
 
         logInfo(std::format("vulkan ready — gpu '{}', {} swapchain images",
@@ -309,16 +461,18 @@ namespace se
 
     void destroyRenderer(Renderer& renderer)
     {
-        if (renderer.device != VK_NULL_HANDLE)
+        if (renderer.device)
         {
-            vkDeviceWaitIdle(renderer.device);
+            static_cast<void>(renderer.device.waitIdle());
         }
+
+        renderer.pipelines.clear();  // RAII frees them while the device is still alive
 
         for (FrameData& frame : renderer.frames)
         {
-            vkDestroyFence(renderer.device, frame.inFlight, nullptr);
-            vkDestroySemaphore(renderer.device, frame.imageAvailable, nullptr);
-            vkDestroyCommandPool(renderer.device, frame.commandPool, nullptr);
+            renderer.device.destroyFence(frame.inFlight);
+            renderer.device.destroySemaphore(frame.imageAvailable);
+            renderer.device.destroyCommandPool(frame.commandPool);
         }
 
         destroySwapchainResources(renderer);
@@ -328,9 +482,9 @@ namespace se
             vmaDestroyAllocator(renderer.allocator);
             renderer.allocator = nullptr;
         }
-        if (renderer.surface != VK_NULL_HANDLE)
+        if (renderer.surface)
         {
-            vkb::destroy_surface(renderer.vkbInstance, renderer.surface);
+            vkb::destroy_surface(renderer.vkbInstance, static_cast<VkSurfaceKHR>(renderer.surface));
         }
         vkb::destroy_device(renderer.vkbDevice);
         vkb::destroy_instance(renderer.vkbInstance);
@@ -340,69 +494,64 @@ namespace se
     {
         FrameData& frame = renderer.frames[renderer.frameIndex];
 
-        vkWaitForFences(renderer.device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+        static_cast<void>(renderer.device.waitForFences(frame.inFlight, VK_TRUE, UINT64_MAX));
 
-        VkResult acquire = vkAcquireNextImageKHR(
-            renderer.device, renderer.swapchain, UINT64_MAX,
-            frame.imageAvailable, VK_NULL_HANDLE, &renderer.imageIndex);
-        if (acquire == VK_ERROR_OUT_OF_DATE_KHR)
+        vk::ResultValue<u32> acquire = renderer.device.acquireNextImageKHR(
+            renderer.swapchain, UINT64_MAX, frame.imageAvailable, nullptr);
+        if (acquire.result == vk::Result::eErrorOutOfDateKHR)
         {
             recreateSwapchain(renderer);
             return false;
         }
-        if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR)
+        if (acquire.result != vk::Result::eSuccess && acquire.result != vk::Result::eSuboptimalKHR)
         {
-            logError(std::format("vkAcquireNextImageKHR failed ({})", static_cast<i32>(acquire)));
+            logError(std::format("vkAcquireNextImageKHR failed: {}", vk::to_string(acquire.result)));
             return false;
         }
-        // VK_SUBOPTIMAL_KHR: render this frame anyway; present will trigger the recreate.
+        renderer.imageIndex = acquire.value;
 
         // Ensure the previous frame that used THIS image has finished before we
-        // reuse the image's renderFinished semaphore (per-image present semaphore
-        // throttled by a per-image fence, not just the per-frame fence).
-        if (renderer.imagesInFlight[renderer.imageIndex] != VK_NULL_HANDLE)
+        // reuse the image's renderFinished semaphore.
+        if (renderer.imagesInFlight[renderer.imageIndex])
         {
-            vkWaitForFences(renderer.device, 1, &renderer.imagesInFlight[renderer.imageIndex], VK_TRUE, UINT64_MAX);
+            static_cast<void>(renderer.device.waitForFences(renderer.imagesInFlight[renderer.imageIndex], VK_TRUE, UINT64_MAX));
         }
         renderer.imagesInFlight[renderer.imageIndex] = frame.inFlight;
 
-        vkResetFences(renderer.device, 1, &frame.inFlight);
-        vkResetCommandBuffer(frame.commandBuffer, 0);
+        static_cast<void>(renderer.device.resetFences(frame.inFlight));
+        static_cast<void>(frame.commandBuffer.reset());
         renderer.submissions.clear();
 
-        VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);
+        vk::CommandBufferBeginInfo beginInfo{};
+        beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        static_cast<void>(frame.commandBuffer.begin(beginInfo));
 
         transitionImage(
             frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex],
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+            vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
 
-        VkRenderingAttachmentInfo colorAttachment{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        vk::RenderingAttachmentInfo colorAttachment{};
         colorAttachment.imageView = renderer.swapchainImageViews[renderer.imageIndex];
-        colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        colorAttachment.clearValue.color = VkClearColorValue{
-            { renderer.clearColor[0], renderer.clearColor[1], renderer.clearColor[2], renderer.clearColor[3] }
-        };
+        colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        colorAttachment.clearValue = vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } };
 
-        VkRenderingInfo renderingInfo{ VK_STRUCTURE_TYPE_RENDERING_INFO };
-        renderingInfo.renderArea.extent = renderer.swapchainExtent;
+        vk::RenderingInfo renderingInfo{};
+        renderingInfo.renderArea = vk::Rect2D{ vk::Offset2D{ 0, 0 }, renderer.swapchainExtent };
         renderingInfo.layerCount = 1;
-        renderingInfo.colorAttachmentCount = 1;
-        renderingInfo.pColorAttachments = &colorAttachment;
-        vkCmdBeginRendering(frame.commandBuffer, &renderingInfo);
+        renderingInfo.setColorAttachments(colorAttachment);
+        frame.commandBuffer.beginRendering(renderingInfo);
 
-        VkViewport viewport{ 0.0f, 0.0f,
-                             static_cast<f32>(renderer.swapchainExtent.width),
-                             static_cast<f32>(renderer.swapchainExtent.height),
-                             0.0f, 1.0f };
-        VkRect2D scissor{ { 0, 0 }, renderer.swapchainExtent };
-        vkCmdSetViewport(frame.commandBuffer, 0, 1, &viewport);
-        vkCmdSetScissor(frame.commandBuffer, 0, 1, &scissor);
+        vk::Viewport viewport{ 0.0f, 0.0f,
+                               static_cast<f32>(renderer.swapchainExtent.width),
+                               static_cast<f32>(renderer.swapchainExtent.height),
+                               0.0f, 1.0f };
+        vk::Rect2D scissor{ vk::Offset2D{ 0, 0 }, renderer.swapchainExtent };
+        frame.commandBuffer.setViewport(0, viewport);
+        frame.commandBuffer.setScissor(0, scissor);
 
         return true;
     }
@@ -421,50 +570,159 @@ namespace se
             fn(frame.commandBuffer);
         }
 
-        vkCmdEndRendering(frame.commandBuffer);
+        frame.commandBuffer.endRendering();
 
         transitionImage(
             frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex],
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eBottomOfPipe, vk::AccessFlagBits2::eNone);
 
-        vkEndCommandBuffer(frame.commandBuffer);
+        static_cast<void>(frame.commandBuffer.end());
 
-        VkSemaphore signalSemaphore = renderer.renderFinished[renderer.imageIndex];
+        vk::Semaphore signalSemaphore = renderer.renderFinished[renderer.imageIndex];
 
-        VkSemaphoreSubmitInfo waitInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
+        vk::SemaphoreSubmitInfo waitInfo{};
         waitInfo.semaphore = frame.imageAvailable;
-        waitInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        waitInfo.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
 
-        VkSemaphoreSubmitInfo signalInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
+        vk::SemaphoreSubmitInfo signalInfo{};
         signalInfo.semaphore = signalSemaphore;
-        signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        signalInfo.stageMask = vk::PipelineStageFlagBits2::eAllCommands;
 
-        VkCommandBufferSubmitInfo cmdInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+        vk::CommandBufferSubmitInfo cmdInfo{};
         cmdInfo.commandBuffer = frame.commandBuffer;
 
-        VkSubmitInfo2 submitInfo{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
-        submitInfo.waitSemaphoreInfoCount = 1;
-        submitInfo.pWaitSemaphoreInfos = &waitInfo;
-        submitInfo.commandBufferInfoCount = 1;
-        submitInfo.pCommandBufferInfos = &cmdInfo;
-        submitInfo.signalSemaphoreInfoCount = 1;
-        submitInfo.pSignalSemaphoreInfos = &signalInfo;
-        vkQueueSubmit2(renderer.graphicsQueue, 1, &submitInfo, frame.inFlight);
+        vk::SubmitInfo2 submitInfo{};
+        submitInfo.setWaitSemaphoreInfos(waitInfo);
+        submitInfo.setCommandBufferInfos(cmdInfo);
+        submitInfo.setSignalSemaphoreInfos(signalInfo);
+        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, frame.inFlight));
 
-        VkPresentInfoKHR presentInfo{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &signalSemaphore;
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = &renderer.swapchain;
-        presentInfo.pImageIndices = &renderer.imageIndex;
-        VkResult present = vkQueuePresentKHR(renderer.graphicsQueue, &presentInfo);
-        if (present == VK_ERROR_OUT_OF_DATE_KHR || present == VK_SUBOPTIMAL_KHR)
+        vk::PresentInfoKHR presentInfo{};
+        presentInfo.setWaitSemaphores(signalSemaphore);
+        presentInfo.setSwapchains(renderer.swapchain);
+        presentInfo.setImageIndices(renderer.imageIndex);
+        vk::Result present = renderer.graphicsQueue.presentKHR(presentInfo);
+        if (present == vk::Result::eErrorOutOfDateKHR || present == vk::Result::eSuboptimalKHR)
         {
             recreateSwapchain(renderer);
         }
 
         renderer.frameIndex = (renderer.frameIndex + 1) % MaxFramesInFlight;
+    }
+
+    std::string assetPath(std::string_view relative)
+    {
+        const char* base = SDL_GetBasePath();  // SDL3: owned by SDL, do not free
+        std::string result;
+        if (base != nullptr)
+        {
+            result = base;
+        }
+        result.append(relative);
+        return result;
+    }
+
+    std::expected<u32, std::string> newTrianglePipeline(Renderer& renderer, std::string_view shaderName)
+    {
+        std::string path = assetPath(shaderName);
+        auto moduleResult = loadShaderModule(renderer.device, path);
+        if (!moduleResult)
+        {
+            return std::unexpected(moduleResult.error());
+        }
+        vk::ShaderModule shaderModule = *moduleResult;
+
+        std::array<vk::PipelineShaderStageCreateInfo, 2> stages{};
+        stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+        stages[0].module = shaderModule;
+        stages[0].pName = "vertexMain";
+        stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+        stages[1].module = shaderModule;
+        stages[1].pName = "fragmentMain";
+
+        vk::PipelineVertexInputStateCreateInfo vertexInput{};
+
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+
+        vk::PipelineViewportStateCreateInfo viewportState{};
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+
+        vk::PipelineRasterizationStateCreateInfo raster{};
+        raster.polygonMode = vk::PolygonMode::eFill;
+        raster.cullMode = vk::CullModeFlagBits::eNone;
+        raster.frontFace = vk::FrontFace::eCounterClockwise;
+        raster.lineWidth = 1.0f;
+
+        vk::PipelineMultisampleStateCreateInfo multisample{};
+        multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+
+        vk::PipelineColorBlendAttachmentState blendAttachment{};
+        blendAttachment.blendEnable = VK_FALSE;
+        blendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                         vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+
+        vk::PipelineColorBlendStateCreateInfo colorBlend{};
+        colorBlend.setAttachments(blendAttachment);
+
+        std::array<vk::DynamicState, 2> dynamicStates{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamic{};
+        dynamic.setDynamicStates(dynamicStates);
+
+        vk::PipelineRenderingCreateInfo renderingInfo{};
+        renderingInfo.setColorAttachmentFormats(renderer.swapchainFormat);
+
+        auto layoutResult = checked(renderer.device.createPipelineLayout(vk::PipelineLayoutCreateInfo{}), "createPipelineLayout");
+        if (!layoutResult)
+        {
+            renderer.device.destroyShaderModule(shaderModule);
+            return std::unexpected(layoutResult.error());
+        }
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.pNext = &renderingInfo;
+        pipelineInfo.setStages(stages);
+        pipelineInfo.pVertexInputState = &vertexInput;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &raster;
+        pipelineInfo.pMultisampleState = &multisample;
+        pipelineInfo.pColorBlendState = &colorBlend;
+        pipelineInfo.pDynamicState = &dynamic;
+        pipelineInfo.layout = *layoutResult;
+
+        vk::ResultValue<vk::Pipeline> created = renderer.device.createGraphicsPipeline(nullptr, pipelineInfo);
+        renderer.device.destroyShaderModule(shaderModule);  // baked into the pipeline now
+        if (created.result != vk::Result::eSuccess)
+        {
+            renderer.device.destroyPipelineLayout(*layoutResult);
+            return std::unexpected(std::format("createGraphicsPipeline: {}", vk::to_string(created.result)));
+        }
+
+        Pipeline pipeline;
+        pipeline.device = renderer.device;
+        pipeline.pipeline = created.value;
+        pipeline.layout = *layoutResult;
+
+        u32 handle = static_cast<u32>(renderer.pipelines.size());
+        renderer.pipelines.push_back(std::move(pipeline));
+        return handle;
+    }
+
+    void drawTriangle(Renderer& renderer, u32 pipelineHandle)
+    {
+        if (pipelineHandle >= renderer.pipelines.size())
+        {
+            return;
+        }
+        vk::Pipeline handle = renderer.pipelines[pipelineHandle].pipeline;
+        submit(renderer, [handle](vk::CommandBuffer cmd)
+        {
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+            cmd.draw(3, 1, 0, 0);
+        });
     }
 }
