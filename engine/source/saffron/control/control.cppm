@@ -188,6 +188,15 @@ export namespace se
                 return json{ { "commands", std::move(commands) } };
             });
 
+        registerCommand(reg, "render-stats", "last frame's scene draw counters",
+            [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
+            {
+                const RenderStats stats = renderStats(ctx.renderer);
+                return json{ { "drawCalls", stats.drawCalls },
+                             { "batches", stats.batches },
+                             { "instances", stats.instances } };
+            });
+
         registerCommand(reg, "list-entities", "list all entities",
             [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
             {

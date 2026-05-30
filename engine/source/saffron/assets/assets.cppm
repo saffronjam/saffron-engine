@@ -375,6 +375,16 @@ export namespace se
         });
         setDirectionalLight(renderer, lightDir, lightColor, lightIntensity, lightAmbient);
 
+        // Bucket entities by (mesh, albedo texture) so each bucket draws as one
+        // instanced call. Linear lookup — bucket count is the number of distinct
+        // mesh/material pairs, which stays small.
+        struct Bucket
+        {
+            Ref<GpuMesh> mesh;
+            Ref<GpuTexture> texture;
+            std::vector<InstanceData> items;
+        };
+        std::vector<Bucket> buckets;
         forEach<TransformComponent, MeshComponent>(scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
             {
@@ -395,13 +405,42 @@ export namespace se
                     }
                 }
                 const glm::mat4 model = transformMatrix(transform);
-                DrawParams params;
-                params.mvp = viewProjection * model;
-                params.normal0 = glm::vec4(glm::vec3(model[0]), 0.0f);
-                params.normal1 = glm::vec4(glm::vec3(model[1]), 0.0f);
-                params.normal2 = glm::vec4(glm::vec3(model[2]), 0.0f);
-                params.baseColor = baseColor;
-                drawMesh(renderer, meshRef, meshPipeline, textureRef, params);
+                InstanceData data;
+                data.model = model;
+                data.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(model))));
+                data.baseColor = baseColor;
+
+                Bucket* bucket = nullptr;
+                for (Bucket& candidate : buckets)
+                {
+                    if (candidate.mesh.get() == meshRef.get() && candidate.texture.get() == textureRef.get())
+                    {
+                        bucket = &candidate;
+                        break;
+                    }
+                }
+                if (bucket == nullptr)
+                {
+                    buckets.push_back(Bucket{ meshRef, textureRef, {} });
+                    bucket = &buckets.back();
+                }
+                bucket->items.push_back(data);
             });
+
+        // Flatten buckets into one contiguous instance array + per-batch offsets.
+        std::vector<InstanceData> instances;
+        std::vector<InstanceBatch> batches;
+        batches.reserve(buckets.size());
+        for (Bucket& bucket : buckets)
+        {
+            InstanceBatch batch;
+            batch.mesh = bucket.mesh;
+            batch.texture = bucket.texture;
+            batch.baseInstance = static_cast<u32>(instances.size());
+            batch.instanceCount = static_cast<u32>(bucket.items.size());
+            instances.insert(instances.end(), bucket.items.begin(), bucket.items.end());
+            batches.push_back(std::move(batch));
+        }
+        drawInstanced(renderer, meshPipeline, viewProjection, instances, batches);
     }
 }

@@ -341,6 +341,77 @@ export namespace se
         }
     };
 
+    // A move-only VMA buffer. When mapped is non-null the allocation is persistently
+    // mapped for per-frame host writes. Frees itself before the allocator.
+    struct Buffer
+    {
+        VmaAllocator allocator = nullptr;  // borrowed
+        vk::Buffer buffer;
+        VmaAllocation alloc = nullptr;
+        void* mapped = nullptr;
+        vk::DeviceSize size = 0;
+
+        Buffer() = default;
+        Buffer(const Buffer&) = delete;
+        Buffer& operator=(const Buffer&) = delete;
+
+        Buffer(Buffer&& other) noexcept
+            : allocator(other.allocator), buffer(other.buffer), alloc(other.alloc),
+              mapped(other.mapped), size(other.size)
+        {
+            other.allocator = nullptr;
+            other.buffer = nullptr;
+            other.alloc = nullptr;
+            other.mapped = nullptr;
+            other.size = 0;
+        }
+
+        Buffer& operator=(Buffer&& other) noexcept
+        {
+            if (this != &other)
+            {
+                reset();
+                allocator = other.allocator;
+                buffer = other.buffer;
+                alloc = other.alloc;
+                mapped = other.mapped;
+                size = other.size;
+                other.allocator = nullptr;
+                other.buffer = nullptr;
+                other.alloc = nullptr;
+                other.mapped = nullptr;
+                other.size = 0;
+            }
+            return *this;
+        }
+
+        ~Buffer()
+        {
+            reset();
+        }
+
+        void reset()
+        {
+            if (allocator != nullptr && buffer)
+            {
+                vmaDestroyBuffer(allocator, static_cast<VkBuffer>(buffer), alloc);
+            }
+            buffer = nullptr;
+            alloc = nullptr;
+            mapped = nullptr;
+            size = 0;
+        }
+    };
+
+    // Per-frame scene draw counters, refreshed by drawInstanced; inspectable via the
+    // control plane so batching can be verified live.
+    struct RenderStats
+    {
+        u32 drawCalls = 0;  // drawIndexed calls (one per submesh per batch)
+        u32 batches = 0;    // distinct (mesh, texture) buckets
+        u32 instances = 0;  // total entities drawn
+    };
+
     struct Renderer
     {
         // vk-bootstrap keeps the bits we need for clean teardown.
@@ -378,6 +449,7 @@ export namespace se
         vk::Sampler linearSampler;
         vk::DescriptorSetLayout materialSetLayout;   // set 0: combined image sampler
         vk::DescriptorSetLayout lightSetLayout;      // set 1: directional light UBO
+        vk::DescriptorSetLayout instanceSetLayout;   // set 2: per-instance storage buffer
         vk::DescriptorPool descriptorPool;           // eFreeDescriptorSet (texture sets freed on Ref drop)
         // Per-frame light UBO + set (one per in-flight frame), so the host write in
         // setDirectionalLight never races a frame still reading the light on the GPU.
@@ -385,7 +457,14 @@ export namespace se
         std::array<VkBuffer, MaxFramesInFlight> lightBuffers{};
         std::array<VmaAllocation, MaxFramesInFlight> lightAllocs{};
         std::array<void*, MaxFramesInFlight> lightMapped{};
+        // Per-frame instance storage buffer + set. Grown on demand (never shrunk);
+        // capacity is in InstanceData elements. drawInstanced writes it each frame.
+        std::array<Ref<Buffer>, MaxFramesInFlight> instanceBuffers;
+        std::array<vk::DescriptorSet, MaxFramesInFlight> instanceSets;
+        std::array<u32, MaxFramesInFlight> instanceCapacity{};
         Ref<GpuTexture> defaultWhiteTexture;         // 1x1 white; bound when a material has no albedo
+
+        RenderStats stats;  // populated each frame by drawInstanced
 
         Image offscreenViewport;       // scene render target shown in the Viewport panel
         Image offscreenDepth;          // depth buffer for the scene pass, sized to the viewport
@@ -417,25 +496,37 @@ export namespace se
 
     std::string assetPath(std::string_view relative);
 
-    // Per-draw data pushed as a 128-byte push constant. normal0/1/2 are the columns
-    // of mat3(model) (world normal); baseColor is the material factor.
-    struct DrawParams
+    // One entry per drawn entity in the per-frame instance storage buffer (set 2).
+    // The vertex shader indexes it by InstanceIndex (firstInstance + gl_InstanceID).
+    // std430-compatible: every member is 16-byte aligned.
+    struct InstanceData
     {
-        glm::mat4 mvp;
-        glm::vec4 normal0;
-        glm::vec4 normal1;
-        glm::vec4 normal2;
+        glm::mat4 model;
+        glm::mat4 normalMatrix;  // transpose(inverse(mat3(model))), correct under non-uniform scale
         glm::vec4 baseColor;
     };
 
-    // Mesh rendering: a vertex-buffer + depth-tested pipeline (set 0 = material
-    // albedo, set 1 = directional light), a device-local mesh upload, a texture
-    // upload, and a draw recorded via submit().
+    // A bucket of instances sharing a mesh + albedo texture, drawn as one instanced
+    // drawIndexed. baseInstance offsets into the frame's instance buffer.
+    struct InstanceBatch
+    {
+        Ref<GpuMesh> mesh;
+        Ref<GpuTexture> texture;  // null falls back to the default white texture
+        u32 baseInstance = 0;
+        u32 instanceCount = 0;
+    };
+
+    // Mesh rendering: a depth-tested instanced pipeline (set 0 = material albedo,
+    // set 1 = directional light, set 2 = per-instance data; push constant = viewProj),
+    // device-local mesh + texture uploads, and a batched instanced draw via submit().
     std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName);
     std::expected<Ref<GpuMesh>, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh);
     std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb);
-    void drawMesh(Renderer& renderer, const Ref<GpuMesh>& mesh, const Ref<Pipeline>& pipeline,
-                  const Ref<GpuTexture>& texture, const DrawParams& params);
+
+    // Uploads the frame's instance data, then records ONE submit() closure that binds
+    // the light + instance sets once and issues one instanced drawIndexed per batch.
+    void drawInstanced(Renderer& renderer, const Ref<Pipeline>& pipeline, const glm::mat4& viewProj,
+                       const std::vector<InstanceData>& instances, const std::vector<InstanceBatch>& batches);
 
     // Updates the shared per-frame directional light UBO (set 1). direction points
     // the way the light travels.
@@ -443,6 +534,9 @@ export namespace se
 
     // A 1x1 white texture; bind it when a material has no albedo.
     const Ref<GpuTexture>& defaultTexture(const Renderer& renderer);
+
+    // The most recent frame's scene draw counters (draw calls, batches, instances).
+    RenderStats renderStats(const Renderer& renderer);
 
     // Blocks until the GPU has finished all submitted work. Call before dropping
     // resource Refs at shutdown so no in-flight command buffer still references them.
@@ -879,12 +973,27 @@ namespace se
             }
             renderer.lightSetLayout = *lightLayout;
 
-            std::array<vk::DescriptorPoolSize, 2> poolSizes{
+            vk::DescriptorSetLayoutBinding instanceBinding{};
+            instanceBinding.binding = 0;
+            instanceBinding.descriptorType = vk::DescriptorType::eStorageBuffer;
+            instanceBinding.descriptorCount = 1;
+            instanceBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+            vk::DescriptorSetLayoutCreateInfo instanceLayoutInfo{};
+            instanceLayoutInfo.setBindings(instanceBinding);
+            auto instanceLayout = checked(renderer.device.createDescriptorSetLayout(instanceLayoutInfo), "instanceSetLayout");
+            if (!instanceLayout)
+            {
+                return std::unexpected(instanceLayout.error());
+            }
+            renderer.instanceSetLayout = *instanceLayout;
+
+            std::array<vk::DescriptorPoolSize, 3> poolSizes{
                 vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, 1024 },
-                vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, MaxFramesInFlight + 4 } };
+                vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, MaxFramesInFlight + 4 },
+                vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, MaxFramesInFlight + 4 } };
             vk::DescriptorPoolCreateInfo poolInfo{};
             poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;  // texture sets freed on Ref drop
-            poolInfo.maxSets = 1024 + MaxFramesInFlight + 4;
+            poolInfo.maxSets = 1024 + 2 * (MaxFramesInFlight + 4);
             poolInfo.setPoolSizes(poolSizes);
             auto pool = checked(renderer.device.createDescriptorPool(poolInfo), "descriptorPool");
             if (!pool)
@@ -925,6 +1034,18 @@ namespace se
                 lightWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
                 lightWrite.setBufferInfo(lightBufferInfo);
                 renderer.device.updateDescriptorSets(lightWrite, {});
+
+                // The instance buffer is created lazily (ensureInstanceCapacity), which
+                // also writes this set; allocate the set up front so it is stable.
+                vk::DescriptorSetAllocateInfo instanceAlloc{};
+                instanceAlloc.descriptorPool = renderer.descriptorPool;
+                instanceAlloc.setSetLayouts(renderer.instanceSetLayout);
+                auto instanceAllocated = checked(renderer.device.allocateDescriptorSets(instanceAlloc), "allocate instanceSet");
+                if (!instanceAllocated)
+                {
+                    return std::unexpected(instanceAllocated.error());
+                }
+                renderer.instanceSets[i] = (*instanceAllocated)[0];
             }
             return {};
         }
@@ -1115,6 +1236,7 @@ namespace se
 
         for (u32 i = 0; i < MaxFramesInFlight; i = i + 1)
         {
+            renderer.instanceBuffers[i].reset();  // RAII frees the SSBO before the allocator
             if (renderer.lightBuffers[i] != VK_NULL_HANDLE)
             {
                 vmaDestroyBuffer(renderer.allocator, renderer.lightBuffers[i], renderer.lightAllocs[i]);
@@ -1132,6 +1254,10 @@ namespace se
         if (renderer.lightSetLayout)
         {
             renderer.device.destroyDescriptorSetLayout(renderer.lightSetLayout);
+        }
+        if (renderer.instanceSetLayout)
+        {
+            renderer.device.destroyDescriptorSetLayout(renderer.instanceSetLayout);
         }
         if (renderer.linearSampler)
         {
@@ -1554,11 +1680,12 @@ namespace se
         renderingInfo.depthAttachmentFormat = DepthFormat;
 
         vk::PushConstantRange pushConstant{};
-        pushConstant.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+        pushConstant.stageFlags = vk::ShaderStageFlagBits::eVertex;
         pushConstant.offset = 0;
-        pushConstant.size = sizeof(DrawParams);
+        pushConstant.size = sizeof(glm::mat4);  // viewProj
 
-        std::array<vk::DescriptorSetLayout, 2> setLayouts{ renderer.materialSetLayout, renderer.lightSetLayout };
+        std::array<vk::DescriptorSetLayout, 3> setLayouts{
+            renderer.materialSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayouts);
         layoutInfo.setPushConstantRanges(pushConstant);
@@ -1692,42 +1819,146 @@ namespace se
         return std::make_shared<GpuMesh>(std::move(gpu));
     }
 
-    void drawMesh(Renderer& renderer, const Ref<GpuMesh>& mesh, const Ref<Pipeline>& pipeline,
-                  const Ref<GpuTexture>& texture, const DrawParams& params)
+    // Ensures the current frame's instance buffer holds at least `count` elements,
+    // growing to the next power of two (never shrinking) and rewriting its set.
+    std::expected<void, std::string> ensureInstanceCapacity(Renderer& renderer, u32 frame, u32 count)
     {
-        if (!mesh || !pipeline)
+        if (renderer.instanceBuffers[frame] && renderer.instanceCapacity[frame] >= count)
+        {
+            return {};
+        }
+        u32 capacity = renderer.instanceCapacity[frame];
+        if (capacity == 0)
+        {
+            capacity = 256;
+        }
+        while (capacity < count)
+        {
+            capacity = capacity * 2;
+        }
+        const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(capacity) * sizeof(InstanceData);
+
+        VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        info.size = bytes;
+        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        VmaAllocationCreateInfo alloc{};
+        alloc.usage = VMA_MEMORY_USAGE_AUTO;
+        alloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VkBuffer raw = VK_NULL_HANDLE;
+        VmaAllocation allocation = nullptr;
+        VmaAllocationInfo mapped{};
+        if (vmaCreateBuffer(renderer.allocator, &info, &alloc, &raw, &allocation, &mapped) != VK_SUCCESS)
+        {
+            return std::unexpected(std::string{ "instance buffer vmaCreateBuffer failed" });
+        }
+
+        // beginFrame already waited on this frame's fence, so the old buffer (used by
+        // the same frame) is no longer in flight — safe to drop and recreate.
+        Buffer buffer;
+        buffer.allocator = renderer.allocator;
+        buffer.buffer = vk::Buffer{ raw };
+        buffer.alloc = allocation;
+        buffer.mapped = mapped.pMappedData;
+        buffer.size = bytes;
+        renderer.instanceBuffers[frame] = std::make_shared<Buffer>(std::move(buffer));
+        renderer.instanceCapacity[frame] = capacity;
+
+        vk::DescriptorBufferInfo bufferInfo{ vk::Buffer{ raw }, 0, bytes };
+        vk::WriteDescriptorSet write{};
+        write.dstSet = renderer.instanceSets[frame];
+        write.dstBinding = 0;
+        write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        write.setBufferInfo(bufferInfo);
+        renderer.device.updateDescriptorSets(write, {});
+        return {};
+    }
+
+    void drawInstanced(Renderer& renderer, const Ref<Pipeline>& pipeline, const glm::mat4& viewProj,
+                       const std::vector<InstanceData>& instances, const std::vector<InstanceBatch>& batches)
+    {
+        renderer.stats = RenderStats{};
+        if (!pipeline || instances.empty() || batches.empty())
         {
             return;
         }
-        const Ref<GpuTexture>* tex = &texture;
-        if (!*tex)
+        const u32 frame = renderer.frameIndex;
+        if (std::expected<void, std::string> ok = ensureInstanceCapacity(renderer, frame, static_cast<u32>(instances.size())); !ok)
         {
-            tex = &renderer.defaultWhiteTexture;
-        }
-        if (!*tex || !(*tex)->materialSet)
-        {
+            logError(ok.error());
             return;
         }
+        const vk::DeviceSize bytes = instances.size() * sizeof(InstanceData);
+        std::memcpy(renderer.instanceBuffers[frame]->mapped, instances.data(), bytes);
+        vmaFlushAllocation(renderer.allocator, renderer.instanceBuffers[frame]->alloc, 0, bytes);
+
+        // One closure replays the whole scene: bind the light + instance sets once,
+        // then per batch bind its material set and issue one instanced drawIndexed.
+        struct BatchRecord
+        {
+            vk::DescriptorSet materialSet;
+            vk::Buffer vertexBuffer;
+            vk::Buffer indexBuffer;
+            std::vector<Submesh> submeshes;
+            u32 baseInstance;
+            u32 instanceCount;
+        };
+        std::vector<BatchRecord> records;
+        records.reserve(batches.size());
+        u32 drawCalls = 0;
+        u32 drawnInstances = 0;
+        for (const InstanceBatch& batch : batches)
+        {
+            if (!batch.mesh || batch.instanceCount == 0)
+            {
+                continue;
+            }
+            const Ref<GpuTexture>* tex = &batch.texture;
+            if (!*tex)
+            {
+                tex = &renderer.defaultWhiteTexture;
+            }
+            if (!*tex || !(*tex)->materialSet)
+            {
+                continue;
+            }
+            BatchRecord record;
+            record.materialSet = (*tex)->materialSet;
+            record.vertexBuffer = batch.mesh->vertexBuffer;
+            record.indexBuffer = batch.mesh->indexBuffer;
+            record.submeshes = batch.mesh->submeshes;
+            record.baseInstance = batch.baseInstance;
+            record.instanceCount = batch.instanceCount;
+            drawCalls = drawCalls + static_cast<u32>(record.submeshes.size());
+            drawnInstances = drawnInstances + batch.instanceCount;
+            records.push_back(std::move(record));
+        }
+
+        renderer.stats.drawCalls = drawCalls;
+        renderer.stats.batches = static_cast<u32>(records.size());
+        renderer.stats.instances = drawnInstances;
+
         vk::Pipeline pipelineHandle = pipeline->pipeline;
         vk::PipelineLayout layout = pipeline->layout;
-        vk::DescriptorSet materialSet = (*tex)->materialSet;
-        vk::DescriptorSet lightSet = renderer.lightSets[renderer.frameIndex];
-        vk::Buffer vertexBuffer = mesh->vertexBuffer;
-        vk::Buffer indexBuffer = mesh->indexBuffer;
-        std::vector<Submesh> submeshes = mesh->submeshes;
-        submit(renderer, [pipelineHandle, layout, materialSet, lightSet, vertexBuffer, indexBuffer, submeshes, params](vk::CommandBuffer cmd)
+        vk::DescriptorSet lightSet = renderer.lightSets[frame];
+        vk::DescriptorSet instanceSet = renderer.instanceSets[frame];
+        glm::mat4 camera = viewProj;
+        submit(renderer, [pipelineHandle, layout, lightSet, instanceSet, camera, records = std::move(records)](vk::CommandBuffer cmd)
         {
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipelineHandle);
-            std::array<vk::DescriptorSet, 2> sets{ materialSet, lightSet };
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0, sets, {});
-            cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-                              0, sizeof(DrawParams), &params);
-            vk::DeviceSize offset = 0;
-            cmd.bindVertexBuffers(0, vertexBuffer, offset);
-            cmd.bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint32);
-            for (const Submesh& submesh : submeshes)
+            std::array<vk::DescriptorSet, 2> frameSets{ lightSet, instanceSet };
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 1, frameSets, {});
+            cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &camera);
+            for (const BatchRecord& record : records)
             {
-                cmd.drawIndexed(submesh.indexCount, 1, submesh.firstIndex, submesh.vertexOffset, 0);
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0, record.materialSet, {});
+                vk::DeviceSize offset = 0;
+                cmd.bindVertexBuffers(0, record.vertexBuffer, offset);
+                cmd.bindIndexBuffer(record.indexBuffer, 0, vk::IndexType::eUint32);
+                for (const Submesh& submesh : record.submeshes)
+                {
+                    cmd.drawIndexed(submesh.indexCount, record.instanceCount, submesh.firstIndex,
+                                    submesh.vertexOffset, record.baseInstance);
+                }
             }
         });
     }
@@ -1735,6 +1966,11 @@ namespace se
     const Ref<GpuTexture>& defaultTexture(const Renderer& renderer)
     {
         return renderer.defaultWhiteTexture;
+    }
+
+    RenderStats renderStats(const Renderer& renderer)
+    {
+        return renderer.stats;
     }
 
     void waitGpuIdle(Renderer& renderer)

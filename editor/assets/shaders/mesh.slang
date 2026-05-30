@@ -1,7 +1,10 @@
-// Mesh shader: vertex inputs from an interleaved buffer (position/normal/uv0).
-// Push constants carry the mvp, the model's upper-left 3x3 (as columns, for the
-// world normal), and the base color factor. Set 0 is the albedo texture; set 1 is
-// the directional light. Shading is base color * albedo * (ambient + N.L).
+// Instanced mesh shader. Vertex inputs come from an interleaved buffer
+// (position/normal/uv0); per-instance model + normal matrix + base color come from
+// a storage buffer (set 2) indexed by the absolute Vulkan InstanceIndex
+// (firstInstance + instance). SV_VulkanInstanceID is that builtin — plain
+// SV_InstanceID is base-relative (excludes firstInstance), which would break batching.
+// The push constant is the camera viewProj. Set 0 is albedo; set 1 is the directional
+// light. Shading is base color * albedo * (ambient + N.L).
 
 struct VertexInput
 {
@@ -15,17 +18,14 @@ struct VertexOutput
     float4 position : SV_Position;
     float3 worldNormal : NORMAL;
     float2 uv0 : TEXCOORD0;
+    float4 baseColor : COLOR0;
 };
 
-struct PushConstants
+struct Camera
 {
-    float4x4 mvp;
-    float4 n0;  // columns of mat3(model)
-    float4 n1;
-    float4 n2;
-    float4 baseColor;
+    float4x4 viewProj;
 };
-[[vk::push_constant]] PushConstants pc;
+[[vk::push_constant]] Camera camera;
 
 [[vk::binding(0, 0)]] Sampler2D albedo;
 
@@ -36,13 +36,24 @@ struct Light
 };
 [[vk::binding(0, 1)]] ConstantBuffer<Light> light;
 
-[shader("vertex")]
-VertexOutput vertexMain(VertexInput input)
+struct Instance
 {
+    float4x4 model;
+    float4x4 normalMatrix;
+    float4 baseColor;
+};
+[[vk::binding(0, 2)]] StructuredBuffer<Instance> instances;
+
+[shader("vertex")]
+VertexOutput vertexMain(VertexInput input, uint instanceIndex : SV_VulkanInstanceID)
+{
+    Instance inst = instances[instanceIndex];
     VertexOutput output;
-    output.position = mul(pc.mvp, float4(input.position, 1.0));
-    output.worldNormal = pc.n0.xyz * input.normal.x + pc.n1.xyz * input.normal.y + pc.n2.xyz * input.normal.z;
+    float4 worldPos = mul(inst.model, float4(input.position, 1.0));
+    output.position = mul(camera.viewProj, worldPos);
+    output.worldNormal = mul((float3x3)inst.normalMatrix, input.normal);
     output.uv0 = input.uv0;
+    output.baseColor = inst.baseColor;
     return output;
 }
 
@@ -55,6 +66,6 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     float ambient = light.directionAmbient.w;
     float3 lit = light.colorIntensity.rgb * light.colorIntensity.a * ndotl + ambient;
     float4 tex = albedo.Sample(input.uv0);
-    float3 color = tex.rgb * pc.baseColor.rgb * lit;
-    return float4(color, tex.a * pc.baseColor.a);
+    float3 color = tex.rgb * input.baseColor.rgb * lit;
+    return float4(color, tex.a * input.baseColor.a);
 }
