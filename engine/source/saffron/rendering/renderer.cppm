@@ -457,6 +457,9 @@ export namespace se
         std::array<VkBuffer, MaxFramesInFlight> lightBuffers{};
         std::array<VmaAllocation, MaxFramesInFlight> lightAllocs{};
         std::array<void*, MaxFramesInFlight> lightMapped{};
+        // Per-frame punctual-light storage buffer (set 1, binding 1), grown on demand.
+        std::array<Ref<Buffer>, MaxFramesInFlight> lightListBuffers;
+        std::array<u32, MaxFramesInFlight> lightListCapacity{};
         // Per-frame instance storage buffer + set. Grown on demand (never shrunk);
         // capacity is in InstanceData elements. drawInstanced writes it each frame.
         std::array<Ref<Buffer>, MaxFramesInFlight> instanceBuffers;
@@ -528,9 +531,25 @@ export namespace se
     void drawInstanced(Renderer& renderer, const Ref<Pipeline>& pipeline, const glm::mat4& viewProj,
                        const std::vector<InstanceData>& instances, const std::vector<InstanceBatch>& batches);
 
+    // One punctual (point or spot) light in the per-frame light storage buffer
+    // (set 1, binding 1). Positions/directions are world space; the fragment shader
+    // attenuates by distance and (for spots) the cone. std430-compatible.
+    struct GpuLight
+    {
+        glm::vec4 positionRange;   // xyz world position, w range
+        glm::vec4 colorIntensity;  // rgb color, a intensity
+        glm::vec4 directionType;   // xyz world direction (spot), w type (0 = point, 1 = spot)
+        glm::vec4 spotCos;         // x = cos(innerAngle), y = cos(outerAngle)
+    };
+
     // Updates the shared per-frame directional light UBO (set 1). direction points
-    // the way the light travels.
+    // the way the light travels. Sets the punctual light count to zero.
     void setDirectionalLight(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity, f32 ambient);
+
+    // Writes the whole per-frame lighting state: the directional light + ambient into
+    // the UBO and the punctual lights into the storage buffer (grown on demand).
+    void setSceneLighting(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity,
+                          f32 ambient, const std::vector<GpuLight>& lights);
 
     // A 1x1 white texture; bind it when a material has no albedo.
     const Ref<GpuTexture>& defaultTexture(const Renderer& renderer);
@@ -919,12 +938,41 @@ namespace se
             return {};
         }
 
-        // Matches the shader's set 1 light uniform (std140: two vec4).
+        // Matches the shader's set 1 light uniform (std140).
         struct LightUbo
         {
             glm::vec4 directionAmbient;  // xyz direction, w ambient
             glm::vec4 colorIntensity;    // rgb color, a intensity
+            glm::uvec4 counts;           // x = punctual light count
         };
+
+        // Initial punctual-light buffer capacity, grown on demand thereafter.
+        inline constexpr u32 LightListInitial = 16;
+
+        // A host-visible, persistently mapped storage buffer for per-frame uploads.
+        std::expected<Ref<Buffer>, std::string> makeMappedStorageBuffer(Renderer& renderer, vk::DeviceSize bytes)
+        {
+            VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+            info.size = bytes;
+            info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            VmaAllocationCreateInfo alloc{};
+            alloc.usage = VMA_MEMORY_USAGE_AUTO;
+            alloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VkBuffer raw = VK_NULL_HANDLE;
+            VmaAllocation allocation = nullptr;
+            VmaAllocationInfo mapped{};
+            if (vmaCreateBuffer(renderer.allocator, &info, &alloc, &raw, &allocation, &mapped) != VK_SUCCESS)
+            {
+                return std::unexpected(std::string{ "makeMappedStorageBuffer: vmaCreateBuffer failed" });
+            }
+            Buffer buffer;
+            buffer.allocator = renderer.allocator;
+            buffer.buffer = vk::Buffer{ raw };
+            buffer.alloc = allocation;
+            buffer.mapped = mapped.pMappedData;
+            buffer.size = bytes;
+            return std::make_shared<Buffer>(std::move(buffer));
+        }
 
         // The shared sampler, material/light set layouts, descriptor pool, and the
         // per-frame light UBO + its set. Called once in newRenderer.
@@ -959,13 +1007,17 @@ namespace se
             }
             renderer.materialSetLayout = *materialLayout;
 
-            vk::DescriptorSetLayoutBinding lightBinding{};
-            lightBinding.binding = 0;
-            lightBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-            lightBinding.descriptorCount = 1;
-            lightBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+            std::array<vk::DescriptorSetLayoutBinding, 2> lightBindings{};
+            lightBindings[0].binding = 0;  // directional + ambient + counts UBO
+            lightBindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+            lightBindings[0].descriptorCount = 1;
+            lightBindings[0].stageFlags = vk::ShaderStageFlagBits::eFragment;
+            lightBindings[1].binding = 1;  // punctual light storage buffer
+            lightBindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+            lightBindings[1].descriptorCount = 1;
+            lightBindings[1].stageFlags = vk::ShaderStageFlagBits::eFragment;
             vk::DescriptorSetLayoutCreateInfo lightLayoutInfo{};
-            lightLayoutInfo.setBindings(lightBinding);
+            lightLayoutInfo.setBindings(lightBindings);
             auto lightLayout = checked(renderer.device.createDescriptorSetLayout(lightLayoutInfo), "lightSetLayout");
             if (!lightLayout)
             {
@@ -989,11 +1041,11 @@ namespace se
 
             std::array<vk::DescriptorPoolSize, 3> poolSizes{
                 vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, 1024 },
-                vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, MaxFramesInFlight + 4 },
-                vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, MaxFramesInFlight + 4 } };
+                vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, 4 * MaxFramesInFlight + 8 },
+                vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, 8 * MaxFramesInFlight + 8 } };
             vk::DescriptorPoolCreateInfo poolInfo{};
             poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;  // texture sets freed on Ref drop
-            poolInfo.maxSets = 1024 + 2 * (MaxFramesInFlight + 4);
+            poolInfo.maxSets = 1024 + 8 * MaxFramesInFlight + 16;
             poolInfo.setPoolSizes(poolSizes);
             auto pool = checked(renderer.device.createDescriptorPool(poolInfo), "descriptorPool");
             if (!pool)
@@ -1034,6 +1086,24 @@ namespace se
                 lightWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
                 lightWrite.setBufferInfo(lightBufferInfo);
                 renderer.device.updateDescriptorSets(lightWrite, {});
+
+                // The punctual-light buffer starts at LightListInitial capacity and is
+                // grown by ensureLightCapacity; bind it now so the set is complete.
+                std::expected<Ref<Buffer>, std::string> lightList =
+                    makeMappedStorageBuffer(renderer, static_cast<vk::DeviceSize>(LightListInitial) * sizeof(GpuLight));
+                if (!lightList)
+                {
+                    return std::unexpected(lightList.error());
+                }
+                renderer.lightListBuffers[i] = *lightList;
+                renderer.lightListCapacity[i] = LightListInitial;
+                vk::DescriptorBufferInfo lightListInfo{ (*lightList)->buffer, 0, (*lightList)->size };
+                vk::WriteDescriptorSet lightListWrite{};
+                lightListWrite.dstSet = renderer.lightSets[i];
+                lightListWrite.dstBinding = 1;
+                lightListWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
+                lightListWrite.setBufferInfo(lightListInfo);
+                renderer.device.updateDescriptorSets(lightListWrite, {});
 
                 // The instance buffer is created lazily (ensureInstanceCapacity), which
                 // also writes this set; allocate the set up front so it is stable.
@@ -1237,6 +1307,7 @@ namespace se
         for (u32 i = 0; i < MaxFramesInFlight; i = i + 1)
         {
             renderer.instanceBuffers[i].reset();  // RAII frees the SSBO before the allocator
+            renderer.lightListBuffers[i].reset();
             if (renderer.lightBuffers[i] != VK_NULL_HANDLE)
             {
                 vmaDestroyBuffer(renderer.allocator, renderer.lightBuffers[i], renderer.lightAllocs[i]);
@@ -1836,37 +1907,58 @@ namespace se
         {
             capacity = capacity * 2;
         }
-        const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(capacity) * sizeof(InstanceData);
-
-        VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-        info.size = bytes;
-        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-        VmaAllocationCreateInfo alloc{};
-        alloc.usage = VMA_MEMORY_USAGE_AUTO;
-        alloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        VkBuffer raw = VK_NULL_HANDLE;
-        VmaAllocation allocation = nullptr;
-        VmaAllocationInfo mapped{};
-        if (vmaCreateBuffer(renderer.allocator, &info, &alloc, &raw, &allocation, &mapped) != VK_SUCCESS)
-        {
-            return std::unexpected(std::string{ "instance buffer vmaCreateBuffer failed" });
-        }
 
         // beginFrame already waited on this frame's fence, so the old buffer (used by
         // the same frame) is no longer in flight — safe to drop and recreate.
-        Buffer buffer;
-        buffer.allocator = renderer.allocator;
-        buffer.buffer = vk::Buffer{ raw };
-        buffer.alloc = allocation;
-        buffer.mapped = mapped.pMappedData;
-        buffer.size = bytes;
-        renderer.instanceBuffers[frame] = std::make_shared<Buffer>(std::move(buffer));
+        std::expected<Ref<Buffer>, std::string> buffer =
+            makeMappedStorageBuffer(renderer, static_cast<vk::DeviceSize>(capacity) * sizeof(InstanceData));
+        if (!buffer)
+        {
+            return std::unexpected(buffer.error());
+        }
+        renderer.instanceBuffers[frame] = *buffer;
         renderer.instanceCapacity[frame] = capacity;
 
-        vk::DescriptorBufferInfo bufferInfo{ vk::Buffer{ raw }, 0, bytes };
+        vk::DescriptorBufferInfo bufferInfo{ (*buffer)->buffer, 0, (*buffer)->size };
         vk::WriteDescriptorSet write{};
         write.dstSet = renderer.instanceSets[frame];
         write.dstBinding = 0;
+        write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        write.setBufferInfo(bufferInfo);
+        renderer.device.updateDescriptorSets(write, {});
+        return {};
+    }
+
+    // Ensures the current frame's punctual-light buffer holds at least `count` lights,
+    // growing to the next power of two (never shrinking) and rewriting its set.
+    std::expected<void, std::string> ensureLightCapacity(Renderer& renderer, u32 frame, u32 count)
+    {
+        if (renderer.lightListBuffers[frame] && renderer.lightListCapacity[frame] >= count)
+        {
+            return {};
+        }
+        u32 capacity = renderer.lightListCapacity[frame];
+        if (capacity == 0)
+        {
+            capacity = LightListInitial;
+        }
+        while (capacity < count)
+        {
+            capacity = capacity * 2;
+        }
+        std::expected<Ref<Buffer>, std::string> buffer =
+            makeMappedStorageBuffer(renderer, static_cast<vk::DeviceSize>(capacity) * sizeof(GpuLight));
+        if (!buffer)
+        {
+            return std::unexpected(buffer.error());
+        }
+        renderer.lightListBuffers[frame] = *buffer;
+        renderer.lightListCapacity[frame] = capacity;
+
+        vk::DescriptorBufferInfo bufferInfo{ (*buffer)->buffer, 0, (*buffer)->size };
+        vk::WriteDescriptorSet write{};
+        write.dstSet = renderer.lightSets[frame];
+        write.dstBinding = 1;
         write.descriptorType = vk::DescriptorType::eStorageBuffer;
         write.setBufferInfo(bufferInfo);
         renderer.device.updateDescriptorSets(write, {});
@@ -1983,16 +2075,36 @@ namespace se
 
     void setDirectionalLight(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity, f32 ambient)
     {
-        // Write the current frame's copy; beginFrame already waited on its fence, so
-        // no in-flight frame is reading it.
+        setSceneLighting(renderer, direction, color, intensity, ambient, {});
+    }
+
+    void setSceneLighting(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity,
+                          f32 ambient, const std::vector<GpuLight>& lights)
+    {
+        // Write the current frame's copies; beginFrame already waited on its fence, so
+        // no in-flight frame is reading them.
         const u32 frame = renderer.frameIndex;
         if (renderer.lightMapped[frame] == nullptr)
         {
             return;
         }
+        const u32 count = static_cast<u32>(lights.size());
+        if (count > 0)
+        {
+            if (std::expected<void, std::string> ok = ensureLightCapacity(renderer, frame, count); !ok)
+            {
+                logError(ok.error());
+                return;
+            }
+            const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(count) * sizeof(GpuLight);
+            std::memcpy(renderer.lightListBuffers[frame]->mapped, lights.data(), bytes);
+            vmaFlushAllocation(renderer.allocator, renderer.lightListBuffers[frame]->alloc, 0, bytes);
+        }
+
         LightUbo ubo;
         ubo.directionAmbient = glm::vec4(glm::normalize(direction), ambient);
         ubo.colorIntensity = glm::vec4(color, intensity);
+        ubo.counts = glm::uvec4(count, 0, 0, 0);
         std::memcpy(renderer.lightMapped[frame], &ubo, sizeof(ubo));
         vmaFlushAllocation(renderer.allocator, renderer.lightAllocs[frame], 0, sizeof(ubo));
     }

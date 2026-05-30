@@ -74,6 +74,27 @@ export namespace se
         f32 ambient = 0.15f;
     };
 
+    // An omnidirectional light positioned at the entity's Transform translation, with
+    // smooth distance falloff out to range. Culled into clusters by the light system.
+    struct PointLightComponent
+    {
+        glm::vec3 color{ 1.0f };
+        f32 intensity = 5.0f;
+        f32 range = 10.0f;
+    };
+
+    // A cone light at the entity's Transform translation, aimed by direction. Falls
+    // off by distance (range) and by angle between innerAngle and outerAngle (degrees).
+    struct SpotLightComponent
+    {
+        glm::vec3 direction{ 0.0f, -1.0f, 0.0f };
+        glm::vec3 color{ 1.0f };
+        f32 intensity = 5.0f;
+        f32 range = 10.0f;
+        f32 innerAngle = 20.0f;  // full intensity inside this half-angle
+        f32 outerAngle = 30.0f;  // zero past this half-angle
+    };
+
     glm::mat4 transformMatrix(const TransformComponent& transform)
     {
         glm::mat4 translation = glm::translate(glm::mat4(1.0f), transform.translation);

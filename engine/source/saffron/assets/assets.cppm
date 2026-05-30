@@ -373,7 +373,32 @@ export namespace se
             lightAmbient = light.ambient;
             haveLight = true;
         });
-        setDirectionalLight(renderer, lightDir, lightColor, lightIntensity, lightAmbient);
+
+        // Gather punctual (point + spot) lights, positioned by their Transform.
+        std::vector<GpuLight> lights;
+        forEach<TransformComponent, PointLightComponent>(scene,
+            [&](Entity, TransformComponent& transform, PointLightComponent& light)
+            {
+                GpuLight gpu;
+                gpu.positionRange = glm::vec4(transform.translation, light.range);
+                gpu.colorIntensity = glm::vec4(light.color, light.intensity);
+                gpu.directionType = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);  // type 0 = point
+                gpu.spotCos = glm::vec4(0.0f);
+                lights.push_back(gpu);
+            });
+        forEach<TransformComponent, SpotLightComponent>(scene,
+            [&](Entity, TransformComponent& transform, SpotLightComponent& light)
+            {
+                const glm::vec3 dir = glm::normalize(light.direction);
+                GpuLight gpu;
+                gpu.positionRange = glm::vec4(transform.translation, light.range);
+                gpu.colorIntensity = glm::vec4(light.color, light.intensity);
+                gpu.directionType = glm::vec4(dir, 1.0f);  // type 1 = spot
+                gpu.spotCos = glm::vec4(glm::cos(glm::radians(light.innerAngle)),
+                                        glm::cos(glm::radians(light.outerAngle)), 0.0f, 0.0f);
+                lights.push_back(gpu);
+            });
+        setSceneLighting(renderer, lightDir, lightColor, lightIntensity, lightAmbient, lights);
 
         // Bucket entities by (mesh, albedo texture) so each bucket draws as one
         // instanced call. Linear lookup — bucket count is the number of distinct

@@ -172,6 +172,58 @@ export namespace se
                 return {};
             },
             true);
+
+        registerComponent<PointLightComponent>(reg, "PointLight",
+            [](Scene& s, Entity e)
+            {
+                PointLightComponent& light = getComponent<PointLightComponent>(s, e);
+                ImGui::ColorEdit3("Color", &light.color.x);
+                ImGui::DragFloat("Intensity", &light.intensity, 0.05f, 0.0f, 100.0f);
+                ImGui::DragFloat("Range", &light.range, 0.05f, 0.0f, 200.0f);
+            },
+            [](const PointLightComponent& c)
+            {
+                return nlohmann::json{ { "color", vec3ToJson(c.color) },
+                                       { "intensity", c.intensity }, { "range", c.range } };
+            },
+            [](PointLightComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            {
+                c.color = vec3FromJson(j.value("color", nlohmann::json::object()));
+                c.intensity = j.value("intensity", 5.0f);
+                c.range = j.value("range", 10.0f);
+                return {};
+            },
+            true);
+
+        registerComponent<SpotLightComponent>(reg, "SpotLight",
+            [](Scene& s, Entity e)
+            {
+                SpotLightComponent& light = getComponent<SpotLightComponent>(s, e);
+                ImGui::DragFloat3("Direction", &light.direction.x, 0.01f);
+                ImGui::ColorEdit3("Color", &light.color.x);
+                ImGui::DragFloat("Intensity", &light.intensity, 0.05f, 0.0f, 100.0f);
+                ImGui::DragFloat("Range", &light.range, 0.05f, 0.0f, 200.0f);
+                ImGui::DragFloat("Inner Angle", &light.innerAngle, 0.1f, 0.0f, 89.0f);
+                ImGui::DragFloat("Outer Angle", &light.outerAngle, 0.1f, 0.0f, 89.0f);
+            },
+            [](const SpotLightComponent& c)
+            {
+                return nlohmann::json{ { "direction", vec3ToJson(c.direction) },
+                                       { "color", vec3ToJson(c.color) }, { "intensity", c.intensity },
+                                       { "range", c.range }, { "innerAngle", c.innerAngle },
+                                       { "outerAngle", c.outerAngle } };
+            },
+            [](SpotLightComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            {
+                c.direction = vec3FromJson(j.value("direction", nlohmann::json::object()));
+                c.color = vec3FromJson(j.value("color", nlohmann::json::object()));
+                c.intensity = j.value("intensity", 5.0f);
+                c.range = j.value("range", 10.0f);
+                c.innerAngle = j.value("innerAngle", 20.0f);
+                c.outerAngle = j.value("outerAngle", 30.0f);
+                return {};
+            },
+            true);
     }
 
     // Heap-owned so EditorContext's heavy destructor (entt/json) is instantiated
