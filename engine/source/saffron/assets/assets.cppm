@@ -5,8 +5,13 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <nlohmann/json.hpp>
 
+#include <cstdlib>
 #include <expected>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <unordered_map>
 
@@ -19,15 +24,60 @@ import Saffron.Scene;
 
 export namespace se
 {
-    // Maps a stable asset id to its uploaded GPU mesh handle. The GpuMesh objects
-    // themselves are owned by the Renderer; this only holds handles, so multiple
-    // entities referencing one id share a single upload.
+    // Resolves mesh assets for the running scene. pathByUuid is the persisted
+    // registry (id -> baked .smesh relative to root); meshHandleByUuid is the
+    // in-memory cache of uploaded GPU meshes, so entities sharing an id upload once.
     struct AssetServer
     {
+        std::string root;
+        std::unordered_map<u64, std::string> pathByUuid;
         std::unordered_map<u64, u32> meshHandleByUuid;
     };
 
-    // Imports a model file, uploads it, registers it under a fresh id, returns the id.
+    void writeAssetRegistry(const AssetServer& assets)
+    {
+        nlohmann::json meshes = nlohmann::json::object();
+        for (const auto& [uuid, path] : assets.pathByUuid)
+        {
+            meshes[std::to_string(uuid)] = path;
+        }
+        std::ofstream out(assets.root + "/asset_registry.json");
+        if (out)
+        {
+            out << nlohmann::json{ { "version", 1 }, { "meshes", std::move(meshes) } }.dump(2);
+        }
+    }
+
+    // Creates the asset root (+ meshes dir) and loads any existing registry.
+    AssetServer newAssetServer(std::string root)
+    {
+        AssetServer assets;
+        assets.root = std::move(root);
+        std::error_code ec;
+        std::filesystem::create_directories(assets.root + "/meshes", ec);
+
+        std::ifstream in(assets.root + "/asset_registry.json");
+        if (in)
+        {
+            std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            nlohmann::json doc = nlohmann::json::parse(text, nullptr, false);
+            if (!doc.is_discarded() && doc.contains("meshes") && doc["meshes"].is_object())
+            {
+                for (auto it = doc["meshes"].begin(); it != doc["meshes"].end(); ++it)
+                {
+                    if (it.value().is_string())
+                    {
+                        const u64 uuid = std::strtoull(it.key().c_str(), nullptr, 10);
+                        assets.pathByUuid[uuid] = it.value().get<std::string>();
+                    }
+                }
+            }
+        }
+        return assets;
+    }
+
+    // Imports a source model, bakes it to a .smesh under root, uploads it, registers
+    // the id -> path mapping (persisting the registry), and returns the new id.
     std::expected<Uuid, std::string> importModel(AssetServer& assets, Renderer& renderer, const std::string& path)
     {
         std::expected<Mesh, std::string> mesh = importModelFile(path);
@@ -35,24 +85,52 @@ export namespace se
         {
             return std::unexpected(mesh.error());
         }
+        const Uuid id = newUuid();
+        const std::string relativePath = "meshes/" + std::to_string(id.value) + ".smesh";
+        if (std::expected<void, std::string> baked = saveMesh(*mesh, assets.root + "/" + relativePath); !baked)
+        {
+            return std::unexpected(baked.error());
+        }
         std::expected<u32, std::string> handle = uploadMesh(renderer, *mesh);
         if (!handle)
         {
             return std::unexpected(handle.error());
         }
-        const Uuid id = newUuid();
+        assets.pathByUuid[id.value] = relativePath;
         assets.meshHandleByUuid[id.value] = *handle;
+        writeAssetRegistry(assets);
         return id;
     }
 
-    bool resolveMesh(const AssetServer& assets, Uuid id, u32& outHandle)
+    // Resolves an id to a GPU mesh handle, loading + uploading the baked .smesh on a
+    // cache miss. Returns false for an unregistered or unreadable asset.
+    bool loadMeshAsset(AssetServer& assets, Renderer& renderer, Uuid id, u32& outHandle)
     {
-        auto it = assets.meshHandleByUuid.find(id.value);
-        if (it == assets.meshHandleByUuid.end())
+        auto cached = assets.meshHandleByUuid.find(id.value);
+        if (cached != assets.meshHandleByUuid.end())
+        {
+            outHandle = cached->second;
+            return true;
+        }
+        auto path = assets.pathByUuid.find(id.value);
+        if (path == assets.pathByUuid.end())
         {
             return false;
         }
-        outHandle = it->second;
+        std::expected<Mesh, std::string> mesh = loadMesh(assets.root + "/" + path->second);
+        if (!mesh)
+        {
+            logWarn(std::format("asset {}: {}", id.value, mesh.error()));
+            return false;
+        }
+        std::expected<u32, std::string> handle = uploadMesh(renderer, *mesh);
+        if (!handle)
+        {
+            logWarn(std::format("asset {}: {}", id.value, handle.error()));
+            return false;
+        }
+        assets.meshHandleByUuid[id.value] = *handle;
+        outHandle = *handle;
         return true;
     }
 
@@ -65,7 +143,7 @@ export namespace se
     }
 
     // Draws every entity with a Transform + Mesh, viewed through the first primary
-    // camera. A no-op when there is no camera or no viewport.
+    // camera, resolving each mesh on demand. A no-op without a camera or viewport.
     void renderScene(Renderer& renderer, Scene& scene, AssetServer& assets, u32 meshPipeline)
     {
         bool haveCamera = false;
@@ -108,7 +186,7 @@ export namespace se
             [&](Entity, TransformComponent& transform, MeshComponent& mesh)
             {
                 u32 handle = 0;
-                if (!resolveMesh(assets, mesh.mesh, handle))
+                if (!loadMeshAsset(assets, renderer, mesh.mesh, handle))
                 {
                     return;
                 }

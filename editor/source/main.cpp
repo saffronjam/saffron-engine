@@ -44,6 +44,7 @@ int main()
     {
         state->editor = se::newEditorContext();
         state->control = se::newControlContext();
+        state->assets = se::newAssetServer(se::assetPath("assets"));
 
         std::expected<se::u32, std::string> pipeline = se::newMeshPipeline(app.renderer, "shaders/mesh.spv");
         if (!pipeline)
@@ -72,7 +73,7 @@ int main()
         {
             if (state->control != nullptr)
             {
-                se::pollControl(*state->control, app.window, app.renderer, *state->editor);
+                se::pollControl(*state->control, app.window, app.renderer, *state->editor, state->assets);
             }
         };
         layer.onRender = [state, &app]()

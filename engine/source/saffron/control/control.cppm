@@ -25,6 +25,7 @@ import Saffron.Window;
 import Saffron.Rendering;
 import Saffron.Scene;
 import Saffron.Editor;
+import Saffron.Assets;
 
 export namespace se
 {
@@ -37,6 +38,7 @@ export namespace se
         Window& window;
         Renderer& renderer;
         EditorContext& editor;
+        AssetServer& assets;
     };
 
     /// A control command: a name, one-line help, and a handler that runs on the
@@ -217,6 +219,27 @@ export namespace se
                 return entityRef(ctx.editor.scene, entity);
             });
 
+        // Imports + bakes a model, then spawns an entity carrying it (selected).
+        registerCommand(reg, "import-model", "import-model {path}",
+            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            {
+                const std::string path = asString(positionalOr(params, "path", 0), "");
+                if (path.empty())
+                {
+                    return std::unexpected(std::string{ "missing 'path'" });
+                }
+                std::expected<Uuid, std::string> id = importModel(ctx.assets, ctx.renderer, path);
+                if (!id)
+                {
+                    return std::unexpected(id.error());
+                }
+                Entity entity = spawnMesh(ctx.editor.scene, "Mesh", *id);
+                setSelection(ctx.editor, entity);
+                json result = entityRef(ctx.editor.scene, entity);
+                result["asset"] = id->value;
+                return result;
+            });
+
         registerCommand(reg, "destroy-entity", "destroy-entity {entity}",
             [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
             {
@@ -318,7 +341,13 @@ export namespace se
                 {
                     return std::unexpected(std::string{ "Transform component is not registered" });
                 }
-                json body;
+                if (!row->has(ctx.editor.scene, *entity))
+                {
+                    return std::unexpected(std::string{ "entity has no Transform" });
+                }
+                // Merge provided fields over the current transform so unspecified
+                // fields (e.g. scale) are preserved rather than reset to defaults.
+                json body = row->serialize(ctx.editor.scene, *entity);
                 if (params.contains("translation")) { body["translation"] = params["translation"]; }
                 if (params.contains("rotation")) { body["rotation"] = params["rotation"]; }
                 if (params.contains("scale")) { body["scale"] = params["scale"]; }
@@ -625,13 +654,13 @@ export namespace se
 
     /// Drains and runs any pending control commands on the calling (main) thread.
     /// Call once per frame.
-    void pollControl(ControlContext& ctx, Window& window, Renderer& renderer, EditorContext& editor)
+    void pollControl(ControlContext& ctx, Window& window, Renderer& renderer, EditorContext& editor, AssetServer& assets)
     {
         if (!ctx.active)
         {
             return;
         }
-        EngineContext engine{ window, renderer, editor };
+        EngineContext engine{ window, renderer, editor, assets };
         drainControlServer(ctx.server, ctx.registry, engine);
     }
 }
