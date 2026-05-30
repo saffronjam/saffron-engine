@@ -13,6 +13,7 @@ import Saffron.Window;
 import Saffron.Rendering;
 import Saffron.Ui;
 import Saffron.Editor;
+import Saffron.Control;
 
 namespace
 {
@@ -23,6 +24,7 @@ namespace
     struct EditorState
     {
         se::EditorContext* editor = nullptr;
+        se::ControlContext* control = nullptr;
         se::u32 trianglePipeline = 0;
         bool pipelineReady = false;
     };
@@ -38,6 +40,7 @@ int main()
     config.onCreate = [state](se::App& app)
     {
         state->editor = se::newEditorContext();
+        state->control = se::newControlContext();
 
         std::expected<se::u32, std::string> pipeline =
             se::newTrianglePipeline(app.renderer, "shaders/triangle.spv");
@@ -53,6 +56,13 @@ int main()
 
         se::Layer layer;
         layer.name = "EditorLayer";
+        layer.onUpdate = [state, &app](se::TimeSpan)
+        {
+            if (state->control != nullptr)
+            {
+                se::pollControl(*state->control, app.window, app.renderer, *state->editor);
+            }
+        };
         layer.onRender = [state, &app]()
         {
             if (state->pipelineReady)
@@ -82,6 +92,11 @@ int main()
 
     config.onExit = [state](se::App&)
     {
+        if (state->control != nullptr)
+        {
+            se::destroyControlContext(state->control);
+            state->control = nullptr;
+        }
         if (state->editor != nullptr)
         {
             se::destroyEditorContext(state->editor);

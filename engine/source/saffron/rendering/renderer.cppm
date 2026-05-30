@@ -9,6 +9,7 @@ module;
 #include <SDL3/SDL_vulkan.h>
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
+#include <stb_image_write.h>
 
 #include <array>
 #include <cstdint>
@@ -16,6 +17,7 @@ module;
 #include <format>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -193,6 +195,7 @@ export namespace se
         vk::SwapchainKHR swapchain;
         vk::Format swapchainFormat = vk::Format::eUndefined;
         vk::Extent2D swapchainExtent;
+        bool swapchainCaptureSupported = false;  // surface allows TRANSFER_SRC (window screenshots)
         std::vector<vk::Image> swapchainImages;
         std::vector<vk::ImageView> swapchainImageViews;
         std::vector<vk::Semaphore> renderFinished;  // one per swapchain image
@@ -211,6 +214,10 @@ export namespace se
         u32 viewportDesiredWidth = 0;  // requested by the UI panel (applied next frame)
         u32 viewportDesiredHeight = 0;
         u32 viewportGeneration = 0;    // bumped whenever the offscreen image is recreated
+
+        // Pending window screenshot, consumed in endFrame: the swapchain image is
+        // only safely owned in-frame, so the copy is deferred there.
+        std::optional<std::string> captureNextSwapchainPath;
 
         Window* window = nullptr;  // borrowed
     };
@@ -234,8 +241,13 @@ export namespace se
     std::expected<u32, std::string> newTrianglePipeline(Renderer& renderer, std::string_view shaderName);
     void drawTriangle(Renderer& renderer, u32 pipelineHandle);
 
-    // Copies the current offscreen viewport image to a PPM file (verification aid).
+    // Copies the offscreen viewport image to a PNG. Synchronous (own submit +
+    // waitIdle), safe to call between frames.
     std::expected<void, std::string> captureViewport(Renderer& renderer, const std::string& path);
+
+    // Requests a PNG of the next presented frame (written in endFrame). Fails here
+    // if the surface lacks TRANSFER_SRC; otherwise returns immediately.
+    std::expected<void, std::string> requestWindowCapture(Renderer& renderer, std::string path);
 }
 
 // ---------------------------------------------------------------------------
@@ -313,13 +325,32 @@ namespace se
 
         std::expected<void, std::string> buildSwapchain(Renderer& renderer, u32 width, u32 height)
         {
+            // TRANSFER_SRC on swapchain images is not spec-guaranteed (only
+            // COLOR_ATTACHMENT is). Query support and only request it when present
+            // so an exotic surface disables window screenshots rather than failing
+            // the whole swapchain build.
+            renderer.swapchainCaptureSupported = false;
+            vk::ResultValue<vk::SurfaceCapabilitiesKHR> caps =
+                renderer.physicalDevice.getSurfaceCapabilitiesKHR(renderer.surface);
+            if (caps.result == vk::Result::eSuccess &&
+                (caps.value.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferSrc))
+            {
+                renderer.swapchainCaptureSupported = true;
+            }
+
+            VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            if (renderer.swapchainCaptureSupported)
+            {
+                usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            }
+
             vkb::SwapchainBuilder builder{ renderer.vkbDevice };
             builder.set_desired_format(VkSurfaceFormatKHR{
                        .format = VK_FORMAT_B8G8R8A8_UNORM,
                        .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })
                 .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
                 .set_desired_extent(width, height)
-                .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+                .add_image_usage_flags(usage);
 
             if (renderer.swapchain)
             {
@@ -469,6 +500,71 @@ namespace se
             result.format = format;
             result.layout = vk::ImageLayout::eUndefined;
             return result;
+        }
+
+        // Host-visible, mapped buffer the caller owns (vmaDestroyBuffer when done).
+        std::expected<void, std::string> newHostCaptureBuffer(
+            Renderer& renderer, vk::DeviceSize bytes,
+            VkBuffer& outBuffer, VmaAllocation& outAlloc, VmaAllocationInfo& outInfo)
+        {
+            VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+            bufferInfo.size = bytes;
+            bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            VmaAllocationCreateInfo allocInfo{};
+            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+            allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            if (vmaCreateBuffer(renderer.allocator, &bufferInfo, &allocInfo, &outBuffer, &outAlloc, &outInfo) != VK_SUCCESS)
+            {
+                return std::unexpected(std::string{ "capture: vmaCreateBuffer failed" });
+            }
+            return {};
+        }
+
+        // Records a fromLayout->TransferSrc barrier, the image->buffer copy, and a
+        // TransferSrc->toLayout barrier into a caller-owned command buffer.
+        void captureImageToBuffer(
+            vk::CommandBuffer cmd, vk::Image image, vk::Extent2D extent,
+            vk::ImageLayout fromLayout, vk::PipelineStageFlags2 fromStage, vk::AccessFlags2 fromAccess,
+            vk::ImageLayout toLayout, vk::PipelineStageFlags2 toStage, vk::AccessFlags2 toAccess,
+            vk::Buffer destination)
+        {
+            transitionImage(
+                cmd, image, fromLayout, vk::ImageLayout::eTransferSrcOptimal,
+                fromStage, fromAccess,
+                vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead);
+
+            vk::BufferImageCopy region{};
+            region.imageSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+            region.imageExtent = vk::Extent3D{ extent.width, extent.height, 1 };
+            cmd.copyImageToBuffer(image, vk::ImageLayout::eTransferSrcOptimal, destination, region);
+
+            transitionImage(
+                cmd, image, vk::ImageLayout::eTransferSrcOptimal, toLayout,
+                vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead,
+                toStage, toAccess);
+        }
+
+        // Writes a PNG, reordering BGRA source pixels to RGB.
+        std::expected<void, std::string> writeBufferToPng(
+            const unsigned char* pixels, u32 width, u32 height, vk::Format format, const std::string& path)
+        {
+            const bool bgr = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
+            std::vector<unsigned char> rgb(static_cast<std::size_t>(width) * height * 3);
+            for (u32 i = 0; i < width * height; i = i + 1)
+            {
+                const u32 r = bgr ? (i * 4 + 2) : (i * 4 + 0);
+                const u32 b = bgr ? (i * 4 + 0) : (i * 4 + 2);
+                rgb[i * 3 + 0] = pixels[r];
+                rgb[i * 3 + 1] = pixels[i * 4 + 1];
+                rgb[i * 3 + 2] = pixels[b];
+            }
+            const int ok = stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height),
+                                          3, rgb.data(), static_cast<int>(width) * 3);
+            if (ok == 0)
+            {
+                return std::unexpected(std::format("stbi_write_png failed for '{}'", path));
+            }
+            return {};
         }
     }
 
@@ -828,11 +924,46 @@ namespace se
         }
         frame.commandBuffer.endRendering();
 
-        transitionImage(
-            frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex],
-            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
-            vk::PipelineStageFlagBits2::eBottomOfPipe, vk::AccessFlagBits2::eNone);
+        // The swapchain image is only safely owned in-frame, so a pending capture
+        // is copied here, between the ImGui pass and present; its COLOR->PRESENT
+        // transition is folded into captureImageToBuffer's toLayout.
+        VkBuffer captureBuffer = VK_NULL_HANDLE;
+        VmaAllocation captureAlloc = nullptr;
+        VmaAllocationInfo captureInfo{};
+        vk::Extent2D captureExtent{};
+        bool doCapture = renderer.captureNextSwapchainPath.has_value();
+        if (doCapture)
+        {
+            captureExtent = renderer.swapchainExtent;
+            const vk::DeviceSize bytes =
+                static_cast<vk::DeviceSize>(captureExtent.width) * captureExtent.height * 4;
+            std::expected<void, std::string> created =
+                newHostCaptureBuffer(renderer, bytes, captureBuffer, captureAlloc, captureInfo);
+            if (!created)
+            {
+                logError(created.error());
+                doCapture = false;
+                renderer.captureNextSwapchainPath.reset();
+            }
+        }
+        if (doCapture)
+        {
+            captureImageToBuffer(
+                frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex], captureExtent,
+                vk::ImageLayout::eColorAttachmentOptimal,
+                vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
+                vk::ImageLayout::ePresentSrcKHR,
+                vk::PipelineStageFlagBits2::eBottomOfPipe, vk::AccessFlagBits2::eNone,
+                vk::Buffer{ captureBuffer });
+        }
+        else
+        {
+            transitionImage(
+                frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex],
+                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
+                vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
+                vk::PipelineStageFlagBits2::eBottomOfPipe, vk::AccessFlagBits2::eNone);
+        }
 
         static_cast<void>(frame.commandBuffer.end());
 
@@ -863,6 +994,29 @@ namespace se
         if (present == vk::Result::eErrorOutOfDateKHR || present == vk::Result::eSuboptimalKHR)
         {
             recreateSwapchain(renderer);
+        }
+
+        // The recorded copy is now submitted; idle so it completed, then write the PNG.
+        if (doCapture && captureBuffer != VK_NULL_HANDLE)
+        {
+            static_cast<void>(renderer.device.waitIdle());
+            vmaInvalidateAllocation(renderer.allocator, captureAlloc, 0, VK_WHOLE_SIZE);
+            std::expected<void, std::string> wrote = writeBufferToPng(
+                static_cast<const unsigned char*>(captureInfo.pMappedData),
+                captureExtent.width, captureExtent.height,
+                renderer.swapchainFormat, *renderer.captureNextSwapchainPath);
+            if (!wrote)
+            {
+                logError(wrote.error());
+            }
+            else
+            {
+                logInfo(std::format("captured window ({}x{}) to {}",
+                                    captureExtent.width, captureExtent.height,
+                                    *renderer.captureNextSwapchainPath));
+            }
+            vmaDestroyBuffer(renderer.allocator, captureBuffer, captureAlloc);
+            renderer.captureNextSwapchainPath.reset();
         }
 
         renderer.frameIndex = (renderer.frameIndex + 1) % MaxFramesInFlight;
@@ -989,18 +1143,16 @@ namespace se
         const u32 height = img.extent.height;
         const vk::DeviceSize byteSize = static_cast<vk::DeviceSize>(width) * height * 4;
 
-        VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-        bufferInfo.size = byteSize;
-        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        VmaAllocationCreateInfo bufferAlloc{};
-        bufferAlloc.usage = VMA_MEMORY_USAGE_AUTO;
-        bufferAlloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        // The offscreen image may still be sampled by an in-flight frame; idle so
+        // the capture's layout transition cannot race that read.
+        static_cast<void>(renderer.device.waitIdle());
+
         VkBuffer rawBuffer = VK_NULL_HANDLE;
         VmaAllocation bufferAllocation = nullptr;
         VmaAllocationInfo bufferAllocInfo{};
-        if (vmaCreateBuffer(renderer.allocator, &bufferInfo, &bufferAlloc, &rawBuffer, &bufferAllocation, &bufferAllocInfo) != VK_SUCCESS)
+        if (auto created = newHostCaptureBuffer(renderer, byteSize, rawBuffer, bufferAllocation, bufferAllocInfo); !created)
         {
-            return std::unexpected(std::string{ "capture: vmaCreateBuffer failed" });
+            return std::unexpected(created.error());
         }
 
         vk::CommandBufferAllocateInfo allocInfo{};
@@ -1019,16 +1171,21 @@ namespace se
         beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         static_cast<void>(cmd.begin(beginInfo));
 
-        transitionImage(
-            cmd, img.image, img.layout, vk::ImageLayout::eTransferSrcOptimal,
+        // Leave the image in ShaderReadOnly so the next frame's producer barrier holds.
+        vk::PipelineStageFlags2 fromStage = vk::PipelineStageFlagBits2::eFragmentShader;
+        vk::AccessFlags2 fromAccess = vk::AccessFlagBits2::eShaderSampledRead;
+        if (img.layout != vk::ImageLayout::eShaderReadOnlyOptimal)
+        {
+            fromStage = vk::PipelineStageFlagBits2::eTopOfPipe;
+            fromAccess = vk::AccessFlagBits2::eNone;
+        }
+        captureImageToBuffer(
+            cmd, img.image, img.extent,
+            img.layout, fromStage, fromAccess,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
             vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
-            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead);
-        img.layout = vk::ImageLayout::eTransferSrcOptimal;
-
-        vk::BufferImageCopy region{};
-        region.imageSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
-        region.imageExtent = vk::Extent3D{ width, height, 1 };
-        cmd.copyImageToBuffer(img.image, vk::ImageLayout::eTransferSrcOptimal, vk::Buffer{ rawBuffer }, region);
+            vk::Buffer{ rawBuffer });
+        img.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
         static_cast<void>(cmd.end());
 
@@ -1040,23 +1197,24 @@ namespace se
         static_cast<void>(renderer.device.waitIdle());
         vmaInvalidateAllocation(renderer.allocator, bufferAllocation, 0, VK_WHOLE_SIZE);
 
-        const unsigned char* pixels = static_cast<const unsigned char*>(bufferAllocInfo.pMappedData);
-        std::ofstream out(path, std::ios::binary);
-        if (!out)
-        {
-            vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
-            return std::unexpected(std::format("capture: cannot open '{}'", path));
-        }
-        out << "P6\n" << width << ' ' << height << "\n255\n";
-        for (u32 i = 0; i < width * height; i = i + 1)
-        {
-            out.put(static_cast<char>(pixels[i * 4 + 2]));  // R  (offscreen is B8G8R8A8)
-            out.put(static_cast<char>(pixels[i * 4 + 1]));  // G
-            out.put(static_cast<char>(pixels[i * 4 + 0]));  // B
-        }
-
+        std::expected<void, std::string> wrote = writeBufferToPng(
+            static_cast<const unsigned char*>(bufferAllocInfo.pMappedData), width, height, img.format, path);
         vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
+        if (!wrote)
+        {
+            return std::unexpected(wrote.error());
+        }
         logInfo(std::format("captured viewport ({}x{}) to {}", width, height, path));
+        return {};
+    }
+
+    std::expected<void, std::string> requestWindowCapture(Renderer& renderer, std::string path)
+    {
+        if (!renderer.swapchainCaptureSupported)
+        {
+            return std::unexpected(std::string{ "window capture unsupported: surface lacks TRANSFER_SRC usage" });
+        }
+        renderer.captureNextSwapchainPath = std::move(path);
         return {};
     }
 }
