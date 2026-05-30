@@ -145,15 +145,20 @@ namespace se
 
     void viewportPanel(Ui& ui, Renderer& renderer)
     {
+        ImGui::SetNextWindowSize(ImVec2{ 1280.0f, 720.0f }, ImGuiCond_FirstUseEver);
         ImGui::Begin("Viewport");
 
         // Request the offscreen image be sized to the panel (in pixels). The
         // renderer applies the resize at the start of the next frame.
         ImVec2 avail = ImGui::GetContentRegionAvail();
         ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        if (scale.x > 0.0f) { scaleX = scale.x; }
+        if (scale.y > 0.0f) { scaleY = scale.y; }
         setViewportDesiredSize(renderer,
-                               static_cast<u32>(avail.x * scale.x),
-                               static_cast<u32>(avail.y * scale.y));
+                               static_cast<u32>(avail.x * scaleX),
+                               static_cast<u32>(avail.y * scaleY));
 
         // Re-register the texture when the renderer recreated the offscreen image.
         // Safe: the recreate path issues a full device idle before this runs.
