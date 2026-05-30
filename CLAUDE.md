@@ -57,6 +57,7 @@ code does now — and *why* if it's non-obvious — never by contrast with the p
 | Math | GLM | 1.0.1 | |
 | Serialization | nlohmann/json | 3.12.0 | `JSON_NOEXCEPTION`; scene save/load |
 | Screenshots | stb_image_write | 1.16 | vendored `third_party/stb` + `cmake/stb_impl.cpp` |
+| Texture decode | stb_image | 2.30 | vendored alongside; decodes albedo PNG/JPG |
 | glTF import | cgltf | 1.15 | vendored single header + impl TU; no-throw C API |
 | OBJ import | tinyobjloader | 1.0.6 | vendored single header + impl TU; no-throw bool API |
 
@@ -200,9 +201,15 @@ Working and verified (validation-clean) in the toolbox:
   pipeline; `Saffron.Assets` (an `AssetServer` Uuid→mesh registry, persisted to `asset_registry.json`) +
   `renderScene` draw the ECS scene (`MeshComponent` + `CameraComponent`) through the primary camera. Import via
   `se import-model`, File ▸ Import, or drag-and-drop. See `mesh-asset-pipeline` memory.
+- ✅ **Materials + textures + lighting**: descriptor sets (set 0 = albedo combined image sampler, set 1 = a
+  per-frame directional-light UBO) + a shared sampler + `GpuTexture`/`uploadTexture`; a per-entity
+  `MaterialComponent` (base color + albedo `Uuid`) and a `DirectionalLightComponent`; albedo textures imported
+  from glTF/OBJ (or `se import-texture`), copied into `assets/textures/`, sRGB, persisted + reloaded
+  cross-process. `se set-material` / `se set-light`.
 
 Not done yet (planned):
-- **Materials + textures** (the `materialSlot`/tangent seams are reserved), then a Slang PBR pass.
+- **PBR** (metallic/roughness/normal maps — tangents + `materialSlot` per-submesh multi-material are reserved),
+  shadows, then a frame graph.
 - `RenderGraph`/`RenderPass` frame graph; `Saffron.Physics` (Jolt) RigidBody + system; `resolveRefs`
   + scene-graph parenting; undo/redo.
 - `volk`, multi-viewport ImGui, hardware GPU in the toolbox.
