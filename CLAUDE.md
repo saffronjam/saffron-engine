@@ -53,6 +53,7 @@ code does now — and *why* if it's non-obvious — never by contrast with the p
 | GPU allocation | VMA | 3.3.0 | one impl TU in `cmake/vma_impl.cpp` |
 | ECS | EnTT | 3.16.0 | scene/entity + value components |
 | UI | Dear ImGui | 1.92.8-**docking** | `imgui_impl_sdl3` + `imgui_impl_vulkan`, dynamic rendering |
+| Gizmo | ImGuizmo | master | compiled into the `imgui` lib; in-viewport TRS manipulation |
 | Shaders | Slang | 2026.10 | `slangc -target spirv`, compiled in CMake |
 | Math | GLM | 1.0.1 | |
 | Serialization | nlohmann/json | 3.12.0 | `JSON_NOEXCEPTION`; scene save/load |
@@ -173,9 +174,13 @@ Working and verified (validation-clean) in the toolbox:
 - ✅ Vulkan 1.3 via Vulkan-Hpp `vk::` (no-exceptions): device/swapchain (vk-bootstrap),
   VMA allocator, sync2 + dynamic rendering, clears + presents, swapchain recreation,
   per-image-fence sync.
-- ✅ RAII meta-layer (`Pipeline`, `Image`), renderer-owned, freed before the device.
-- ✅ Slang shader compiled to SPIR-V in CMake → graphics pipeline → triangle drawn
-  via the `onRender` layer hook + the `submit(lambda)` seam.
+- ✅ RAII meta-layer wrappers (`Pipeline`, `Image`, `GpuMesh`, `GpuTexture`, `Buffer`), move-only,
+  passed around as **`Ref<T>` = `std::shared_ptr<T>`** logical objects (no opaque handles, no base class).
+  Factories return `std::expected<Ref<T>, ...>`; the dtor frees the `vk::`/VMA resource when the last `Ref`
+  drops. Teardown contract: the client releases its `Ref`s in `onExit` and `run` calls `waitGpuIdle` first,
+  so nothing outlives `vmaDestroyAllocator`. See `meta-layer-resources` memory.
+- ✅ Slang shaders compiled to SPIR-V in CMake → graphics + compute pipelines, recorded via the
+  `submit(lambda)` seam / `onRender` hook.
 - ✅ Two-pass frame: scene → offscreen `Image`, then ImGui → swapchain. The scene shows
   in a dockable **Viewport** panel (`ImGui_ImplVulkan_AddTexture`, 1.92.8 no-sampler;
   generation-counter descriptor refresh; 1-frame-lag resize). `SAFFRON_CAPTURE=path`
@@ -189,8 +194,8 @@ Working and verified (validation-clean) in the toolbox:
   via `SubscriberList<Entity>`.
 - ✅ **Control plane** (`Saffron.Control`) + the `se` CLI: a non-blocking unix socket, drained per
   frame on the main thread, drives the running editor (list/create/destroy/select entities,
-  add/remove/set component, set-transform, save/load scene, screenshot viewport|window to PNG, quit).
-  See `control-plane` memory.
+  add/remove/set component, set-transform, set-material, save/load scene, import-model/texture,
+  render-stats, set-clustered, screenshot viewport|window to PNG, quit). See `control-plane` memory.
 
 > **Keep `se` current.** When a feature adds engine state worth driving or inspecting, add a matching
 > control command (one `registerCommand` in `control.cppm`) so the running editor stays scriptable and
@@ -201,18 +206,31 @@ Working and verified (validation-clean) in the toolbox:
   pipeline; `Saffron.Assets` (an `AssetServer` Uuid→mesh registry, persisted to `asset_registry.json`) +
   `renderScene` draw the ECS scene (`MeshComponent` + `CameraComponent`) through the primary camera. Import via
   `se import-model`, File ▸ Import, or drag-and-drop. See `mesh-asset-pipeline` memory.
-- ✅ **Materials + textures + lighting**: descriptor sets (set 0 = albedo combined image sampler, set 1 = a
-  per-frame directional-light UBO) + a shared sampler + `GpuTexture`/`uploadTexture`; a per-entity
-  `MaterialComponent` (base color + albedo `Uuid`) and a `DirectionalLightComponent`; albedo textures imported
-  from glTF/OBJ (or `se import-texture`), copied into `assets/textures/`, sRGB, persisted + reloaded
-  cross-process. `se set-material` / `se set-light`.
+- ✅ **Materials + textures**: descriptor sets (set 0 = albedo combined image sampler) + a shared sampler +
+  `GpuTexture`/`uploadTexture`; a per-entity `MaterialComponent` (base color + albedo `Uuid`); albedo textures
+  imported from glTF/OBJ (or `se import-texture`), copied into `assets/textures/`, sRGB, persisted + reloaded
+  cross-process. `se set-material`.
+- ✅ **Instanced scene rendering**: `renderScene` buckets `(mesh, albedo)` and draws each bucket as one
+  instanced `drawIndexed` from a per-frame instance SSBO (set 2) indexed by `SV_VulkanInstanceID`
+  (= `firstInstance + instance`; plain `SV_InstanceID` is base-relative). Per-instance model + normal matrix +
+  base color. `se render-stats` reports draw calls / batches / instances.
+- ✅ **Clustered forward (Forward+) lighting**: `DirectionalLightComponent` + dynamic
+  `PointLightComponent`/`SpotLightComponent` → a per-frame light SSBO (set 1); the engine's first **compute**
+  pipeline (`light_cull.slang`) culls them into a 16×9×24 froxel grid (exponential view-space Z), dispatched in
+  `endFrame` before the scene pass with a compute→fragment barrier; the mesh fragment loops only its cluster's
+  lights. `se set-clustered 0` falls back to a brute-force loop (verified pixel-identical). See `clustered-lighting`
+  memory. (Per-cluster cap 64; excess lights are dropped silently.)
+- ✅ **Scene authoring**: in-viewport **ImGuizmo** translate/rotate/scale (un-flipped projection so it is not
+  mirrored; W/E/R cycle; `glm::decompose` write-back) + a **Create** menu (Empty / Cube / Point/Spot/Directional
+  Light / Camera). `primaryCamera`/`cameraProjection` in `Saffron.Scene` are the single camera source for
+  `renderScene` (flipped) and the gizmo (un-flipped).
 
 Not done yet (planned):
 - **PBR** (metallic/roughness/normal maps — tangents + `materialSlot` per-submesh multi-material are reserved),
-  shadows, then a frame graph.
+  shadows, then a frame graph. Bindless materials (cross-texture instancing), GPU culling, transparency pass.
 - `RenderGraph`/`RenderPass` frame graph; `Saffron.Physics` (Jolt) RigidBody + system; `resolveRefs`
   + scene-graph parenting; undo/redo.
-- `volk`, multi-viewport ImGui, hardware GPU in the toolbox.
+- `volk`, multi-viewport ImGui (incl. multi-viewport gizmo), hardware GPU in the toolbox.
 
 See the memory notes (`build-environment`, `saffron-rewrite-plan`,
 `code-style-go-conventions`) for deeper rationale.
