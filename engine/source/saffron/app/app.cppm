@@ -177,6 +177,17 @@ export namespace se
         {
             config.onExit(app);
         }
+
+        // Optional verification: dump the offscreen viewport image to a PPM.
+        if (const char* capturePath = std::getenv("SAFFRON_CAPTURE"))
+        {
+            std::expected<void, std::string> captured = captureViewport(app.renderer, std::string{ capturePath });
+            if (!captured)
+            {
+                logError(captured.error());
+            }
+        }
+
         destroyUi(app.renderer, app.ui);
         destroyRenderer(app.renderer);
         destroyWindow(app.window);

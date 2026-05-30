@@ -24,6 +24,8 @@ export namespace se
     struct Ui
     {
         vk::DescriptorPool descriptorPool;
+        ImTextureID viewportTexture = 0;   // ImGui handle for the offscreen image
+        u32 knownViewportGeneration = 0;   // offscreen generation we last registered
         bool initialized = false;
     };
 
@@ -32,6 +34,7 @@ export namespace se
 
     void uiBeginFrame(Ui& ui);                  // NewFrame + dockspace host
     void uiEndFrame(Ui& ui);                    // ImGui::Render()
+    void viewportPanel(Ui& ui, Renderer& renderer);  // dockable scene view
     void uiRecordDrawData(Renderer& renderer);  // submit draw data into the frame
 }
 
@@ -94,6 +97,12 @@ namespace se
 
         window.eventSinks.push_back([](const SDL_Event& event) { ImGui_ImplSDL3_ProcessEvent(&event); });
 
+        // Register the offscreen viewport image as an ImGui texture (once; refreshed
+        // in viewportPanel only when the renderer recreates the image).
+        ui.viewportTexture = (ImTextureID)ImGui_ImplVulkan_AddTexture(
+            viewportImageView(renderer), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        ui.knownViewportGeneration = viewportGeneration(renderer);
+
         ui.initialized = true;
         logInfo("imgui ready — docking enabled");
         return ui;
@@ -106,6 +115,11 @@ namespace se
             return;
         }
         static_cast<void>(renderer.device.waitIdle());
+        if (ui.viewportTexture != 0)
+        {
+            ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)ui.viewportTexture);
+            ui.viewportTexture = 0;
+        }
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
@@ -129,9 +143,41 @@ namespace se
         ImGui::Render();
     }
 
+    void viewportPanel(Ui& ui, Renderer& renderer)
+    {
+        ImGui::Begin("Viewport");
+
+        // Request the offscreen image be sized to the panel (in pixels). The
+        // renderer applies the resize at the start of the next frame.
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+        setViewportDesiredSize(renderer,
+                               static_cast<u32>(avail.x * scale.x),
+                               static_cast<u32>(avail.y * scale.y));
+
+        // Re-register the texture when the renderer recreated the offscreen image.
+        // Safe: the recreate path issues a full device idle before this runs.
+        if (viewportGeneration(renderer) != ui.knownViewportGeneration)
+        {
+            if (ui.viewportTexture != 0)
+            {
+                ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)ui.viewportTexture);
+            }
+            ui.viewportTexture = (ImTextureID)ImGui_ImplVulkan_AddTexture(
+                viewportImageView(renderer), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            ui.knownViewportGeneration = viewportGeneration(renderer);
+        }
+
+        if (ui.viewportTexture != 0 && avail.x > 0.0f && avail.y > 0.0f)
+        {
+            ImGui::Image(ui.viewportTexture, avail);  // logical size; image is pixel-sized
+        }
+        ImGui::End();
+    }
+
     void uiRecordDrawData(Renderer& renderer)
     {
-        submit(renderer, [](vk::CommandBuffer cmd)
+        submitUi(renderer, [](vk::CommandBuffer cmd)
         {
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), static_cast<VkCommandBuffer>(cmd));
         });

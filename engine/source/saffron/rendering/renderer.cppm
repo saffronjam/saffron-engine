@@ -102,6 +102,80 @@ export namespace se
         }
     };
 
+    // A VMA-allocated image that owns its handle + view + allocation and frees
+    // them on destruction. Move-only, like Pipeline. Used for offscreen targets.
+    struct Image
+    {
+        vk::Device device;                 // borrowed
+        VmaAllocator allocator = nullptr;  // borrowed
+        vk::Image image;
+        vk::ImageView view;
+        VmaAllocation alloc = nullptr;
+        vk::Extent2D extent;
+        vk::Format format = vk::Format::eUndefined;
+        vk::ImageLayout layout = vk::ImageLayout::eUndefined;  // tracked across frames
+
+        Image() = default;
+        Image(const Image&) = delete;
+        Image& operator=(const Image&) = delete;
+
+        Image(Image&& other) noexcept
+            : device(other.device), allocator(other.allocator), image(other.image),
+              view(other.view), alloc(other.alloc), extent(other.extent),
+              format(other.format), layout(other.layout)
+        {
+            other.device = nullptr;
+            other.allocator = nullptr;
+            other.image = nullptr;
+            other.view = nullptr;
+            other.alloc = nullptr;
+            other.layout = vk::ImageLayout::eUndefined;
+        }
+
+        Image& operator=(Image&& other) noexcept
+        {
+            if (this != &other)
+            {
+                reset();
+                device = other.device;
+                allocator = other.allocator;
+                image = other.image;
+                view = other.view;
+                alloc = other.alloc;
+                extent = other.extent;
+                format = other.format;
+                layout = other.layout;
+                other.device = nullptr;
+                other.allocator = nullptr;
+                other.image = nullptr;
+                other.view = nullptr;
+                other.alloc = nullptr;
+                other.layout = vk::ImageLayout::eUndefined;
+            }
+            return *this;
+        }
+
+        ~Image()
+        {
+            reset();
+        }
+
+        void reset()
+        {
+            if (device && view)
+            {
+                device.destroyImageView(view);
+            }
+            if (allocator != nullptr && image)
+            {
+                vmaDestroyImage(allocator, static_cast<VkImage>(image), alloc);
+            }
+            view = nullptr;
+            image = nullptr;
+            alloc = nullptr;
+        }
+    };
+
     struct Renderer
     {
         // vk-bootstrap keeps the bits we need for clean teardown.
@@ -129,8 +203,14 @@ export namespace se
         u32 imageIndex = 0;
 
         std::array<f32, 4> clearColor{ 0.05f, 0.06f, 0.08f, 1.0f };
-        std::vector<RenderFn> submissions;
-        std::vector<Pipeline> pipelines;  // owned; destroyed before the device
+        std::vector<RenderFn> sceneSubmissions;  // replayed into the offscreen pass
+        std::vector<RenderFn> uiSubmissions;     // replayed into the swapchain pass
+        std::vector<Pipeline> pipelines;         // owned; destroyed before the device
+
+        Image offscreenViewport;       // scene render target shown in the Viewport panel
+        u32 viewportDesiredWidth = 0;  // requested by the UI panel (applied next frame)
+        u32 viewportDesiredHeight = 0;
+        u32 viewportGeneration = 0;    // bumped whenever the offscreen image is recreated
 
         Window* window = nullptr;  // borrowed
     };
@@ -139,14 +219,23 @@ export namespace se
     void destroyRenderer(Renderer& renderer);
 
     bool beginFrame(Renderer& renderer);
-    void submit(Renderer& renderer, RenderFn fn);
+    void submit(Renderer& renderer, RenderFn fn);    // scene pass (offscreen target)
+    void submitUi(Renderer& renderer, RenderFn fn);  // ui pass (swapchain)
     void endFrame(Renderer& renderer);
+
+    // The offscreen Viewport target the editor samples + displays in a panel.
+    void setViewportDesiredSize(Renderer& renderer, u32 width, u32 height);
+    vk::ImageView viewportImageView(const Renderer& renderer);
+    u32 viewportGeneration(const Renderer& renderer);
 
     std::string assetPath(std::string_view relative);
 
     // Creates a pipeline owned by the renderer; returns its handle (index).
     std::expected<u32, std::string> newTrianglePipeline(Renderer& renderer, std::string_view shaderName);
     void drawTriangle(Renderer& renderer, u32 pipelineHandle);
+
+    // Copies the current offscreen viewport image to a PPM file (verification aid).
+    std::expected<void, std::string> captureViewport(Renderer& renderer, const std::string& path);
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +413,63 @@ namespace se
             info.pCode = code.data();
             return checked(device.createShaderModule(info), std::format("createShaderModule '{}'", path));
         }
+
+        std::expected<Image, std::string> newColorImage(Renderer& renderer, u32 width, u32 height, vk::Format format)
+        {
+            vk::FormatProperties props = renderer.physicalDevice.getFormatProperties(format);
+            vk::FormatFeatureFlags needed =
+                vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eSampledImage;
+            if ((props.optimalTilingFeatures & needed) != needed)
+            {
+                return std::unexpected(std::format("format {} cannot be a sampled color attachment", vk::to_string(format)));
+            }
+
+            VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.format = static_cast<VkFormat>(format);
+            imageInfo.extent = VkExtent3D{ width, height, 1 };
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                              VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+            VmaAllocationCreateInfo allocInfo{};
+            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+            allocInfo.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+            VkImage rawImage = VK_NULL_HANDLE;
+            VmaAllocation allocation = nullptr;
+            if (vmaCreateImage(renderer.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
+            {
+                return std::unexpected(std::string{ "vmaCreateImage failed for offscreen target" });
+            }
+
+            vk::ImageViewCreateInfo viewInfo{};
+            viewInfo.image = vk::Image{ rawImage };
+            viewInfo.viewType = vk::ImageViewType::e2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+            vk::ResultValue<vk::ImageView> view = renderer.device.createImageView(viewInfo);
+            if (view.result != vk::Result::eSuccess)
+            {
+                vmaDestroyImage(renderer.allocator, rawImage, allocation);
+                return std::unexpected(std::format("createImageView (offscreen): {}", vk::to_string(view.result)));
+            }
+
+            Image result;
+            result.device = renderer.device;
+            result.allocator = renderer.allocator;
+            result.image = vk::Image{ rawImage };
+            result.view = view.value;
+            result.alloc = allocation;
+            result.extent = vk::Extent2D{ width, height };
+            result.format = format;
+            result.layout = vk::ImageLayout::eUndefined;
+            return result;
+        }
     }
 
     std::expected<Renderer, std::string> newRenderer(Window& window)
@@ -413,6 +559,18 @@ namespace se
             return std::unexpected(swapchainBuilt.error());
         }
 
+        // Offscreen scene target shown in the editor Viewport panel. Same format
+        // as the swapchain so the scene pipelines need no special format.
+        auto offscreen = newColorImage(renderer, window.width, window.height, renderer.swapchainFormat);
+        if (!offscreen)
+        {
+            return std::unexpected(offscreen.error());
+        }
+        renderer.offscreenViewport = std::move(*offscreen);
+        renderer.viewportDesiredWidth = window.width;
+        renderer.viewportDesiredHeight = window.height;
+        renderer.viewportGeneration = 1;
+
         for (FrameData& frame : renderer.frames)
         {
             vk::CommandPoolCreateInfo poolInfo{};
@@ -466,7 +624,8 @@ namespace se
             static_cast<void>(renderer.device.waitIdle());
         }
 
-        renderer.pipelines.clear();  // RAII frees them while the device is still alive
+        renderer.offscreenViewport.reset();  // free before the allocator/device
+        renderer.pipelines.clear();          // RAII frees them while the device is still alive
 
         for (FrameData& frame : renderer.frames)
         {
@@ -518,58 +677,155 @@ namespace se
         }
         renderer.imagesInFlight[renderer.imageIndex] = frame.inFlight;
 
+        // Apply a pending Viewport resize (requested last frame). Single shared
+        // target, so a full device idle is required before recreating it.
+        if (renderer.viewportDesiredWidth > 0 && renderer.viewportDesiredHeight > 0 &&
+            (renderer.viewportDesiredWidth != renderer.offscreenViewport.extent.width ||
+             renderer.viewportDesiredHeight != renderer.offscreenViewport.extent.height))
+        {
+            static_cast<void>(renderer.device.waitIdle());
+            auto resized = newColorImage(renderer, renderer.viewportDesiredWidth,
+                                         renderer.viewportDesiredHeight, renderer.swapchainFormat);
+            if (resized)
+            {
+                renderer.offscreenViewport = std::move(*resized);
+                renderer.viewportGeneration = renderer.viewportGeneration + 1;
+            }
+            else
+            {
+                logError(resized.error());
+            }
+        }
+
         static_cast<void>(renderer.device.resetFences(frame.inFlight));
         static_cast<void>(frame.commandBuffer.reset());
-        renderer.submissions.clear();
+        renderer.sceneSubmissions.clear();
+        renderer.uiSubmissions.clear();
 
         vk::CommandBufferBeginInfo beginInfo{};
         beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         static_cast<void>(frame.commandBuffer.begin(beginInfo));
 
+        // Rendering scopes are opened in endFrame: pass 1 (scene → offscreen),
+        // pass 2 (ui → swapchain).
+        return true;
+    }
+
+    void submit(Renderer& renderer, RenderFn fn)
+    {
+        renderer.sceneSubmissions.push_back(std::move(fn));
+    }
+
+    void submitUi(Renderer& renderer, RenderFn fn)
+    {
+        renderer.uiSubmissions.push_back(std::move(fn));
+    }
+
+    void setViewportDesiredSize(Renderer& renderer, u32 width, u32 height)
+    {
+        renderer.viewportDesiredWidth = width;
+        renderer.viewportDesiredHeight = height;
+    }
+
+    vk::ImageView viewportImageView(const Renderer& renderer)
+    {
+        return renderer.offscreenViewport.view;
+    }
+
+    u32 viewportGeneration(const Renderer& renderer)
+    {
+        return renderer.viewportGeneration;
+    }
+
+    void endFrame(Renderer& renderer)
+    {
+        FrameData& frame = renderer.frames[renderer.frameIndex];
+        Image& offscreen = renderer.offscreenViewport;
+
+        // --- Pass 1: scene → offscreen image -----------------------------------
+        // Enter from the image's tracked layout (Undefined on frame 1 / after a
+        // recreate; ShaderReadOnly thereafter — the WAR barrier vs last frame's read).
+        vk::PipelineStageFlags2 srcStage = vk::PipelineStageFlagBits2::eTopOfPipe;
+        vk::AccessFlags2 srcAccess = vk::AccessFlagBits2::eNone;
+        if (offscreen.layout == vk::ImageLayout::eShaderReadOnlyOptimal)
+        {
+            srcStage = vk::PipelineStageFlagBits2::eFragmentShader;
+            srcAccess = vk::AccessFlagBits2::eShaderSampledRead;
+        }
+        transitionImage(
+            frame.commandBuffer, offscreen.image,
+            offscreen.layout, vk::ImageLayout::eColorAttachmentOptimal,
+            srcStage, srcAccess,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
+        offscreen.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+        vk::RenderingAttachmentInfo sceneColor{};
+        sceneColor.imageView = offscreen.view;
+        sceneColor.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        sceneColor.loadOp = vk::AttachmentLoadOp::eClear;
+        sceneColor.storeOp = vk::AttachmentStoreOp::eStore;
+        sceneColor.clearValue = vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } };
+
+        vk::RenderingInfo sceneRendering{};
+        sceneRendering.renderArea = vk::Rect2D{ vk::Offset2D{ 0, 0 }, offscreen.extent };
+        sceneRendering.layerCount = 1;
+        sceneRendering.setColorAttachments(sceneColor);
+        // TODO(meshes): add a depth attachment here when geometry needs it.
+        frame.commandBuffer.beginRendering(sceneRendering);
+
+        vk::Viewport sceneViewport{ 0.0f, 0.0f,
+                                    static_cast<f32>(offscreen.extent.width),
+                                    static_cast<f32>(offscreen.extent.height), 0.0f, 1.0f };
+        vk::Rect2D sceneScissor{ vk::Offset2D{ 0, 0 }, offscreen.extent };
+        frame.commandBuffer.setViewport(0, sceneViewport);
+        frame.commandBuffer.setScissor(0, sceneScissor);
+
+        for (RenderFn& fn : renderer.sceneSubmissions)
+        {
+            fn(frame.commandBuffer);
+        }
+        frame.commandBuffer.endRendering();
+
+        // Producer → consumer: the offscreen image becomes a sampled texture for ImGui.
+        // Must be OUTSIDE any rendering scope.
+        transitionImage(
+            frame.commandBuffer, offscreen.image,
+            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        offscreen.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+        // --- Pass 2: ImGui → swapchain image -----------------------------------
         transitionImage(
             frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex],
             vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
             vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
             vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
 
-        vk::RenderingAttachmentInfo colorAttachment{};
-        colorAttachment.imageView = renderer.swapchainImageViews[renderer.imageIndex];
-        colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-        colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-        colorAttachment.clearValue = vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } };
+        vk::RenderingAttachmentInfo swapColor{};
+        swapColor.imageView = renderer.swapchainImageViews[renderer.imageIndex];
+        swapColor.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        swapColor.loadOp = vk::AttachmentLoadOp::eClear;
+        swapColor.storeOp = vk::AttachmentStoreOp::eStore;
+        swapColor.clearValue = vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } };
 
-        vk::RenderingInfo renderingInfo{};
-        renderingInfo.renderArea = vk::Rect2D{ vk::Offset2D{ 0, 0 }, renderer.swapchainExtent };
-        renderingInfo.layerCount = 1;
-        renderingInfo.setColorAttachments(colorAttachment);
-        frame.commandBuffer.beginRendering(renderingInfo);
+        vk::RenderingInfo swapRendering{};
+        swapRendering.renderArea = vk::Rect2D{ vk::Offset2D{ 0, 0 }, renderer.swapchainExtent };
+        swapRendering.layerCount = 1;
+        swapRendering.setColorAttachments(swapColor);
+        frame.commandBuffer.beginRendering(swapRendering);
 
-        vk::Viewport viewport{ 0.0f, 0.0f,
-                               static_cast<f32>(renderer.swapchainExtent.width),
-                               static_cast<f32>(renderer.swapchainExtent.height),
-                               0.0f, 1.0f };
-        vk::Rect2D scissor{ vk::Offset2D{ 0, 0 }, renderer.swapchainExtent };
-        frame.commandBuffer.setViewport(0, viewport);
-        frame.commandBuffer.setScissor(0, scissor);
+        vk::Viewport swapViewport{ 0.0f, 0.0f,
+                                   static_cast<f32>(renderer.swapchainExtent.width),
+                                   static_cast<f32>(renderer.swapchainExtent.height), 0.0f, 1.0f };
+        vk::Rect2D swapScissor{ vk::Offset2D{ 0, 0 }, renderer.swapchainExtent };
+        frame.commandBuffer.setViewport(0, swapViewport);
+        frame.commandBuffer.setScissor(0, swapScissor);
 
-        return true;
-    }
-
-    void submit(Renderer& renderer, RenderFn fn)
-    {
-        renderer.submissions.push_back(std::move(fn));
-    }
-
-    void endFrame(Renderer& renderer)
-    {
-        FrameData& frame = renderer.frames[renderer.frameIndex];
-
-        for (RenderFn& fn : renderer.submissions)
+        for (RenderFn& fn : renderer.uiSubmissions)
         {
             fn(frame.commandBuffer);
         }
-
         frame.commandBuffer.endRendering();
 
         transitionImage(
@@ -724,5 +980,83 @@ namespace se
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
             cmd.draw(3, 1, 0, 0);
         });
+    }
+
+    std::expected<void, std::string> captureViewport(Renderer& renderer, const std::string& path)
+    {
+        Image& img = renderer.offscreenViewport;
+        const u32 width = img.extent.width;
+        const u32 height = img.extent.height;
+        const vk::DeviceSize byteSize = static_cast<vk::DeviceSize>(width) * height * 4;
+
+        VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        bufferInfo.size = byteSize;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo bufferAlloc{};
+        bufferAlloc.usage = VMA_MEMORY_USAGE_AUTO;
+        bufferAlloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VkBuffer rawBuffer = VK_NULL_HANDLE;
+        VmaAllocation bufferAllocation = nullptr;
+        VmaAllocationInfo bufferAllocInfo{};
+        if (vmaCreateBuffer(renderer.allocator, &bufferInfo, &bufferAlloc, &rawBuffer, &bufferAllocation, &bufferAllocInfo) != VK_SUCCESS)
+        {
+            return std::unexpected(std::string{ "capture: vmaCreateBuffer failed" });
+        }
+
+        vk::CommandBufferAllocateInfo allocInfo{};
+        allocInfo.commandPool = renderer.frames[0].commandPool;
+        allocInfo.level = vk::CommandBufferLevel::ePrimary;
+        allocInfo.commandBufferCount = 1;
+        auto cmds = checked(renderer.device.allocateCommandBuffers(allocInfo), "capture: allocateCommandBuffers");
+        if (!cmds)
+        {
+            vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
+            return std::unexpected(cmds.error());
+        }
+        vk::CommandBuffer cmd = (*cmds)[0];
+
+        vk::CommandBufferBeginInfo beginInfo{};
+        beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        static_cast<void>(cmd.begin(beginInfo));
+
+        transitionImage(
+            cmd, img.image, img.layout, vk::ImageLayout::eTransferSrcOptimal,
+            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead);
+        img.layout = vk::ImageLayout::eTransferSrcOptimal;
+
+        vk::BufferImageCopy region{};
+        region.imageSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+        region.imageExtent = vk::Extent3D{ width, height, 1 };
+        cmd.copyImageToBuffer(img.image, vk::ImageLayout::eTransferSrcOptimal, vk::Buffer{ rawBuffer }, region);
+
+        static_cast<void>(cmd.end());
+
+        vk::CommandBufferSubmitInfo cmdInfo{};
+        cmdInfo.commandBuffer = cmd;
+        vk::SubmitInfo2 submitInfo{};
+        submitInfo.setCommandBufferInfos(cmdInfo);
+        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.device.waitIdle());
+        vmaInvalidateAllocation(renderer.allocator, bufferAllocation, 0, VK_WHOLE_SIZE);
+
+        const unsigned char* pixels = static_cast<const unsigned char*>(bufferAllocInfo.pMappedData);
+        std::ofstream out(path, std::ios::binary);
+        if (!out)
+        {
+            vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
+            return std::unexpected(std::format("capture: cannot open '{}'", path));
+        }
+        out << "P6\n" << width << ' ' << height << "\n255\n";
+        for (u32 i = 0; i < width * height; i = i + 1)
+        {
+            out.put(static_cast<char>(pixels[i * 4 + 2]));  // R  (offscreen is B8G8R8A8)
+            out.put(static_cast<char>(pixels[i * 4 + 1]));  // G
+            out.put(static_cast<char>(pixels[i * 4 + 0]));  // B
+        }
+
+        vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
+        logInfo(std::format("captured viewport ({}x{}) to {}", width, height, path));
+        return {};
     }
 }

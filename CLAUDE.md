@@ -156,18 +156,21 @@ Working and verified (validation-clean) in the toolbox:
 - ✅ Vulkan 1.3 via Vulkan-Hpp `vk::` (no-exceptions): device/swapchain (vk-bootstrap),
   VMA allocator, sync2 + dynamic rendering, clears + presents, swapchain recreation,
   per-image-fence sync.
-- ✅ RAII meta-layer (`Pipeline`), renderer-owned, freed before the device.
+- ✅ RAII meta-layer (`Pipeline`, `Image`), renderer-owned, freed before the device.
 - ✅ Slang shader compiled to SPIR-V in CMake → graphics pipeline → triangle drawn
   via the `onRender` layer hook + the `submit(lambda)` seam.
-- ✅ ImGui docking (SDL3 + Vulkan backends, dynamic rendering), dockspace over the triangle.
+- ✅ Two-pass frame: scene → offscreen `Image`, then ImGui → swapchain. The scene shows
+  in a dockable **Viewport** panel (`ImGui_ImplVulkan_AddTexture`, 1.92.8 no-sampler;
+  generation-counter descriptor refresh; 1-frame-lag resize). `SAFFRON_CAPTURE=path`
+  dumps the offscreen image to a PPM.
+- ✅ ImGui docking (SDL3 + Vulkan backends, dynamic rendering).
 - ✅ entt `Scene`/`Entity` + value components + `forEach`.
 
 Not done yet (planned):
 - Scene JSON serialization (nlohmann); `RenderGraph` / `RenderPass` frame graph + `SceneRenderer` facade.
-- Editor panels: offscreen-rendered **Viewport** (ImGui_ImplVulkan_AddTexture — 1.92.8
-  takes no sampler), entity inspector, hierarchy — wired via signals. Needs an `Image`
-  RAII meta-layer wrapper.
-- `volk`, multi-viewport ImGui, hardware GPU in the toolbox, framebuffer capture.
+- Editor panels: entity inspector, hierarchy — wired via signals. Wiring entt entities
+  to actually drive the scene pass (mesh rendering + offscreen depth).
+- `volk`, multi-viewport ImGui, hardware GPU in the toolbox.
 
 See the memory notes (`build-environment`, `saffron-rewrite-plan`,
 `code-style-go-conventions`) for deeper rationale.

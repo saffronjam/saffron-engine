@@ -12,6 +12,7 @@ import Saffron.App;
 import Saffron.Window;
 import Saffron.Scene;
 import Saffron.Rendering;
+import Saffron.Ui;
 
 namespace
 {
@@ -60,8 +61,9 @@ int main()
                 se::drawTriangle(app.renderer, state->trianglePipeline);
             }
         };
-        layer.onUi = []()
+        layer.onUi = [&app]()
         {
+            se::viewportPanel(app.ui, app.renderer);
             ImGui::ShowDemoWindow();
             ImGui::Begin("Saffron");
             ImGui::Text("FPS: %.1f", static_cast<double>(ImGui::GetIO().Framerate));
