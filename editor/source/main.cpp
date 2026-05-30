@@ -28,7 +28,7 @@ namespace
         se::EditorContext* editor = nullptr;
         se::ControlContext* control = nullptr;
         se::AssetServer assets;
-        se::u32 meshPipeline = 0;
+        se::Ref<se::Pipeline> meshPipeline;
         bool meshReady = false;
     };
 }
@@ -46,7 +46,7 @@ int main()
         state->control = se::newControlContext();
         state->assets = se::newAssetServer(se::assetPath("assets"));
 
-        std::expected<se::u32, std::string> pipeline = se::newMeshPipeline(app.renderer, "shaders/mesh.spv");
+        std::expected<se::Ref<se::Pipeline>, std::string> pipeline = se::newMeshPipeline(app.renderer, "shaders/mesh.spv");
         if (!pipeline)
         {
             se::logError(pipeline.error());
@@ -133,6 +133,12 @@ int main()
             se::destroyEditorContext(state->editor);
             state->editor = nullptr;
         }
+        // Drop every GPU Ref this client holds before destroyRenderer frees the
+        // device/allocator — otherwise the cached meshes/textures and the pipeline
+        // would be freed too late (use-after-free).
+        state->assets.meshRefByUuid.clear();
+        state->assets.textureRefByUuid.clear();
+        state->meshPipeline.reset();
     };
 
     return se::run(std::move(config));

@@ -262,11 +262,13 @@ export namespace se
     // (renderer.linearSampler), so it is not owned here.
     struct GpuTexture
     {
-        vk::Device device;                 // borrowed (frees the view)
+        vk::Device device;                 // borrowed (frees the view + set)
         VmaAllocator allocator = nullptr;  // borrowed (frees the image)
+        vk::DescriptorPool pool;           // borrowed (frees the material set)
         vk::Image image;
         vk::ImageView view;
         VmaAllocation alloc = nullptr;
+        vk::DescriptorSet materialSet;     // set 0 bound to this texture + the shared sampler
         vk::Extent2D extent;
         vk::Format format = vk::Format::eUndefined;
 
@@ -275,14 +277,17 @@ export namespace se
         GpuTexture& operator=(const GpuTexture&) = delete;
 
         GpuTexture(GpuTexture&& other) noexcept
-            : device(other.device), allocator(other.allocator), image(other.image),
-              view(other.view), alloc(other.alloc), extent(other.extent), format(other.format)
+            : device(other.device), allocator(other.allocator), pool(other.pool), image(other.image),
+              view(other.view), alloc(other.alloc), materialSet(other.materialSet), extent(other.extent),
+              format(other.format)
         {
             other.device = nullptr;
             other.allocator = nullptr;
+            other.pool = nullptr;
             other.image = nullptr;
             other.view = nullptr;
             other.alloc = nullptr;
+            other.materialSet = nullptr;
         }
 
         GpuTexture& operator=(GpuTexture&& other) noexcept
@@ -292,16 +297,20 @@ export namespace se
                 reset();
                 device = other.device;
                 allocator = other.allocator;
+                pool = other.pool;
                 image = other.image;
                 view = other.view;
                 alloc = other.alloc;
+                materialSet = other.materialSet;
                 extent = other.extent;
                 format = other.format;
                 other.device = nullptr;
                 other.allocator = nullptr;
+                other.pool = nullptr;
                 other.image = nullptr;
                 other.view = nullptr;
                 other.alloc = nullptr;
+                other.materialSet = nullptr;
             }
             return *this;
         }
@@ -313,6 +322,10 @@ export namespace se
 
         void reset()
         {
+            if (device && pool && materialSet)
+            {
+                static_cast<void>(device.freeDescriptorSets(pool, materialSet));
+            }
             if (device && view)
             {
                 device.destroyImageView(view);
@@ -321,6 +334,7 @@ export namespace se
             {
                 vmaDestroyImage(allocator, static_cast<VkImage>(image), alloc);
             }
+            materialSet = nullptr;
             view = nullptr;
             image = nullptr;
             alloc = nullptr;
@@ -357,24 +371,21 @@ export namespace se
         std::array<f32, 4> clearColor{ 0.05f, 0.06f, 0.08f, 1.0f };
         std::vector<RenderFn> sceneSubmissions;  // replayed into the offscreen pass
         std::vector<RenderFn> uiSubmissions;     // replayed into the swapchain pass
-        std::vector<Pipeline> pipelines;         // owned; destroyed before the device
-        std::vector<GpuMesh> meshes;             // owned; destroyed before the allocator
-        std::vector<GpuTexture> textures;        // owned; destroyed before the allocator
 
-        // Material/light descriptors. One material set per texture (set 0, index-
-        // parallel to textures); one shared per-frame light UBO + set (set 1).
+        // Meshes/textures/pipelines are passed around as Ref<T> objects owned by the
+        // caller (AssetServer, editor), not by the Renderer; their RAII dtors free
+        // the vk/VMA resources when the last Ref drops (before the allocator/device).
         vk::Sampler linearSampler;
         vk::DescriptorSetLayout materialSetLayout;   // set 0: combined image sampler
         vk::DescriptorSetLayout lightSetLayout;      // set 1: directional light UBO
-        vk::DescriptorPool descriptorPool;
-        std::vector<vk::DescriptorSet> materialSets; // index-parallel to textures
+        vk::DescriptorPool descriptorPool;           // eFreeDescriptorSet (texture sets freed on Ref drop)
         // Per-frame light UBO + set (one per in-flight frame), so the host write in
         // setDirectionalLight never races a frame still reading the light on the GPU.
         std::array<vk::DescriptorSet, MaxFramesInFlight> lightSets;
         std::array<VkBuffer, MaxFramesInFlight> lightBuffers{};
         std::array<VmaAllocation, MaxFramesInFlight> lightAllocs{};
         std::array<void*, MaxFramesInFlight> lightMapped{};
-        u32 defaultWhiteTexture = ~0u;               // handle into textures (1x1 white)
+        Ref<GpuTexture> defaultWhiteTexture;         // 1x1 white; bound when a material has no albedo
 
         Image offscreenViewport;       // scene render target shown in the Viewport panel
         Image offscreenDepth;          // depth buffer for the scene pass, sized to the viewport
@@ -406,10 +417,6 @@ export namespace se
 
     std::string assetPath(std::string_view relative);
 
-    // Creates a pipeline owned by the renderer; returns its handle (index).
-    std::expected<u32, std::string> newTrianglePipeline(Renderer& renderer, std::string_view shaderName);
-    void drawTriangle(Renderer& renderer, u32 pipelineHandle);
-
     // Per-draw data pushed as a 128-byte push constant. normal0/1/2 are the columns
     // of mat3(model) (world normal); baseColor is the material factor.
     struct DrawParams
@@ -424,17 +431,22 @@ export namespace se
     // Mesh rendering: a vertex-buffer + depth-tested pipeline (set 0 = material
     // albedo, set 1 = directional light), a device-local mesh upload, a texture
     // upload, and a draw recorded via submit().
-    std::expected<u32, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName);
-    std::expected<u32, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh);
-    std::expected<u32, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb);
-    void drawMesh(Renderer& renderer, u32 meshHandle, u32 pipelineHandle, u32 textureHandle, const DrawParams& params);
+    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName);
+    std::expected<Ref<GpuMesh>, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh);
+    std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb);
+    void drawMesh(Renderer& renderer, const Ref<GpuMesh>& mesh, const Ref<Pipeline>& pipeline,
+                  const Ref<GpuTexture>& texture, const DrawParams& params);
 
     // Updates the shared per-frame directional light UBO (set 1). direction points
     // the way the light travels.
     void setDirectionalLight(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity, f32 ambient);
 
-    // The handle to a 1x1 white texture; bind it when a material has no albedo.
-    u32 defaultTexture(const Renderer& renderer);
+    // A 1x1 white texture; bind it when a material has no albedo.
+    const Ref<GpuTexture>& defaultTexture(const Renderer& renderer);
+
+    // Blocks until the GPU has finished all submitted work. Call before dropping
+    // resource Refs at shutdown so no in-flight command buffer still references them.
+    void waitGpuIdle(Renderer& renderer);
 
     // Copies the offscreen viewport image to a PNG. Synchronous (own submit +
     // waitIdle), safe to call between frames.
@@ -871,6 +883,7 @@ namespace se
                 vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, 1024 },
                 vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, MaxFramesInFlight + 4 } };
             vk::DescriptorPoolCreateInfo poolInfo{};
+            poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;  // texture sets freed on Ref drop
             poolInfo.maxSets = 1024 + MaxFramesInFlight + 4;
             poolInfo.setPoolSizes(poolSizes);
             auto pool = checked(renderer.device.createDescriptorPool(poolInfo), "descriptorPool");
@@ -1070,7 +1083,7 @@ namespace se
         setDirectionalLight(renderer, glm::vec3(-0.5f, -1.0f, -0.3f), glm::vec3(1.0f), 1.0f, 0.15f);
 
         const std::array<u8, 4> white{ 255, 255, 255, 255 };
-        std::expected<u32, std::string> whiteTexture = uploadTexture(renderer, white.data(), 1, 1, false);
+        std::expected<Ref<GpuTexture>, std::string> whiteTexture = uploadTexture(renderer, white.data(), 1, 1, false);
         if (!whiteTexture)
         {
             return std::unexpected(whiteTexture.error());
@@ -1090,11 +1103,15 @@ namespace se
             static_cast<void>(renderer.device.waitIdle());
         }
 
+        // Drop any Refs the renderer itself still holds, plus the closure vectors
+        // (which may capture Refs), before the descriptor pool / allocator / device
+        // are torn down — a GpuTexture frees its material set from the pool.
+        renderer.sceneSubmissions.clear();
+        renderer.uiSubmissions.clear();
+        renderer.defaultWhiteTexture.reset();
+
         renderer.offscreenViewport.reset();  // free before the allocator/device
         renderer.offscreenDepth.reset();
-        renderer.meshes.clear();             // RAII frees device buffers before the allocator
-        renderer.textures.clear();           // RAII frees views + images before the allocator
-        renderer.pipelines.clear();          // RAII frees them while the device is still alive
 
         for (u32 i = 0; i < MaxFramesInFlight; i = i + 1)
         {
@@ -1468,109 +1485,7 @@ namespace se
         return result;
     }
 
-    std::expected<u32, std::string> newTrianglePipeline(Renderer& renderer, std::string_view shaderName)
-    {
-        std::string path = assetPath(shaderName);
-        auto moduleResult = loadShaderModule(renderer.device, path);
-        if (!moduleResult)
-        {
-            return std::unexpected(moduleResult.error());
-        }
-        vk::ShaderModule shaderModule = *moduleResult;
-
-        std::array<vk::PipelineShaderStageCreateInfo, 2> stages{};
-        stages[0].stage = vk::ShaderStageFlagBits::eVertex;
-        stages[0].module = shaderModule;
-        stages[0].pName = "vertexMain";
-        stages[1].stage = vk::ShaderStageFlagBits::eFragment;
-        stages[1].module = shaderModule;
-        stages[1].pName = "fragmentMain";
-
-        vk::PipelineVertexInputStateCreateInfo vertexInput{};
-
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
-        inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
-
-        vk::PipelineViewportStateCreateInfo viewportState{};
-        viewportState.viewportCount = 1;
-        viewportState.scissorCount = 1;
-
-        vk::PipelineRasterizationStateCreateInfo raster{};
-        raster.polygonMode = vk::PolygonMode::eFill;
-        raster.cullMode = vk::CullModeFlagBits::eNone;
-        raster.frontFace = vk::FrontFace::eCounterClockwise;
-        raster.lineWidth = 1.0f;
-
-        vk::PipelineMultisampleStateCreateInfo multisample{};
-        multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
-
-        vk::PipelineColorBlendAttachmentState blendAttachment{};
-        blendAttachment.blendEnable = VK_FALSE;
-        blendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                                         vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-
-        vk::PipelineColorBlendStateCreateInfo colorBlend{};
-        colorBlend.setAttachments(blendAttachment);
-
-        std::array<vk::DynamicState, 2> dynamicStates{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-        vk::PipelineDynamicStateCreateInfo dynamic{};
-        dynamic.setDynamicStates(dynamicStates);
-
-        vk::PipelineRenderingCreateInfo renderingInfo{};
-        renderingInfo.setColorAttachmentFormats(renderer.swapchainFormat);
-
-        auto layoutResult = checked(renderer.device.createPipelineLayout(vk::PipelineLayoutCreateInfo{}), "createPipelineLayout");
-        if (!layoutResult)
-        {
-            renderer.device.destroyShaderModule(shaderModule);
-            return std::unexpected(layoutResult.error());
-        }
-
-        vk::GraphicsPipelineCreateInfo pipelineInfo{};
-        pipelineInfo.pNext = &renderingInfo;
-        pipelineInfo.setStages(stages);
-        pipelineInfo.pVertexInputState = &vertexInput;
-        pipelineInfo.pInputAssemblyState = &inputAssembly;
-        pipelineInfo.pViewportState = &viewportState;
-        pipelineInfo.pRasterizationState = &raster;
-        pipelineInfo.pMultisampleState = &multisample;
-        pipelineInfo.pColorBlendState = &colorBlend;
-        pipelineInfo.pDynamicState = &dynamic;
-        pipelineInfo.layout = *layoutResult;
-
-        vk::ResultValue<vk::Pipeline> created = renderer.device.createGraphicsPipeline(nullptr, pipelineInfo);
-        renderer.device.destroyShaderModule(shaderModule);  // baked into the pipeline now
-        if (created.result != vk::Result::eSuccess)
-        {
-            renderer.device.destroyPipelineLayout(*layoutResult);
-            return std::unexpected(std::format("createGraphicsPipeline: {}", vk::to_string(created.result)));
-        }
-
-        Pipeline pipeline;
-        pipeline.device = renderer.device;
-        pipeline.pipeline = created.value;
-        pipeline.layout = *layoutResult;
-
-        u32 handle = static_cast<u32>(renderer.pipelines.size());
-        renderer.pipelines.push_back(std::move(pipeline));
-        return handle;
-    }
-
-    void drawTriangle(Renderer& renderer, u32 pipelineHandle)
-    {
-        if (pipelineHandle >= renderer.pipelines.size())
-        {
-            return;
-        }
-        vk::Pipeline handle = renderer.pipelines[pipelineHandle].pipeline;
-        submit(renderer, [handle](vk::CommandBuffer cmd)
-        {
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
-            cmd.draw(3, 1, 0, 0);
-        });
-    }
-
-    std::expected<u32, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName)
+    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName)
     {
         std::string path = assetPath(shaderName);
         auto moduleResult = loadShaderModule(renderer.device, path);
@@ -1679,12 +1594,10 @@ namespace se
         pipeline.device = renderer.device;
         pipeline.pipeline = created.value;
         pipeline.layout = *layoutResult;
-        u32 handle = static_cast<u32>(renderer.pipelines.size());
-        renderer.pipelines.push_back(std::move(pipeline));
-        return handle;
+        return std::make_shared<Pipeline>(std::move(pipeline));
     }
 
-    std::expected<u32, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh)
+    std::expected<Ref<GpuMesh>, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh)
     {
         if (mesh.vertices.empty() || mesh.indices.empty())
         {
@@ -1774,38 +1687,37 @@ namespace se
         renderer.device.freeCommandBuffers(renderer.frames[0].commandPool, cmd);
         vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
 
-        const u32 handle = static_cast<u32>(renderer.meshes.size());
-        renderer.meshes.push_back(std::move(gpu));
         logInfo(std::format("uploaded mesh: {} vertices, {} indices, {} submeshes",
                             mesh.vertices.size(), mesh.indices.size(), mesh.submeshes.size()));
-        return handle;
+        return std::make_shared<GpuMesh>(std::move(gpu));
     }
 
-    void drawMesh(Renderer& renderer, u32 meshHandle, u32 pipelineHandle, u32 textureHandle, const DrawParams& params)
+    void drawMesh(Renderer& renderer, const Ref<GpuMesh>& mesh, const Ref<Pipeline>& pipeline,
+                  const Ref<GpuTexture>& texture, const DrawParams& params)
     {
-        if (meshHandle >= renderer.meshes.size() || pipelineHandle >= renderer.pipelines.size())
+        if (!mesh || !pipeline)
         {
             return;
         }
-        if (textureHandle >= renderer.materialSets.size())
+        const Ref<GpuTexture>* tex = &texture;
+        if (!*tex)
         {
-            textureHandle = renderer.defaultWhiteTexture;
+            tex = &renderer.defaultWhiteTexture;
         }
-        if (textureHandle >= renderer.materialSets.size())
+        if (!*tex || !(*tex)->materialSet)
         {
             return;
         }
-        const GpuMesh& gpu = renderer.meshes[meshHandle];
-        vk::Pipeline pipeline = renderer.pipelines[pipelineHandle].pipeline;
-        vk::PipelineLayout layout = renderer.pipelines[pipelineHandle].layout;
-        vk::DescriptorSet materialSet = renderer.materialSets[textureHandle];
+        vk::Pipeline pipelineHandle = pipeline->pipeline;
+        vk::PipelineLayout layout = pipeline->layout;
+        vk::DescriptorSet materialSet = (*tex)->materialSet;
         vk::DescriptorSet lightSet = renderer.lightSets[renderer.frameIndex];
-        vk::Buffer vertexBuffer = gpu.vertexBuffer;
-        vk::Buffer indexBuffer = gpu.indexBuffer;
-        std::vector<Submesh> submeshes = gpu.submeshes;
-        submit(renderer, [pipeline, layout, materialSet, lightSet, vertexBuffer, indexBuffer, submeshes, params](vk::CommandBuffer cmd)
+        vk::Buffer vertexBuffer = mesh->vertexBuffer;
+        vk::Buffer indexBuffer = mesh->indexBuffer;
+        std::vector<Submesh> submeshes = mesh->submeshes;
+        submit(renderer, [pipelineHandle, layout, materialSet, lightSet, vertexBuffer, indexBuffer, submeshes, params](vk::CommandBuffer cmd)
         {
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipelineHandle);
             std::array<vk::DescriptorSet, 2> sets{ materialSet, lightSet };
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0, sets, {});
             cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
@@ -1820,9 +1732,17 @@ namespace se
         });
     }
 
-    u32 defaultTexture(const Renderer& renderer)
+    const Ref<GpuTexture>& defaultTexture(const Renderer& renderer)
     {
         return renderer.defaultWhiteTexture;
+    }
+
+    void waitGpuIdle(Renderer& renderer)
+    {
+        if (renderer.device)
+        {
+            static_cast<void>(renderer.device.waitIdle());
+        }
     }
 
     void setDirectionalLight(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity, f32 ambient)
@@ -1841,7 +1761,7 @@ namespace se
         vmaFlushAllocation(renderer.allocator, renderer.lightAllocs[frame], 0, sizeof(ubo));
     }
 
-    std::expected<u32, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb)
+    std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb)
     {
         if (width == 0 || height == 0)
         {
@@ -1963,11 +1883,9 @@ namespace se
         texture.alloc = imageAllocation;
         texture.extent = vk::Extent2D{ width, height };
         texture.format = format;
-
-        const u32 handle = static_cast<u32>(renderer.textures.size());
-        renderer.textures.push_back(std::move(texture));
-        renderer.materialSets.push_back(set);
-        return handle;
+        texture.pool = renderer.descriptorPool;
+        texture.materialSet = set;
+        return std::make_shared<GpuTexture>(std::move(texture));
     }
 
     std::expected<void, std::string> captureViewport(Renderer& renderer, const std::string& path)

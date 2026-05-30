@@ -166,6 +166,10 @@ export namespace se
             }
         }
 
+        // Finish all in-flight GPU work before any handler drops resource Refs, so
+        // no command buffer still references a buffer/pipeline/image being freed.
+        waitGpuIdle(app.renderer);
+
         for (Layer& layer : app.layers)
         {
             if (layer.onDetach)

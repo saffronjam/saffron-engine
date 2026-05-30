@@ -16,6 +16,11 @@ export namespace se
     using f32 = float;
     using f64 = double;
 
+    // A shared reference to a logical resource object (the meta-layer wrappers are
+    // passed around as Ref<T> rather than opaque handles). Plain alias, no base class.
+    template <typename T>
+    using Ref = std::shared_ptr<T>;
+
     inline constexpr std::string_view EngineName = "Saffron Engine";
     inline constexpr std::string_view EngineVersion = "0.1.0-vulkan";
 

@@ -25,15 +25,16 @@ import Saffron.Scene;
 export namespace se
 {
     // Resolves mesh assets for the running scene. pathByUuid is the persisted
-    // registry (id -> baked .smesh relative to root); meshHandleByUuid is the
-    // in-memory cache of uploaded GPU meshes, so entities sharing an id upload once.
+    // registry (id -> baked .smesh relative to root); meshRefByUuid is the in-memory
+    // cache of uploaded GPU meshes, so entities sharing an id upload once. A cached
+    // null Ref is the negative-cache marker — a failed asset is not retried each frame.
     struct AssetServer
     {
         std::string root;
-        std::unordered_map<u64, std::string> pathByUuid;          // id -> baked .smesh
-        std::unordered_map<u64, u32> meshHandleByUuid;            // cache of uploaded meshes
-        std::unordered_map<u64, std::string> texturePathByUuid;   // id -> copied texture file
-        std::unordered_map<u64, u32> textureHandleByUuid;         // cache of uploaded textures
+        std::unordered_map<u64, std::string> pathByUuid;            // id -> baked .smesh
+        std::unordered_map<u64, Ref<GpuMesh>> meshRefByUuid;        // cache of uploaded meshes
+        std::unordered_map<u64, std::string> texturePathByUuid;     // id -> copied texture file
+        std::unordered_map<u64, Ref<GpuTexture>> textureRefByUuid;  // cache of uploaded textures
     };
 
     // What importModel produces: the spawned mesh + its primary material.
@@ -121,10 +122,10 @@ export namespace se
         {
             return std::unexpected(decoded.error());
         }
-        std::expected<u32, std::string> handle = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
-        if (!handle)
+        std::expected<Ref<GpuTexture>, std::string> texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
+        if (!texture)
         {
-            return std::unexpected(handle.error());
+            return std::unexpected(texture.error());
         }
         const Uuid id = newUuid();
         std::string extension = ext;
@@ -144,7 +145,7 @@ export namespace se
             return std::unexpected(std::format("write failed for texture '{}'", relativePath));
         }
         assets.texturePathByUuid[id.value] = relativePath;
-        assets.textureHandleByUuid[id.value] = *handle;
+        assets.textureRefByUuid[id.value] = *texture;
         return id;  // the caller persists the registry (so importModel writes it once)
     }
 
@@ -182,44 +183,38 @@ export namespace se
         return id;
     }
 
-    // Resolves a texture id to a GPU texture handle, decoding + uploading the copied
-    // file on a cache miss. Returns false (negative-cached) for an unreadable asset.
-    bool loadTextureAsset(AssetServer& assets, Renderer& renderer, Uuid id, u32& outHandle)
+    // Resolves a texture id to a GPU texture, decoding + uploading the copied file on
+    // a cache miss. Returns a null Ref (negative-cached) for an unregistered or
+    // unreadable asset.
+    Ref<GpuTexture> loadTextureAsset(AssetServer& assets, Renderer& renderer, Uuid id)
     {
-        constexpr u32 invalidHandle = ~0u;
-        auto cached = assets.textureHandleByUuid.find(id.value);
-        if (cached != assets.textureHandleByUuid.end())
+        auto cached = assets.textureRefByUuid.find(id.value);
+        if (cached != assets.textureRefByUuid.end())
         {
-            if (cached->second == invalidHandle)
-            {
-                return false;
-            }
-            outHandle = cached->second;
-            return true;
+            return cached->second;  // valid Ref, or a null Ref left by a prior failure
         }
         auto path = assets.texturePathByUuid.find(id.value);
         if (path == assets.texturePathByUuid.end())
         {
-            return false;
+            return nullptr;
         }
         std::expected<DecodedImage, std::string> decoded = decodeImage(assets.root + "/" + path->second);
         if (decoded)
         {
-            std::expected<u32, std::string> handle = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
-            if (handle)
+            std::expected<Ref<GpuTexture>, std::string> texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
+            if (texture)
             {
-                assets.textureHandleByUuid[id.value] = *handle;
-                outHandle = *handle;
-                return true;
+                assets.textureRefByUuid[id.value] = *texture;
+                return *texture;
             }
-            logWarn(std::format("texture {}: {}", id.value, handle.error()));
+            logWarn(std::format("texture {}: {}", id.value, texture.error()));
         }
         else
         {
             logWarn(std::format("texture {}: {}", id.value, decoded.error()));
         }
-        assets.textureHandleByUuid[id.value] = invalidHandle;
-        return false;
+        assets.textureRefByUuid[id.value] = nullptr;  // negative-cache the failure
+        return nullptr;
     }
 
     // Imports a source model: bakes its mesh to a .smesh, uploads it, imports its
@@ -237,13 +232,13 @@ export namespace se
         {
             return std::unexpected(baked.error());
         }
-        std::expected<u32, std::string> handle = uploadMesh(renderer, model->mesh);
-        if (!handle)
+        std::expected<Ref<GpuMesh>, std::string> meshRef = uploadMesh(renderer, model->mesh);
+        if (!meshRef)
         {
-            return std::unexpected(handle.error());
+            return std::unexpected(meshRef.error());
         }
         assets.pathByUuid[meshId.value] = relativePath;
-        assets.meshHandleByUuid[meshId.value] = *handle;
+        assets.meshRefByUuid[meshId.value] = *meshRef;
 
         ImportResult result;
         result.mesh = meshId;
@@ -268,46 +263,38 @@ export namespace se
         return result;
     }
 
-    // Resolves an id to a GPU mesh handle, loading + uploading the baked .smesh on a
-    // cache miss. Returns false for an unregistered or unreadable asset.
-    bool loadMeshAsset(AssetServer& assets, Renderer& renderer, Uuid id, u32& outHandle)
+    // Resolves an id to a GPU mesh, loading + uploading the baked .smesh on a cache
+    // miss. Returns a null Ref for an unregistered or unreadable asset.
+    Ref<GpuMesh> loadMeshAsset(AssetServer& assets, Renderer& renderer, Uuid id)
     {
-        constexpr u32 invalidHandle = ~0u;  // negative-cache marker for a failed load
-
-        auto cached = assets.meshHandleByUuid.find(id.value);
-        if (cached != assets.meshHandleByUuid.end())
+        auto cached = assets.meshRefByUuid.find(id.value);
+        if (cached != assets.meshRefByUuid.end())
         {
-            if (cached->second == invalidHandle)
-            {
-                return false;
-            }
-            outHandle = cached->second;
-            return true;
+            return cached->second;  // valid Ref, or a null Ref left by a prior failure
         }
         auto path = assets.pathByUuid.find(id.value);
         if (path == assets.pathByUuid.end())
         {
-            return false;
+            return nullptr;
         }
         std::expected<Mesh, std::string> mesh = loadMesh(assets.root + "/" + path->second);
         if (mesh)
         {
-            std::expected<u32, std::string> handle = uploadMesh(renderer, *mesh);
-            if (handle)
+            std::expected<Ref<GpuMesh>, std::string> meshRef = uploadMesh(renderer, *mesh);
+            if (meshRef)
             {
-                assets.meshHandleByUuid[id.value] = *handle;
-                outHandle = *handle;
-                return true;
+                assets.meshRefByUuid[id.value] = *meshRef;
+                return *meshRef;
             }
-            logWarn(std::format("asset {}: {}", id.value, handle.error()));
+            logWarn(std::format("asset {}: {}", id.value, meshRef.error()));
         }
         else
         {
             logWarn(std::format("asset {}: {}", id.value, mesh.error()));
         }
         // Negative-cache so a broken registered asset is not retried + re-logged each frame.
-        assets.meshHandleByUuid[id.value] = invalidHandle;
-        return false;
+        assets.meshRefByUuid[id.value] = nullptr;
+        return nullptr;
     }
 
     // Creates an entity carrying the given mesh asset.
@@ -331,7 +318,7 @@ export namespace se
 
     // Draws every entity with a Transform + Mesh, viewed through the first primary
     // camera, resolving each mesh on demand. A no-op without a camera or viewport.
-    void renderScene(Renderer& renderer, Scene& scene, AssetServer& assets, u32 meshPipeline)
+    void renderScene(Renderer& renderer, Scene& scene, AssetServer& assets, const Ref<Pipeline>& meshPipeline)
     {
         bool haveCamera = false;
         glm::mat4 view{ 1.0f };
@@ -391,24 +378,20 @@ export namespace se
         forEach<TransformComponent, MeshComponent>(scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
             {
-                u32 handle = 0;
-                if (!loadMeshAsset(assets, renderer, mesh.mesh, handle))
+                Ref<GpuMesh> meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
+                if (!meshRef)
                 {
                     return;
                 }
                 glm::vec4 baseColor{ 1.0f };
-                u32 textureHandle = defaultTexture(renderer);
+                Ref<GpuTexture> textureRef;
                 if (hasComponent<MaterialComponent>(scene, entity))
                 {
                     const MaterialComponent& material = getComponent<MaterialComponent>(scene, entity);
                     baseColor = material.baseColor;
                     if (material.albedoTexture.value != 0)
                     {
-                        u32 resolved = 0;
-                        if (loadTextureAsset(assets, renderer, material.albedoTexture, resolved))
-                        {
-                            textureHandle = resolved;
-                        }
+                        textureRef = loadTextureAsset(assets, renderer, material.albedoTexture);
                     }
                 }
                 const glm::mat4 model = transformMatrix(transform);
@@ -418,7 +401,7 @@ export namespace se
                 params.normal1 = glm::vec4(glm::vec3(model[1]), 0.0f);
                 params.normal2 = glm::vec4(glm::vec3(model[2]), 0.0f);
                 params.baseColor = baseColor;
-                drawMesh(renderer, handle, meshPipeline, textureHandle, params);
+                drawMesh(renderer, meshRef, meshPipeline, textureRef, params);
             });
     }
 }
