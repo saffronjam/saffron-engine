@@ -41,6 +41,16 @@ namespace
             }
         }
         char* end = nullptr;
+        // Try unsigned first so 64-bit ids (uuids) above LLONG_MAX survive.
+        if (!token.empty() && token.front() != '-')
+        {
+            const unsigned long long asUnsigned = std::strtoull(token.c_str(), &end, 10);
+            if (end != token.c_str() && *end == '\0')
+            {
+                return asUnsigned;
+            }
+        }
+        end = nullptr;
         const long long asInt = std::strtoll(token.c_str(), &end, 10);
         if (end != token.c_str() && *end == '\0')
         {
