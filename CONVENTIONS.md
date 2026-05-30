@@ -53,3 +53,24 @@ are not our source.)
 - A "constructor" is a free function `newThing(...) -> Thing` (or `-> expected`).
 - Prefer composition over any form of subtyping.
 - One namespace, `se`. Modules provide the real boundaries.
+
+## Comments
+- **No inline comments unless the logic is genuinely non-obvious.** Prefer a clear
+  name over a comment that restates the code.
+- **No section / banner comments. Never.** No `// --- Helpers ---`, `// ======`,
+  `// --- Pass 1 ---`, no ASCII dividers. Modules and functions are the structure;
+  dividers are noise.
+- **Doc comments on exported types and functions: encouraged** — the C++ equivalent
+  of a Godoc/JSDoc comment. Put a brief `///` (one or two lines) on the *declaration*
+  in the `export namespace` block: what it is and any contract (ownership, who calls
+  it, what an error means). Don't repeat the doc on the definition.
+- **No migration / change-journey comments.** Strictly prohibited: anything that
+  only makes sense if the reader remembers a previous version of the code. If a
+  comment contains any of these, delete or rewrite it:
+  - "previously", "used to", "was X", "no longer", "formerly", "legacy", "historic(al)"
+  - "refactor", "this refactor", "the new model", "now that", "has been moved/renamed/routed"
+  - "rather than the old", "replaces X", "split out of X", "unified from X"
+  - "newly added", "recently added", "this commit", "this PR"
+- Comments describe what the code does **now**. For non-obvious current behavior,
+  say **why it is that way now** — never by contrast with what it used to be.
+  `git log` / `git blame` carry the history.

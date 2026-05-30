@@ -104,7 +104,6 @@ export namespace se
         delete ctx;
     }
 
-    // --- Scene hierarchy panel -----------------------------------------------
     void hierarchyPanel(EditorContext& ctx)
     {
         ImGui::Begin("Hierarchy");
@@ -148,7 +147,7 @@ export namespace se
         ImGui::End();
     }
 
-    // --- Generic inspector panel (registry-driven; no per-component switch) ---
+    // Registry-driven: iterates ComponentTraits rows, no per-component switch.
     void inspectorPanel(EditorContext& ctx)
     {
         ImGui::Begin("Inspector");
@@ -209,7 +208,6 @@ export namespace se
         ImGui::End();
     }
 
-    // --- File menu: save / load the scene ------------------------------------
     void drawEditorMenuBar(EditorContext& ctx)
     {
         if (!ImGui::BeginMainMenuBar())

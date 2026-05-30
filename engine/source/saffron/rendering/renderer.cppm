@@ -44,7 +44,6 @@ export namespace se
         vk::Fence inFlight;
     };
 
-    // --- RAII meta-layer ------------------------------------------------------
     // A graphics pipeline that owns its vk handles and frees them on destruction.
     // Move-only: the destructor + move-assignment are resource management. Owned
     // by the Renderer (never crosses to client code), destroyed before the device.
@@ -250,9 +249,6 @@ export namespace se
     std::expected<void, std::string> requestWindowCapture(Renderer& renderer, std::string path);
 }
 
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
 namespace se
 {
     namespace
@@ -838,9 +834,9 @@ namespace se
         FrameData& frame = renderer.frames[renderer.frameIndex];
         Image& offscreen = renderer.offscreenViewport;
 
-        // --- Pass 1: scene → offscreen image -----------------------------------
-        // Enter from the image's tracked layout (Undefined on frame 1 / after a
-        // recreate; ShaderReadOnly thereafter — the WAR barrier vs last frame's read).
+        // Pass 1: scene -> offscreen image. Enter from the image's tracked layout
+        // (Undefined on frame 1 / after a recreate; ShaderReadOnly thereafter, the
+        // WAR barrier vs last frame's read).
         vk::PipelineStageFlags2 srcStage = vk::PipelineStageFlagBits2::eTopOfPipe;
         vk::AccessFlags2 srcAccess = vk::AccessFlagBits2::eNone;
         if (offscreen.layout == vk::ImageLayout::eShaderReadOnlyOptimal)
@@ -891,7 +887,7 @@ namespace se
             vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
         offscreen.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
-        // --- Pass 2: ImGui → swapchain image -----------------------------------
+        // Pass 2: ImGui -> swapchain image.
         transitionImage(
             frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex],
             vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,

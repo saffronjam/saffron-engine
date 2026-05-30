@@ -11,6 +11,11 @@ graph, an entt scene, signal/slot events) while dropping everything DX11-specifi
 and all heavy OOP. See `CONVENTIONS.md` for the coding style — it is **not
 optional**, the whole codebase follows it.
 
+**Comments are minimal** (see `CONVENTIONS.md` → *Comments*): no inline noise, **no
+section/banner dividers ever**, brief `///` doc comments on exported declarations,
+and no change-journey notes ("previously/used to/refactor/now that…"). Say what the
+code does now — and *why* if it's non-obvious — never by contrast with the past.
+
 ---
 
 ## TL;DR for a new session
@@ -50,7 +55,8 @@ optional**, the whole codebase follows it.
 | UI | Dear ImGui | 1.92.8-**docking** | `imgui_impl_sdl3` + `imgui_impl_vulkan`, dynamic rendering |
 | Shaders | Slang | 2026.10 | `slangc -target spirv`, compiled in CMake |
 | Math | GLM | 1.0.1 | |
-| Serialization | nlohmann/json | 3.12.0 | (not wired in yet) |
+| Serialization | nlohmann/json | 3.12.0 | `JSON_NOEXCEPTION`; scene save/load |
+| Screenshots | stb_image_write | 1.16 | vendored `third_party/stb` + `cmake/stb_impl.cpp` |
 
 **Vulkan via Vulkan-Hpp (`vk::`) with `VULKAN_HPP_NO_EXCEPTIONS`** — every call
 returns a result we convert to `std::expected` and check immediately. We do **not**
@@ -163,7 +169,7 @@ Working and verified (validation-clean) in the toolbox:
 - ✅ Two-pass frame: scene → offscreen `Image`, then ImGui → swapchain. The scene shows
   in a dockable **Viewport** panel (`ImGui_ImplVulkan_AddTexture`, 1.92.8 no-sampler;
   generation-counter descriptor refresh; 1-frame-lag resize). `SAFFRON_CAPTURE=path`
-  dumps the offscreen image to a PPM.
+  dumps the offscreen image to a PNG.
 - ✅ ImGui docking (SDL3 + Vulkan backends, dynamic rendering).
 - ✅ entt `Scene`/`Entity` + value components + `forEach`.
 - ✅ **Modular `ComponentRegistry`** (struct-of-closures itable; `registerComponent<C>`) driving

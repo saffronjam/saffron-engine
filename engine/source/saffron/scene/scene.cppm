@@ -24,7 +24,6 @@ import Saffron.Core;
 
 export namespace se
 {
-    // --- Components: plain value structs --------------------------------------
     struct NameComponent
     {
         std::string name;
@@ -50,7 +49,6 @@ export namespace se
         return translation * rotation * scale;
     }
 
-    // --- Scene + Entity handle ------------------------------------------------
     struct Scene
     {
         entt::registry registry;
@@ -121,8 +119,8 @@ export namespace se
         }
     }
 
-    // --- glm <-> json converters (named fields; quat storage order is config-
-    //     dependent, so NEVER serialize positionally) -------------------------
+    // glm <-> json use named fields; quat storage order is config-dependent, so
+    // never serialize positionally.
     nlohmann::json vec3ToJson(const glm::vec3& v)
     {
         return nlohmann::json{ { "x", v.x }, { "y", v.y }, { "z", v.z } };
@@ -151,7 +149,6 @@ export namespace se
         return glm::quat{ j.value("w", 1.0f), j.value("x", 0.0f), j.value("y", 0.0f), j.value("z", 0.0f) };
     }
 
-    // --- Component registry: the single extension point ----------------------
     // ComponentTraits is a struct of std::function fields (a Go-interface itable);
     // every cross-cutting feature dispatches through it instead of a switch.
     inline constexpr int SceneVersion = 1;
@@ -241,7 +238,6 @@ export namespace se
         return &reg.rows[it->second];
     }
 
-    // --- Generic, registry-driven serialization (no per-component switch) -----
     // Scene& is non-const because entt views/storage iteration require it; these
     // functions do not logically mutate the scene.
     nlohmann::json serializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity)
@@ -283,7 +279,6 @@ export namespace se
         return {};
     }
 
-    // --- Whole-scene save/load ------------------------------------------------
     std::expected<void, std::string> writeScene(ComponentRegistry& reg, Scene& scene, const std::string& path)
     {
         nlohmann::json doc;
