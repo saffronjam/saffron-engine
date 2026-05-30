@@ -6,3 +6,8 @@ target_compile_features(SaffronEditor PRIVATE cxx_std_26)
 set_target_properties(SaffronEditor PROPERTIES CXX_MODULE_STD ON)
 
 target_link_libraries(SaffronEditor PRIVATE Saffron::Engine)
+
+# Compile editor shaders (*.slang -> bin/shaders/*.spv) alongside the executable.
+saffron_compile_shaders(SaffronEditor
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders
+    ${SAFFRON_RUNTIME_DIR}/shaders)

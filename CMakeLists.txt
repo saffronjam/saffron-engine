@@ -25,6 +25,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${SAFFRON_RUNTIME_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(Dependencies)
+include(Slang)
+include(CompileShaders)
 
 add_subdirectory(engine)
 add_subdirectory(editor)
