@@ -185,6 +185,10 @@ Working and verified (validation-clean) in the toolbox:
   add/remove/set component, set-transform, save/load scene, screenshot viewport|window to PNG, quit).
   See `control-plane` memory.
 
+> **Keep `se` current.** When a feature adds engine state worth driving or inspecting, add a matching
+> control command (one `registerCommand` in `control.cppm`) so the running editor stays scriptable and
+> visually debuggable from the CLI. Treat it as part of "done" for a feature, not an afterthought.
+
 Not done yet (planned):
 - A **render system** that draws the ECS scene into the Viewport (mesh + material components,
   offscreen depth) — replaces the placeholder triangle; needs vertex/index `Buffer` meta-layer.
