@@ -518,6 +518,10 @@ export namespace se
         vk::DescriptorSetLayout tonemapSetLayout;     // compute set 0: storage image
         vk::DescriptorSet tonemapSet;                 // points at the offscreen color view (GENERAL)
         bool usePostProcess = false;
+        // Depth pre-pass: a vertex-only pipeline lays down scene depth before the scene
+        // pass (which then loads it + tests eLessOrEqual). Reduces shaded overdraw.
+        Ref<Pipeline> depthPrepassPipeline;
+        bool useDepthPrepass = false;
         // Clustered forward (Forward+): a compute pass culls the punctual lights into a
         // froxel grid each frame; the fragment loops only its cluster's lights.
         Ref<Pipeline> cullPipeline;                   // compute light-cull pipeline
@@ -618,6 +622,8 @@ export namespace se
                         const glm::mat4& viewProj, const std::vector<DrawItem>& items);
     // Record the frame's scene geometry into the active pass (the scene-pass body).
     void recordSceneDrawList(Renderer& renderer, vk::CommandBuffer cmd);
+    // Record depth-only draws of the frame's geometry (the depth-pre-pass body).
+    void recordDepthPrepass(Renderer& renderer, vk::CommandBuffer cmd);
 
     // One punctual (point or spot) light in the per-frame light storage buffer
     // (set 1, binding 1). Positions/directions are world space; the fragment shader
@@ -651,6 +657,8 @@ export namespace se
     bool clusteredEnabled(const Renderer& renderer);
     void setPostProcess(Renderer& renderer, bool enabled);
     bool postProcessEnabled(const Renderer& renderer);
+    void setDepthPrepass(Renderer& renderer, bool enabled);
+    bool depthPrepassEnabled(const Renderer& renderer);
 
     // A 1x1 white texture; bind it when a material has no albedo.
     const Ref<GpuTexture>& defaultTexture(const Renderer& renderer);
@@ -1172,6 +1180,104 @@ namespace se
             return std::make_shared<Pipeline>(std::move(pipeline));
         }
 
+        // A vertex-only graphics pipeline for the depth pre-pass: it reuses the mesh
+        // vertex shader (instance set 2 + viewProj push constant) but has no fragment
+        // shader and no color attachment, so it only lays down depth (test+write LESS).
+        // Its pipeline layout matches the mesh layout (so the same set 2 + push bind).
+        std::expected<Ref<Pipeline>, std::string> makeDepthPrepassPipeline(Renderer& renderer, std::string_view shaderName)
+        {
+            auto moduleResult = loadShaderModule(renderer.device, assetPath(shaderName));
+            if (!moduleResult)
+            {
+                return std::unexpected(moduleResult.error());
+            }
+            vk::ShaderModule shaderModule = *moduleResult;
+
+            vk::PipelineShaderStageCreateInfo stage{};
+            stage.stage = vk::ShaderStageFlagBits::eVertex;
+            stage.module = shaderModule;
+            stage.pName = "vertexMain";
+
+            vk::VertexInputBindingDescription binding{};
+            binding.binding = 0;
+            binding.stride = sizeof(Vertex);
+            binding.inputRate = vk::VertexInputRate::eVertex;
+            std::array<vk::VertexInputAttributeDescription, 3> attributes{
+                vk::VertexInputAttributeDescription{ 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position) },
+                vk::VertexInputAttributeDescription{ 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal) },
+                vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uv0) } };
+            vk::PipelineVertexInputStateCreateInfo vertexInput{};
+            vertexInput.setVertexBindingDescriptions(binding);
+            vertexInput.setVertexAttributeDescriptions(attributes);
+
+            vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+            inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+            vk::PipelineViewportStateCreateInfo viewportState{};
+            viewportState.viewportCount = 1;
+            viewportState.scissorCount = 1;
+            vk::PipelineRasterizationStateCreateInfo raster{};
+            raster.polygonMode = vk::PolygonMode::eFill;
+            raster.cullMode = vk::CullModeFlagBits::eNone;
+            raster.frontFace = vk::FrontFace::eCounterClockwise;
+            raster.lineWidth = 1.0f;
+            vk::PipelineMultisampleStateCreateInfo multisample{};
+            multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+            vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+            depthStencil.depthTestEnable = VK_TRUE;
+            depthStencil.depthWriteEnable = VK_TRUE;
+            depthStencil.depthCompareOp = vk::CompareOp::eLess;
+            vk::PipelineColorBlendStateCreateInfo colorBlend{};  // no color attachments
+            std::array<vk::DynamicState, 2> dynamicStates{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+            vk::PipelineDynamicStateCreateInfo dynamic{};
+            dynamic.setDynamicStates(dynamicStates);
+
+            vk::PipelineRenderingCreateInfo renderingInfo{};
+            renderingInfo.depthAttachmentFormat = DepthFormat;
+
+            vk::PushConstantRange pushConstant{};
+            pushConstant.stageFlags = vk::ShaderStageFlagBits::eVertex;
+            pushConstant.offset = 0;
+            pushConstant.size = sizeof(glm::mat4);
+            std::array<vk::DescriptorSetLayout, 3> setLayouts{
+                renderer.materialSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
+            vk::PipelineLayoutCreateInfo layoutInfo{};
+            layoutInfo.setSetLayouts(setLayouts);
+            layoutInfo.setPushConstantRanges(pushConstant);
+            auto layoutResult = checked(renderer.device.createPipelineLayout(layoutInfo), "createPipelineLayout (depth-prepass)");
+            if (!layoutResult)
+            {
+                renderer.device.destroyShaderModule(shaderModule);
+                return std::unexpected(layoutResult.error());
+            }
+
+            vk::GraphicsPipelineCreateInfo pipelineInfo{};
+            pipelineInfo.pNext = &renderingInfo;
+            pipelineInfo.setStages(stage);
+            pipelineInfo.pVertexInputState = &vertexInput;
+            pipelineInfo.pInputAssemblyState = &inputAssembly;
+            pipelineInfo.pViewportState = &viewportState;
+            pipelineInfo.pRasterizationState = &raster;
+            pipelineInfo.pMultisampleState = &multisample;
+            pipelineInfo.pDepthStencilState = &depthStencil;
+            pipelineInfo.pColorBlendState = &colorBlend;
+            pipelineInfo.pDynamicState = &dynamic;
+            pipelineInfo.layout = *layoutResult;
+
+            vk::ResultValue<vk::Pipeline> created = renderer.device.createGraphicsPipeline(nullptr, pipelineInfo);
+            renderer.device.destroyShaderModule(shaderModule);
+            if (created.result != vk::Result::eSuccess)
+            {
+                renderer.device.destroyPipelineLayout(*layoutResult);
+                return std::unexpected(std::format("createGraphicsPipeline (depth-prepass): {}", vk::to_string(created.result)));
+            }
+
+            Pipeline pipeline;
+            pipeline.device = renderer.device;
+            pipeline.pipeline = created.value;
+            pipeline.layout = *layoutResult;
+            return std::make_shared<Pipeline>(std::move(pipeline));
+        }
+
         // Point the tonemap set's storage-image binding at the current offscreen color
         // view (GENERAL layout). Called after the offscreen color is (re)created.
         void updateTonemapSet(Renderer& renderer)
@@ -1472,6 +1578,15 @@ namespace se
             }
             renderer.tonemapSet = (*tonemapAllocated)[0];
             updateTonemapSet(renderer);
+
+            // Depth pre-pass: a vertex-only pipeline that reuses the mesh vertex shader.
+            std::expected<Ref<Pipeline>, std::string> depthPrepass =
+                makeDepthPrepassPipeline(renderer, "shaders/mesh.spv");
+            if (!depthPrepass)
+            {
+                return std::unexpected(depthPrepass.error());
+            }
+            renderer.depthPrepassPipeline = *depthPrepass;
             return {};
         }
     }
@@ -1659,6 +1774,7 @@ namespace se
         renderer.cullPipeline.reset();        // RAII frees the compute pipeline + layout
         renderer.thumbnailPipeline.reset();
         renderer.tonemapPipeline.reset();
+        renderer.depthPrepassPipeline.reset();
 
         renderer.offscreenViewport.reset();  // free before the allocator/device
         renderer.offscreenDepth.reset();
@@ -1883,6 +1999,25 @@ namespace se
             addPass(graph, std::move(cull));
         }
 
+        // Optional depth pre-pass: lay down scene depth first, so the scene pass loads it
+        // and shades only the front-most fragments. The graph derives the depth WAW
+        // barrier (pre-pass write → scene write) from the two declared depth usages.
+        const bool doDepthPrepass = renderer.useDepthPrepass && renderer.depthPrepassPipeline;
+        if (doDepthPrepass)
+        {
+            RgPass depthPass;
+            depthPass.name = "depth-prepass";
+            depthPass.kind = RgPassKind::Graphics;
+            depthPass.depth = RgAttachment{ sceneDepth, vk::AttachmentLoadOp::eClear,
+                vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
+            depthPass.renderArea = offscreen.extent;
+            depthPass.execute = [&renderer](vk::CommandBuffer cmd)
+            {
+                recordDepthPrepass(renderer, cmd);
+            };
+            addPass(graph, std::move(depthPass));
+        }
+
         RgPass scene;
         scene.name = "scene";
         scene.kind = RgPassKind::Graphics;
@@ -1892,7 +2027,10 @@ namespace se
         }
         scene.color = RgAttachment{ renderer.frameSceneColor, vk::AttachmentLoadOp::eClear,
             vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } } };
-        scene.depth = RgAttachment{ sceneDepth, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eDontCare,
+        // Load the pre-pass depth when present; otherwise clear it here as before.
+        const vk::AttachmentLoadOp depthLoad =
+            doDepthPrepass ? vk::AttachmentLoadOp::eLoad : vk::AttachmentLoadOp::eClear;
+        scene.depth = RgAttachment{ sceneDepth, depthLoad, vk::AttachmentStoreOp::eDontCare,
             vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
         scene.renderArea = offscreen.extent;
         scene.execute = [&renderer](vk::CommandBuffer cmd)
@@ -2119,7 +2257,7 @@ namespace se
         vk::PipelineDepthStencilStateCreateInfo depthStencil{};
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_TRUE;
-        depthStencil.depthCompareOp = vk::CompareOp::eLess;
+        depthStencil.depthCompareOp = vk::CompareOp::eLessOrEqual;  // passes fragments at a depth pre-pass's value
 
         vk::PipelineColorBlendAttachmentState blendAttachment{};
         blendAttachment.blendEnable = VK_FALSE;
@@ -2486,6 +2624,31 @@ namespace se
         }
     }
 
+    void recordDepthPrepass(Renderer& renderer, vk::CommandBuffer cmd)
+    {
+        SceneDrawList& list = renderer.sceneDrawList;
+        if (!list.valid || !renderer.depthPrepassPipeline)
+        {
+            return;
+        }
+        // The vertex-only pipeline needs only the instance set (set 2) + viewProj push.
+        vk::PipelineLayout layout = renderer.depthPrepassPipeline->layout;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.depthPrepassPipeline->pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 2, list.instanceSet, {});
+        cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &list.viewProj);
+        for (const DrawBatch& batch : list.batches)
+        {
+            vk::DeviceSize offset = 0;
+            cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
+            cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+            for (const Submesh& submesh : batch.mesh->submeshes)
+            {
+                cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex,
+                                submesh.vertexOffset, batch.baseInstance);
+            }
+        }
+    }
+
     const Ref<GpuTexture>& defaultTexture(const Renderer& renderer)
     {
         return renderer.defaultWhiteTexture;
@@ -2579,6 +2742,16 @@ namespace se
     bool postProcessEnabled(const Renderer& renderer)
     {
         return renderer.usePostProcess;
+    }
+
+    void setDepthPrepass(Renderer& renderer, bool enabled)
+    {
+        renderer.useDepthPrepass = enabled;
+    }
+
+    bool depthPrepassEnabled(const Renderer& renderer)
+    {
+        return renderer.useDepthPrepass;
     }
 
     std::expected<Ref<GpuTexture>, std::string> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
