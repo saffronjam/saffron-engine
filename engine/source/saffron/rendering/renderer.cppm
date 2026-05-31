@@ -53,6 +53,10 @@ export namespace se
 
     inline constexpr u32 MaxFramesInFlight = 2;
 
+    // Capacity of the bindless texture array (set 0). One global combined-image-sampler
+    // array indexed per-instance; lavapipe + desktop GPUs allow far more, this is plenty.
+    inline constexpr u32 MaxBindlessTextures = 1024;
+
     struct FrameData
     {
         vk::CommandPool commandPool;
@@ -277,13 +281,12 @@ export namespace se
     // (renderer.linearSampler), so it is not owned here.
     struct GpuTexture
     {
-        vk::Device device;                 // borrowed (frees the view + set)
+        vk::Device device;                 // borrowed (frees the view)
         VmaAllocator allocator = nullptr;  // borrowed (frees the image)
-        vk::DescriptorPool pool;           // borrowed (frees the material set)
         vk::Image image;
         vk::ImageView view;
         VmaAllocation alloc = nullptr;
-        vk::DescriptorSet materialSet;     // set 0 bound to this texture + the shared sampler
+        u32 bindlessIndex = 0;             // slot in the bindless texture array (set 0)
         vk::Extent2D extent;
         vk::Format format = vk::Format::eUndefined;
 
@@ -292,17 +295,15 @@ export namespace se
         GpuTexture& operator=(const GpuTexture&) = delete;
 
         GpuTexture(GpuTexture&& other) noexcept
-            : device(other.device), allocator(other.allocator), pool(other.pool), image(other.image),
-              view(other.view), alloc(other.alloc), materialSet(other.materialSet), extent(other.extent),
-              format(other.format)
+            : device(other.device), allocator(other.allocator), image(other.image),
+              view(other.view), alloc(other.alloc), bindlessIndex(other.bindlessIndex),
+              extent(other.extent), format(other.format)
         {
             other.device = nullptr;
             other.allocator = nullptr;
-            other.pool = nullptr;
             other.image = nullptr;
             other.view = nullptr;
             other.alloc = nullptr;
-            other.materialSet = nullptr;
         }
 
         GpuTexture& operator=(GpuTexture&& other) noexcept
@@ -312,20 +313,17 @@ export namespace se
                 reset();
                 device = other.device;
                 allocator = other.allocator;
-                pool = other.pool;
                 image = other.image;
                 view = other.view;
                 alloc = other.alloc;
-                materialSet = other.materialSet;
+                bindlessIndex = other.bindlessIndex;
                 extent = other.extent;
                 format = other.format;
                 other.device = nullptr;
                 other.allocator = nullptr;
-                other.pool = nullptr;
                 other.image = nullptr;
                 other.view = nullptr;
                 other.alloc = nullptr;
-                other.materialSet = nullptr;
             }
             return *this;
         }
@@ -337,10 +335,8 @@ export namespace se
 
         void reset()
         {
-            if (device && pool && materialSet)
-            {
-                static_cast<void>(device.freeDescriptorSets(pool, materialSet));
-            }
+            // The bindless slot is not reclaimed here: no live material references a
+            // destroyed texture's index, so its stale descriptor is never sampled.
             if (device && view)
             {
                 device.destroyImageView(view);
@@ -349,7 +345,6 @@ export namespace se
             {
                 vmaDestroyImage(allocator, static_cast<VkImage>(image), alloc);
             }
-            materialSet = nullptr;
             view = nullptr;
             image = nullptr;
             alloc = nullptr;
@@ -441,15 +436,14 @@ export namespace se
         Material material;
     };
 
-    // A batch of instances sharing a pipeline + mesh + albedo texture, drawn as one
-    // instanced drawIndexed. baseInstance offsets into the frame's instance buffer. The
-    // Refs keep the pipeline/mesh/texture alive until the frame's command buffer executes.
+    // A batch of instances sharing a pipeline + mesh, drawn as one instanced drawIndexed.
+    // Bindless means the albedo texture is a per-instance index (in the instance buffer),
+    // not a per-batch descriptor — so batches no longer split by texture. baseInstance
+    // offsets into the frame's instance buffer.
     struct DrawBatch
     {
         Ref<Pipeline> pipeline;      // resolved from the material via the PSO cache
         Ref<GpuMesh> mesh;
-        Ref<GpuTexture> texture;     // kept alive; may be null (default white bound)
-        vk::DescriptorSet materialSet;
         u32 baseInstance = 0;
         u32 instanceCount = 0;
     };
@@ -460,6 +454,7 @@ export namespace se
     {
         glm::mat4 viewProj{ 1.0f };
         std::vector<DrawBatch> batches;
+        std::vector<Ref<GpuTexture>> liveTextures;  // pins indexed textures for the frame
         vk::DescriptorSet lightSet;
         vk::DescriptorSet instanceSet;
         bool valid = false;
@@ -510,10 +505,15 @@ export namespace se
         // caller (AssetServer, editor), not by the Renderer; their RAII dtors free
         // the vk/VMA resources when the last Ref drops (before the allocator/device).
         vk::Sampler linearSampler;
-        vk::DescriptorSetLayout materialSetLayout;   // set 0: combined image sampler
+        vk::DescriptorSetLayout bindlessSetLayout;   // set 0: bindless combined-image-sampler array
         vk::DescriptorSetLayout lightSetLayout;      // set 1: directional light UBO
         vk::DescriptorSetLayout instanceSetLayout;   // set 2: per-instance storage buffer
         vk::DescriptorPool descriptorPool;           // eFreeDescriptorSet (texture sets freed on Ref drop)
+        // Bindless: one global texture array bound once; uploadTexture writes a stable
+        // slot (update-after-bind) and returns its index. The default white is slot 0.
+        vk::DescriptorPool bindlessPool;             // eUpdateAfterBindPool
+        vk::DescriptorSet bindlessSet;               // the single set 0 for all draws
+        u32 nextBindlessIndex = 0;
         // Per-frame light UBO + set (one per in-flight frame), so the host write in
         // setDirectionalLight never races a frame still reading the light on the GPU.
         std::array<vk::DescriptorSet, MaxFramesInFlight> lightSets;
@@ -614,6 +614,7 @@ export namespace se
         glm::mat4 model;
         glm::mat4 normalMatrix;  // transpose(inverse(mat3(model))), correct under non-uniform scale
         glm::vec4 baseColor;
+        glm::uvec4 texture{ 0 };  // .x = bindless albedo index; rest pads to std430 16 bytes
     };
 
     // Mesh rendering: a depth-tested instanced pipeline (set 0 = material albedo,
@@ -1260,7 +1261,7 @@ namespace se
             pushConstant.offset = 0;
             pushConstant.size = sizeof(glm::mat4);
             std::array<vk::DescriptorSetLayout, 3> setLayouts{
-                renderer.materialSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
+                renderer.bindlessSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
             vk::PipelineLayoutCreateInfo layoutInfo{};
             layoutInfo.setSetLayouts(setLayouts);
             layoutInfo.setPushConstantRanges(pushConstant);
@@ -1297,6 +1298,20 @@ namespace se
             pipeline.pipeline = created.value;
             pipeline.layout = *layoutResult;
             return std::make_shared<Pipeline>(std::move(pipeline));
+        }
+
+        // Write a texture into the bindless array at the given slot (set 0, binding 0).
+        // update-after-bind: safe to write a live set between draws.
+        void writeBindlessTexture(Renderer& renderer, vk::ImageView view, u32 index)
+        {
+            vk::DescriptorImageInfo info{ renderer.linearSampler, view, vk::ImageLayout::eShaderReadOnlyOptimal };
+            vk::WriteDescriptorSet write{};
+            write.dstSet = renderer.bindlessSet;
+            write.dstBinding = 0;
+            write.dstArrayElement = index;
+            write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            write.setImageInfo(info);
+            renderer.device.updateDescriptorSets(write, {});
         }
 
         // Point the tonemap set's storage-image binding at the current offscreen color
@@ -1337,19 +1352,28 @@ namespace se
             }
             renderer.linearSampler = *sampler;
 
+            // Set 0 is the bindless albedo array: a runtime-sized combined-image-sampler
+            // array, partially bound (not every slot filled) + update-after-bind (new
+            // textures written into live slots). Indexed per-instance in the shader.
             vk::DescriptorSetLayoutBinding albedoBinding{};
             albedoBinding.binding = 0;
             albedoBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            albedoBinding.descriptorCount = 1;
+            albedoBinding.descriptorCount = MaxBindlessTextures;
             albedoBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+            vk::DescriptorBindingFlags bindlessFlags =
+                vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+            vk::DescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{};
+            bindingFlagsInfo.setBindingFlags(bindlessFlags);
             vk::DescriptorSetLayoutCreateInfo materialLayoutInfo{};
             materialLayoutInfo.setBindings(albedoBinding);
-            auto materialLayout = checked(renderer.device.createDescriptorSetLayout(materialLayoutInfo), "materialSetLayout");
+            materialLayoutInfo.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
+            materialLayoutInfo.pNext = &bindingFlagsInfo;
+            auto materialLayout = checked(renderer.device.createDescriptorSetLayout(materialLayoutInfo), "bindlessSetLayout");
             if (!materialLayout)
             {
                 return std::unexpected(materialLayout.error());
             }
-            renderer.materialSetLayout = *materialLayout;
+            renderer.bindlessSetLayout = *materialLayout;
 
             std::array<vk::DescriptorSetLayoutBinding, 4> lightBindings{};
             lightBindings[0].binding = 0;  // directional + ambient + counts UBO
@@ -1442,6 +1466,29 @@ namespace se
                 return std::unexpected(pool.error());
             }
             renderer.descriptorPool = *pool;
+
+            // The bindless set comes from its own update-after-bind pool.
+            vk::DescriptorPoolSize bindlessPoolSize{ vk::DescriptorType::eCombinedImageSampler, MaxBindlessTextures };
+            vk::DescriptorPoolCreateInfo bindlessPoolInfo{};
+            bindlessPoolInfo.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind;
+            bindlessPoolInfo.maxSets = 1;
+            bindlessPoolInfo.setPoolSizes(bindlessPoolSize);
+            auto bindlessPoolResult = checked(renderer.device.createDescriptorPool(bindlessPoolInfo), "bindlessPool");
+            if (!bindlessPoolResult)
+            {
+                return std::unexpected(bindlessPoolResult.error());
+            }
+            renderer.bindlessPool = *bindlessPoolResult;
+
+            vk::DescriptorSetAllocateInfo bindlessAlloc{};
+            bindlessAlloc.descriptorPool = renderer.bindlessPool;
+            bindlessAlloc.setSetLayouts(renderer.bindlessSetLayout);
+            auto bindlessAllocated = checked(renderer.device.allocateDescriptorSets(bindlessAlloc), "allocate bindlessSet");
+            if (!bindlessAllocated)
+            {
+                return std::unexpected(bindlessAllocated.error());
+            }
+            renderer.bindlessSet = (*bindlessAllocated)[0];
 
             for (u32 i = 0; i < MaxFramesInFlight; i = i + 1)
             {
@@ -1653,10 +1700,19 @@ namespace se
         features13.dynamicRendering = VK_TRUE;
         features13.synchronization2 = VK_TRUE;
 
+        // Bindless: one global texture array indexed per-instance. Core Vulkan 1.2
+        // descriptor indexing — required (selection fails with a clear error if absent).
+        VkPhysicalDeviceVulkan12Features features12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+        features12.runtimeDescriptorArray = VK_TRUE;
+        features12.descriptorBindingPartiallyBound = VK_TRUE;
+        features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+
         vkb::PhysicalDeviceSelector selector{ renderer.vkbInstance };
         auto physicalResult = selector
                                   .set_minimum_version(1, 3)
                                   .set_required_features_11(features11)
+                                  .set_required_features_12(features12)
                                   .set_required_features_13(features13)
                                   .set_surface(rawSurface)
                                   .select();
@@ -1772,6 +1828,22 @@ namespace se
         }
         renderer.defaultWhiteTexture = *whiteTexture;
 
+        // Seed every bindless slot with the default texture so no slot is ever unbound —
+        // some drivers (llvmpipe) fault sampling a partially-bound array even on slots a
+        // shader never reads. Real uploads overwrite their slot afterwards.
+        {
+            std::vector<vk::DescriptorImageInfo> infos(MaxBindlessTextures,
+                vk::DescriptorImageInfo{ renderer.linearSampler, (*whiteTexture)->view,
+                                         vk::ImageLayout::eShaderReadOnlyOptimal });
+            vk::WriteDescriptorSet fill{};
+            fill.dstSet = renderer.bindlessSet;
+            fill.dstBinding = 0;
+            fill.dstArrayElement = 0;
+            fill.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            fill.setImageInfo(infos);
+            renderer.device.updateDescriptorSets(fill, {});
+        }
+
         logInfo(std::format("vulkan ready — gpu '{}', {} swapchain images",
                             renderer.vkbDevice.physical_device.name,
                             renderer.swapchainImages.size()));
@@ -1821,9 +1893,13 @@ namespace se
         {
             renderer.device.destroyDescriptorPool(renderer.descriptorPool);
         }
-        if (renderer.materialSetLayout)
+        if (renderer.bindlessPool)
         {
-            renderer.device.destroyDescriptorSetLayout(renderer.materialSetLayout);
+            renderer.device.destroyDescriptorPool(renderer.bindlessPool);
+        }
+        if (renderer.bindlessSetLayout)
+        {
+            renderer.device.destroyDescriptorSetLayout(renderer.bindlessSetLayout);
         }
         if (renderer.lightSetLayout)
         {
@@ -2318,7 +2394,7 @@ namespace se
         pushConstant.size = sizeof(glm::mat4);  // viewProj
 
         std::array<vk::DescriptorSetLayout, 3> setLayouts{
-            renderer.materialSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
+            renderer.bindlessSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayouts);
         layoutInfo.setPushConstantRanges(pushConstant);
@@ -2576,17 +2652,17 @@ namespace se
             return;
         }
 
-        // Bucket items by (pipeline, mesh, texture); each bucket becomes one instanced
-        // draw. The pipeline is resolved from the item's material via the PSO cache, so
-        // same-material items share a PSO and batch together. First-seen order preserved.
+        // Bucket items by (pipeline, mesh); each bucket becomes one instanced draw. The
+        // albedo is bindless — a per-instance index into the global texture array — so
+        // items differing only by texture batch together. First-seen order preserved.
         struct Bucket
         {
             Ref<Pipeline> pipeline;
             Ref<GpuMesh> mesh;
-            Ref<GpuTexture> texture;
             std::vector<InstanceData> instances;
         };
         std::vector<Bucket> buckets;
+        std::vector<Ref<GpuTexture>> liveTextures;
         for (const DrawItem& item : items)
         {
             if (!item.mesh)
@@ -2598,11 +2674,21 @@ namespace se
             {
                 continue;
             }
+            // Resolve the albedo to a bindless slot (default white when the item has none).
+            u32 textureIndex = 0;
+            if (renderer.defaultWhiteTexture)
+            {
+                textureIndex = renderer.defaultWhiteTexture->bindlessIndex;
+            }
+            if (item.texture && item.texture->image)
+            {
+                textureIndex = item.texture->bindlessIndex;
+                liveTextures.push_back(item.texture);
+            }
             Bucket* bucket = nullptr;
             for (Bucket& candidate : buckets)
             {
-                if (candidate.pipeline.get() == pipeline.get() &&
-                    candidate.mesh.get() == item.mesh.get() && candidate.texture.get() == item.texture.get())
+                if (candidate.pipeline.get() == pipeline.get() && candidate.mesh.get() == item.mesh.get())
                 {
                     bucket = &candidate;
                     break;
@@ -2610,34 +2696,22 @@ namespace se
             }
             if (bucket == nullptr)
             {
-                buckets.push_back(Bucket{ pipeline, item.mesh, item.texture, {} });
+                buckets.push_back(Bucket{ pipeline, item.mesh, {} });
                 bucket = &buckets.back();
             }
-            bucket->instances.push_back(InstanceData{ item.model, item.normalMatrix, item.baseColor });
+            bucket->instances.push_back(InstanceData{ item.model, item.normalMatrix, item.baseColor,
+                                                      glm::uvec4{ textureIndex, 0, 0, 0 } });
         }
 
-        // Flatten buckets into one contiguous instance array + per-batch ranges, dropping
-        // any bucket whose material set is unavailable.
+        // Flatten buckets into one contiguous instance array + per-batch ranges.
         std::vector<InstanceData> instances;
         instances.reserve(items.size());
         std::vector<DrawBatch> batches;
         for (Bucket& bucket : buckets)
         {
-            const Ref<GpuTexture>* texPtr = &renderer.defaultWhiteTexture;
-            if (bucket.texture)
-            {
-                texPtr = &bucket.texture;
-            }
-            const Ref<GpuTexture>& tex = *texPtr;
-            if (!tex || !tex->materialSet)
-            {
-                continue;
-            }
             DrawBatch batch;
             batch.pipeline = bucket.pipeline;
             batch.mesh = bucket.mesh;
-            batch.texture = bucket.texture;
-            batch.materialSet = tex->materialSet;
             batch.baseInstance = static_cast<u32>(instances.size());
             batch.instanceCount = static_cast<u32>(bucket.instances.size());
             instances.insert(instances.end(), bucket.instances.begin(), bucket.instances.end());
@@ -2669,8 +2743,14 @@ namespace se
         renderer.stats.batches = static_cast<u32>(batches.size());
         renderer.stats.instances = drawnInstances;
 
-        renderer.sceneDrawList = SceneDrawList{ viewProj, std::move(batches),
-            renderer.lightSets[frame], renderer.instanceSets[frame], true };
+        SceneDrawList list;
+        list.viewProj = viewProj;
+        list.batches = std::move(batches);
+        list.liveTextures = std::move(liveTextures);
+        list.lightSet = renderer.lightSets[frame];
+        list.instanceSet = renderer.instanceSets[frame];
+        list.valid = true;
+        renderer.sceneDrawList = std::move(list);
     }
 
     // Record the scene's shaded geometry. All mesh PSOs share the layout, so the light +
@@ -2684,13 +2764,15 @@ namespace se
             return;
         }
         vk::PipelineLayout layout = list.batches[0].pipeline->layout;
+        // All sets bind once: the bindless albedo array (0) + light (1) + instance (2).
+        // Per-instance texture indices live in the instance buffer, so no per-batch set.
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0, renderer.bindlessSet, {});
         std::array<vk::DescriptorSet, 2> frameSets{ list.lightSet, list.instanceSet };
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 1, frameSets, {});
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &list.viewProj);
         for (const DrawBatch& batch : list.batches)
         {
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, batch.pipeline->pipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, batch.pipeline->layout, 0, batch.materialSet, {});
             vk::DeviceSize offset = 0;
             cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
             cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
@@ -3209,24 +3291,10 @@ namespace se
             return std::unexpected(view.error());
         }
 
-        vk::DescriptorSetAllocateInfo setAlloc{};
-        setAlloc.descriptorPool = renderer.descriptorPool;
-        setAlloc.setSetLayouts(renderer.materialSetLayout);
-        auto allocated = checked(renderer.device.allocateDescriptorSets(setAlloc), "uploadTexture: allocateDescriptorSets");
-        if (!allocated)
-        {
-            renderer.device.destroyImageView(*view);
-            vmaDestroyImage(renderer.allocator, rawImage, imageAllocation);
-            return std::unexpected(allocated.error());
-        }
-        vk::DescriptorSet set = (*allocated)[0];
-        vk::DescriptorImageInfo imageDescriptor{ renderer.linearSampler, *view, vk::ImageLayout::eShaderReadOnlyOptimal };
-        vk::WriteDescriptorSet write{};
-        write.dstSet = set;
-        write.dstBinding = 0;
-        write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        write.setImageInfo(imageDescriptor);
-        renderer.device.updateDescriptorSets(write, {});
+        // Claim a bindless slot and write the texture into the global array.
+        const u32 index = renderer.nextBindlessIndex;
+        renderer.nextBindlessIndex = renderer.nextBindlessIndex + 1;
+        writeBindlessTexture(renderer, *view, index);
 
         GpuTexture texture;
         texture.device = renderer.device;
@@ -3236,8 +3304,7 @@ namespace se
         texture.alloc = imageAllocation;
         texture.extent = vk::Extent2D{ width, height };
         texture.format = format;
-        texture.pool = renderer.descriptorPool;
-        texture.materialSet = set;
+        texture.bindlessIndex = index;
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 

@@ -24,6 +24,7 @@ struct VertexOutput
     float3 worldNormal : NORMAL;
     float2 uv0 : TEXCOORD0;
     float4 baseColor : COLOR0;
+    nointerpolation uint textureIndex : TEXCOORD1;
 };
 
 struct Camera
@@ -32,7 +33,10 @@ struct Camera
 };
 [[vk::push_constant]] Camera camera;
 
-[[vk::binding(0, 0)]] Sampler2D albedo;
+// Bindless: one global albedo array (set 0) indexed per-instance. Partially bound +
+// update-after-bind on the C++ side; sampled with NonUniformResourceIndex. The size
+// matches MaxBindlessTextures in renderer.cppm (a bounded array, not a runtime one).
+[[vk::binding(0, 0)]] Sampler2D albedoTextures[1024];
 
 struct LightGlobals
 {
@@ -73,6 +77,7 @@ struct Instance
     float4x4 model;
     float4x4 normalMatrix;
     float4 baseColor;
+    uint4 texture;  // x = bindless albedo index
 };
 [[vk::binding(0, 2)]] StructuredBuffer<Instance> instances;
 
@@ -87,6 +92,7 @@ VertexOutput vertexMain(VertexInput input, uint instanceIndex : SV_VulkanInstanc
     output.worldNormal = mul((float3x3)inst.normalMatrix, input.normal);
     output.uv0 = input.uv0;
     output.baseColor = inst.baseColor;
+    output.textureIndex = inst.texture.x;
     return output;
 }
 
@@ -144,7 +150,7 @@ uint clusterIndexFor(float2 pixel, float viewZ)
 float4 fragmentMain(VertexOutput input) : SV_Target
 {
     float3 n = normalize(input.worldNormal);
-    float4 tex = albedo.Sample(input.uv0);
+    float4 tex = albedoTextures[NonUniformResourceIndex(input.textureIndex)].Sample(input.uv0);
 
     // Unlit: albedo * base color, no lighting (a different cached PSO via kUnlit).
     if (kUnlit)
