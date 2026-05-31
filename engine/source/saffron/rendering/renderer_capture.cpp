@@ -37,14 +37,14 @@ namespace se
 {
     auto captureViewport(Renderer& renderer, const std::string& path) -> Result<void>
     {
-        Image& img = renderer.offscreenViewport;
+        Image& img = renderer.targets.offscreen;
         const u32 width = img.extent.width;
         const u32 height = img.extent.height;
         const vk::DeviceSize byteSize = static_cast<vk::DeviceSize>(width) * height * 4;
 
         // The offscreen image may still be sampled by an in-flight frame; idle so
         // the capture's layout transition cannot race that read.
-        static_cast<void>(renderer.device.waitIdle());
+        static_cast<void>(renderer.context.device.waitIdle());
 
         VkBuffer rawBuffer = VK_NULL_HANDLE;
         VmaAllocation bufferAllocation = nullptr;
@@ -55,13 +55,13 @@ namespace se
         }
 
         vk::CommandBufferAllocateInfo allocInfo{};
-        allocInfo.commandPool = renderer.frames[0].commandPool;
+        allocInfo.commandPool = renderer.frame.frames[0].commandPool;
         allocInfo.level = vk::CommandBufferLevel::ePrimary;
         allocInfo.commandBufferCount = 1;
-        auto cmds = checked(renderer.device.allocateCommandBuffers(allocInfo), "capture: allocateCommandBuffers");
+        auto cmds = checked(renderer.context.device.allocateCommandBuffers(allocInfo), "capture: allocateCommandBuffers");
         if (!cmds)
         {
-            vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
+            vmaDestroyBuffer(renderer.context.allocator, rawBuffer, bufferAllocation);
             return Err(cmds.error());
         }
         vk::CommandBuffer cmd = (*cmds)[0];
@@ -92,14 +92,14 @@ namespace se
         cmdInfo.commandBuffer = cmd;
         vk::SubmitInfo2 submitInfo{};
         submitInfo.setCommandBufferInfos(cmdInfo);
-        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, nullptr));
-        static_cast<void>(renderer.device.waitIdle());
-        renderer.device.freeCommandBuffers(renderer.frames[0].commandPool, cmd);
-        vmaInvalidateAllocation(renderer.allocator, bufferAllocation, 0, VK_WHOLE_SIZE);
+        static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.context.device.waitIdle());
+        renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
+        vmaInvalidateAllocation(renderer.context.allocator, bufferAllocation, 0, VK_WHOLE_SIZE);
 
         auto wrote = writeBufferToPng(
             static_cast<const unsigned char*>(bufferAllocInfo.pMappedData), width, height, img.format, path);
-        vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
+        vmaDestroyBuffer(renderer.context.allocator, rawBuffer, bufferAllocation);
         if (!wrote)
         {
             return Err(wrote.error());
@@ -110,7 +110,7 @@ namespace se
 
     auto requestWindowCapture(Renderer& renderer, std::string path) -> Result<void>
     {
-        if (!renderer.swapchainCaptureSupported)
+        if (!renderer.swapchain.captureSupported)
         {
             return Err(std::string{ "window capture unsupported: surface lacks TRANSFER_SRC usage" });
         }

@@ -462,7 +462,7 @@ namespace se
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
         poolInfo.maxSets = 1000;
         poolInfo.setPoolSizes(poolSizes);
-        vk::ResultValue<vk::DescriptorPool> pool = renderer.device.createDescriptorPool(poolInfo);
+        vk::ResultValue<vk::DescriptorPool> pool = renderer.context.device.createDescriptorPool(poolInfo);
         if (pool.result != vk::Result::eSuccess)
         {
             return Err(std::format("createDescriptorPool: {}", vk::to_string(pool.result)));
@@ -495,18 +495,18 @@ namespace se
 
         // ImGui consumes the color format during Init (when it builds its pipeline),
         // so a local is fine — the pointer is not read afterwards.
-        VkFormat colorFormat = static_cast<VkFormat>(renderer.swapchainFormat);
+        VkFormat colorFormat = static_cast<VkFormat>(renderer.swapchain.format);
 
         ImGui_ImplVulkan_InitInfo init{};
         init.ApiVersion = VK_API_VERSION_1_3;
-        init.Instance = renderer.instance;
-        init.PhysicalDevice = renderer.physicalDevice;
-        init.Device = renderer.device;
-        init.QueueFamily = renderer.graphicsQueueFamily;
-        init.Queue = renderer.graphicsQueue;
+        init.Instance = renderer.context.instance;
+        init.PhysicalDevice = renderer.context.physicalDevice;
+        init.Device = renderer.context.device;
+        init.QueueFamily = renderer.context.graphicsQueueFamily;
+        init.Queue = renderer.context.graphicsQueue;
         init.DescriptorPool = ui.descriptorPool;
         init.MinImageCount = 2;
-        init.ImageCount = static_cast<u32>(renderer.swapchainImages.size());
+        init.ImageCount = static_cast<u32>(renderer.swapchain.images.size());
         init.UseDynamicRendering = true;
         init.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         init.PipelineInfoMain.PipelineRenderingCreateInfo = VkPipelineRenderingCreateInfo{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
@@ -533,7 +533,7 @@ namespace se
     void destroyUi(Renderer& renderer, Ui& ui)
     {
         if (!ui.initialized) { return; }
-        static_cast<void>(renderer.device.waitIdle());
+        static_cast<void>(renderer.context.device.waitIdle());
         if (ui.viewportTexture != 0)
         {
             ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)ui.viewportTexture);
@@ -542,7 +542,7 @@ namespace se
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
-        renderer.device.destroyDescriptorPool(ui.descriptorPool);
+        renderer.context.device.destroyDescriptorPool(ui.descriptorPool);
         ui.descriptorPool = nullptr;
         ui.initialized = false;
     }

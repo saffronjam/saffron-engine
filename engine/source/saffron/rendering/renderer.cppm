@@ -67,15 +67,15 @@ namespace se
         {
             return Err(std::format("instance creation failed: {}", instanceResult.error().message()));
         }
-        renderer.vkbInstance = instanceResult.value();
-        renderer.instance = vk::Instance{ renderer.vkbInstance.instance };
+        renderer.context.vkbInstance = instanceResult.value();
+        renderer.context.instance = vk::Instance{ renderer.context.vkbInstance.instance };
 
         VkSurfaceKHR rawSurface = VK_NULL_HANDLE;
-        if (!SDL_Vulkan_CreateSurface(window.handle, renderer.vkbInstance.instance, nullptr, &rawSurface))
+        if (!SDL_Vulkan_CreateSurface(window.handle, renderer.context.vkbInstance.instance, nullptr, &rawSurface))
         {
             return Err(std::format("SDL_Vulkan_CreateSurface failed: {}", SDL_GetError()));
         }
-        renderer.surface = vk::SurfaceKHR{ rawSurface };
+        renderer.context.surface = vk::SurfaceKHR{ rawSurface };
 
         VkPhysicalDeviceVulkan11Features features11{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
         features11.shaderDrawParameters = VK_TRUE;  // Slang SV_VertexID emits the DrawParameters capability
@@ -92,7 +92,7 @@ namespace se
         features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
 
-        vkb::PhysicalDeviceSelector selector{ renderer.vkbInstance };
+        vkb::PhysicalDeviceSelector selector{ renderer.context.vkbInstance };
         auto physicalResult = selector
                                   .set_minimum_version(1, 3)
                                   .set_required_features_11(features11)
@@ -111,31 +111,31 @@ namespace se
         {
             return Err(std::format("device creation failed: {}", deviceResult.error().message()));
         }
-        renderer.vkbDevice = deviceResult.value();
-        renderer.physicalDevice = vk::PhysicalDevice{ physicalResult.value().physical_device };
-        renderer.device = vk::Device{ renderer.vkbDevice.device };
+        renderer.context.vkbDevice = deviceResult.value();
+        renderer.context.physicalDevice = vk::PhysicalDevice{ physicalResult.value().physical_device };
+        renderer.context.device = vk::Device{ renderer.context.vkbDevice.device };
 
-        auto queueResult = renderer.vkbDevice.get_queue(vkb::QueueType::graphics);
+        auto queueResult = renderer.context.vkbDevice.get_queue(vkb::QueueType::graphics);
         if (!queueResult)
         {
             return Err(std::format("no graphics queue: {}", queueResult.error().message()));
         }
-        renderer.graphicsQueue = vk::Queue{ queueResult.value() };
-        renderer.graphicsQueueFamily = renderer.vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+        renderer.context.graphicsQueue = vk::Queue{ queueResult.value() };
+        renderer.context.graphicsQueueFamily = renderer.context.vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
         // Highest MSAA level the device supports for both color + depth framebuffers (capped at 8x).
-        vk::SampleCountFlags sampleCounts = renderer.physicalDevice.getProperties().limits.framebufferColorSampleCounts &
-                                            renderer.physicalDevice.getProperties().limits.framebufferDepthSampleCounts;
-        if (sampleCounts & vk::SampleCountFlagBits::e8) { renderer.maxSampleCount = vk::SampleCountFlagBits::e8; }
-        else if (sampleCounts & vk::SampleCountFlagBits::e4) { renderer.maxSampleCount = vk::SampleCountFlagBits::e4; }
-        else if (sampleCounts & vk::SampleCountFlagBits::e2) { renderer.maxSampleCount = vk::SampleCountFlagBits::e2; }
+        vk::SampleCountFlags sampleCounts = renderer.context.physicalDevice.getProperties().limits.framebufferColorSampleCounts &
+                                            renderer.context.physicalDevice.getProperties().limits.framebufferDepthSampleCounts;
+        if (sampleCounts & vk::SampleCountFlagBits::e8) { renderer.targets.maxSampleCount = vk::SampleCountFlagBits::e8; }
+        else if (sampleCounts & vk::SampleCountFlagBits::e4) { renderer.targets.maxSampleCount = vk::SampleCountFlagBits::e4; }
+        else if (sampleCounts & vk::SampleCountFlagBits::e2) { renderer.targets.maxSampleCount = vk::SampleCountFlagBits::e2; }
 
         VmaAllocatorCreateInfo allocatorInfo{};
-        allocatorInfo.instance = renderer.vkbInstance.instance;
+        allocatorInfo.instance = renderer.context.vkbInstance.instance;
         allocatorInfo.physicalDevice = physicalResult.value().physical_device;
-        allocatorInfo.device = renderer.vkbDevice.device;
+        allocatorInfo.device = renderer.context.vkbDevice.device;
         allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
-        if (vmaCreateAllocator(&allocatorInfo, &renderer.allocator) != VK_SUCCESS)
+        if (vmaCreateAllocator(&allocatorInfo, &renderer.context.allocator) != VK_SUCCESS)
         {
             return Err(std::string{ "vmaCreateAllocator failed" });
         }
@@ -153,24 +153,24 @@ namespace se
         {
             return Err(offscreen.error());
         }
-        renderer.offscreenViewport = std::move(*offscreen);
-        renderer.viewportDesiredWidth = window.width;
-        renderer.viewportDesiredHeight = window.height;
-        renderer.viewportGeneration = 1;
+        renderer.targets.offscreen = std::move(*offscreen);
+        renderer.targets.desiredWidth = window.width;
+        renderer.targets.desiredHeight = window.height;
+        renderer.targets.generation = 1;
 
         auto depth = newDepthImage(renderer, window.width, window.height);
         if (!depth)
         {
             return Err(depth.error());
         }
-        renderer.offscreenDepth = std::move(*depth);
+        renderer.targets.depth = std::move(*depth);
 
-        for (FrameData& frame : renderer.frames)
+        for (FrameData& frame : renderer.frame.frames)
         {
             vk::CommandPoolCreateInfo poolInfo{};
             poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-            poolInfo.queueFamilyIndex = renderer.graphicsQueueFamily;
-            auto pool = checked(renderer.device.createCommandPool(poolInfo), "createCommandPool");
+            poolInfo.queueFamilyIndex = renderer.context.graphicsQueueFamily;
+            auto pool = checked(renderer.context.device.createCommandPool(poolInfo), "createCommandPool");
             if (!pool)
             {
                 return Err(pool.error());
@@ -181,14 +181,14 @@ namespace se
             allocInfo.commandPool = frame.commandPool;
             allocInfo.level = vk::CommandBufferLevel::ePrimary;
             allocInfo.commandBufferCount = 1;
-            auto buffers = checked(renderer.device.allocateCommandBuffers(allocInfo), "allocateCommandBuffers");
+            auto buffers = checked(renderer.context.device.allocateCommandBuffers(allocInfo), "allocateCommandBuffers");
             if (!buffers)
             {
                 return Err(buffers.error());
             }
             frame.commandBuffer = (*buffers)[0];
 
-            auto imageAvailable = checked(renderer.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
+            auto imageAvailable = checked(renderer.context.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
             if (!imageAvailable)
             {
                 return Err(imageAvailable.error());
@@ -197,7 +197,7 @@ namespace se
 
             vk::FenceCreateInfo fenceInfo{};
             fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
-            auto fence = checked(renderer.device.createFence(fenceInfo), "createFence");
+            auto fence = checked(renderer.context.device.createFence(fenceInfo), "createFence");
             if (!fence)
             {
                 return Err(fence.error());
@@ -224,123 +224,123 @@ namespace se
         // shader never reads. Real uploads overwrite their slot afterwards.
         {
             std::vector<vk::DescriptorImageInfo> infos(MaxBindlessTextures,
-                vk::DescriptorImageInfo{ renderer.linearSampler, (*whiteTexture)->view,
+                vk::DescriptorImageInfo{ renderer.descriptors.linearSampler, (*whiteTexture)->view,
                                          vk::ImageLayout::eShaderReadOnlyOptimal });
             vk::WriteDescriptorSet fill{};
-            fill.dstSet = renderer.bindlessSet;
+            fill.dstSet = renderer.descriptors.bindlessSet;
             fill.dstBinding = 0;
             fill.dstArrayElement = 0;
             fill.descriptorType = vk::DescriptorType::eCombinedImageSampler;
             fill.setImageInfo(infos);
-            renderer.device.updateDescriptorSets(fill, {});
+            renderer.context.device.updateDescriptorSets(fill, {});
         }
 
         logInfo(std::format("vulkan ready — gpu '{}', {} swapchain images",
-                            renderer.vkbDevice.physical_device.name,
-                            renderer.swapchainImages.size()));
+                            renderer.context.vkbDevice.physical_device.name,
+                            renderer.swapchain.images.size()));
         return renderer;
     }
 
     void destroyRenderer(Renderer& renderer)
     {
-        if (renderer.device)
+        if (renderer.context.device)
         {
-            static_cast<void>(renderer.device.waitIdle());
+            static_cast<void>(renderer.context.device.waitIdle());
         }
 
         // Drop any Refs the renderer itself still holds, plus the closure vectors
         // (which may capture Refs), before the descriptor pool / allocator / device
         // are torn down — a GpuTexture frees its material set from the pool.
-        renderer.sceneDrawList = SceneDrawList{};  // drops mesh/texture/pipeline Refs
-        renderer.pipelineCache.clear();            // drops the cached mesh PSOs
-        renderer.sceneSubmissions.clear();
-        renderer.uiSubmissions.clear();
+        renderer.frame.sceneDrawList = SceneDrawList{};  // drops mesh/texture/pipeline Refs
+        renderer.pipelines.cache.clear();            // drops the cached mesh PSOs
+        renderer.frame.sceneSubmissions.clear();
+        renderer.frame.uiSubmissions.clear();
         renderer.defaultWhiteTexture.reset();
-        renderer.cullPipeline.reset();        // RAII frees the compute pipeline + layout
-        renderer.thumbnailPipeline.reset();
-        renderer.tonemapPipeline.reset();
-        renderer.fxaaPipeline.reset();
-        renderer.depthPrepassPipeline.reset();
+        renderer.pipelines.cull.reset();        // RAII frees the compute pipeline + layout
+        renderer.pipelines.thumbnail.reset();
+        renderer.pipelines.tonemap.reset();
+        renderer.pipelines.fxaa.reset();
+        renderer.pipelines.depthPrepass.reset();
 
-        renderer.offscreenViewport.reset();  // free before the allocator/device
-        renderer.offscreenDepth.reset();
-        renderer.msaaColor.reset();
-        renderer.msaaDepth.reset();
-        renderer.offscreenScratch.reset();
+        renderer.targets.offscreen.reset();  // free before the allocator/device
+        renderer.targets.depth.reset();
+        renderer.targets.msaaColor.reset();
+        renderer.targets.msaaDepth.reset();
+        renderer.targets.scratch.reset();
 
         for (u32 i = 0; i < MaxFramesInFlight; i = i + 1)
         {
-            renderer.instanceBuffers[i].reset();  // RAII frees the SSBO before the allocator
-            renderer.lightListBuffers[i].reset();
-            renderer.clusterBuffers[i].reset();
-            if (renderer.lightBuffers[i] != VK_NULL_HANDLE)
+            renderer.instancing.buffers[i].reset();  // RAII frees the SSBO before the allocator
+            renderer.lighting.lightListBuffers[i].reset();
+            renderer.lighting.clusterBuffers[i].reset();
+            if (renderer.lighting.lightBuffers[i] != VK_NULL_HANDLE)
             {
-                vmaDestroyBuffer(renderer.allocator, renderer.lightBuffers[i], renderer.lightAllocs[i]);
-                renderer.lightBuffers[i] = VK_NULL_HANDLE;
+                vmaDestroyBuffer(renderer.context.allocator, renderer.lighting.lightBuffers[i], renderer.lighting.lightAllocs[i]);
+                renderer.lighting.lightBuffers[i] = VK_NULL_HANDLE;
             }
-            if (renderer.clusterParamBuffers[i] != VK_NULL_HANDLE)
+            if (renderer.lighting.clusterParamBuffers[i] != VK_NULL_HANDLE)
             {
-                vmaDestroyBuffer(renderer.allocator, renderer.clusterParamBuffers[i], renderer.clusterParamAllocs[i]);
-                renderer.clusterParamBuffers[i] = VK_NULL_HANDLE;
+                vmaDestroyBuffer(renderer.context.allocator, renderer.lighting.clusterParamBuffers[i], renderer.lighting.clusterParamAllocs[i]);
+                renderer.lighting.clusterParamBuffers[i] = VK_NULL_HANDLE;
             }
         }
-        if (renderer.descriptorPool)
+        if (renderer.descriptors.descriptorPool)
         {
-            renderer.device.destroyDescriptorPool(renderer.descriptorPool);
+            renderer.context.device.destroyDescriptorPool(renderer.descriptors.descriptorPool);
         }
-        if (renderer.bindlessPool)
+        if (renderer.descriptors.bindlessPool)
         {
-            renderer.device.destroyDescriptorPool(renderer.bindlessPool);
+            renderer.context.device.destroyDescriptorPool(renderer.descriptors.bindlessPool);
         }
-        if (renderer.bindlessSetLayout)
+        if (renderer.descriptors.bindlessSetLayout)
         {
-            renderer.device.destroyDescriptorSetLayout(renderer.bindlessSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.descriptors.bindlessSetLayout);
         }
-        if (renderer.lightSetLayout)
+        if (renderer.descriptors.lightSetLayout)
         {
-            renderer.device.destroyDescriptorSetLayout(renderer.lightSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.descriptors.lightSetLayout);
         }
-        if (renderer.instanceSetLayout)
+        if (renderer.descriptors.instanceSetLayout)
         {
-            renderer.device.destroyDescriptorSetLayout(renderer.instanceSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.descriptors.instanceSetLayout);
         }
-        if (renderer.clusterSetLayout)
+        if (renderer.descriptors.clusterSetLayout)
         {
-            renderer.device.destroyDescriptorSetLayout(renderer.clusterSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.descriptors.clusterSetLayout);
         }
-        if (renderer.tonemapSetLayout)
+        if (renderer.descriptors.tonemapSetLayout)
         {
-            renderer.device.destroyDescriptorSetLayout(renderer.tonemapSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.descriptors.tonemapSetLayout);
         }
-        if (renderer.fxaaSetLayout)
+        if (renderer.descriptors.fxaaSetLayout)
         {
-            renderer.device.destroyDescriptorSetLayout(renderer.fxaaSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.descriptors.fxaaSetLayout);
         }
-        if (renderer.linearSampler)
+        if (renderer.descriptors.linearSampler)
         {
-            renderer.device.destroySampler(renderer.linearSampler);
+            renderer.context.device.destroySampler(renderer.descriptors.linearSampler);
         }
 
-        for (FrameData& frame : renderer.frames)
+        for (FrameData& frame : renderer.frame.frames)
         {
-            renderer.device.destroyFence(frame.inFlight);
-            renderer.device.destroySemaphore(frame.imageAvailable);
-            renderer.device.destroyCommandPool(frame.commandPool);
+            renderer.context.device.destroyFence(frame.inFlight);
+            renderer.context.device.destroySemaphore(frame.imageAvailable);
+            renderer.context.device.destroyCommandPool(frame.commandPool);
         }
 
         destroySwapchainResources(renderer);
 
-        if (renderer.allocator != nullptr)
+        if (renderer.context.allocator != nullptr)
         {
-            vmaDestroyAllocator(renderer.allocator);
-            renderer.allocator = nullptr;
+            vmaDestroyAllocator(renderer.context.allocator);
+            renderer.context.allocator = nullptr;
         }
-        if (renderer.surface)
+        if (renderer.context.surface)
         {
-            vkb::destroy_surface(renderer.vkbInstance, static_cast<VkSurfaceKHR>(renderer.surface));
+            vkb::destroy_surface(renderer.context.vkbInstance, static_cast<VkSurfaceKHR>(renderer.context.surface));
         }
-        vkb::destroy_device(renderer.vkbDevice);
-        vkb::destroy_instance(renderer.vkbInstance);
+        vkb::destroy_device(renderer.context.vkbDevice);
+        vkb::destroy_instance(renderer.context.vkbInstance);
     }
 
     auto beginFrame(Renderer& renderer) -> bool
@@ -348,19 +348,19 @@ namespace se
         const u32 winW = renderer.window->width;
         const u32 winH = renderer.window->height;
         if (winW > 0 && winH > 0 &&
-            (renderer.swapchainExtent.width != winW || renderer.swapchainExtent.height != winH))
+            (renderer.swapchain.extent.width != winW || renderer.swapchain.extent.height != winH))
         {
-            static_cast<void>(renderer.device.waitIdle());
+            static_cast<void>(renderer.context.device.waitIdle());
             recreateSwapchain(renderer);
             return false;
         }
 
-        FrameData& frame = renderer.frames[renderer.frameIndex];
+        FrameData& frame = renderer.frame.frames[renderer.frame.index];
 
-        static_cast<void>(renderer.device.waitForFences(frame.inFlight, VK_TRUE, UINT64_MAX));
+        static_cast<void>(renderer.context.device.waitForFences(frame.inFlight, VK_TRUE, UINT64_MAX));
 
-        vk::ResultValue<u32> acquire = renderer.device.acquireNextImageKHR(
-            renderer.swapchain, UINT64_MAX, frame.imageAvailable, nullptr);
+        vk::ResultValue<u32> acquire = renderer.context.device.acquireNextImageKHR(
+            renderer.swapchain.handle, UINT64_MAX, frame.imageAvailable, nullptr);
         if (acquire.result == vk::Result::eErrorOutOfDateKHR)
         {
             recreateSwapchain(renderer);
@@ -371,34 +371,34 @@ namespace se
             logError(std::format("vkAcquireNextImageKHR failed: {}", vk::to_string(acquire.result)));
             return false;
         }
-        renderer.imageIndex = acquire.value;
+        renderer.frame.imageIndex = acquire.value;
 
         // Ensure the previous frame that used THIS image has finished before we
         // reuse the image's renderFinished semaphore.
-        if (renderer.imagesInFlight[renderer.imageIndex])
+        if (renderer.swapchain.imagesInFlight[renderer.frame.imageIndex])
         {
-            static_cast<void>(renderer.device.waitForFences(renderer.imagesInFlight[renderer.imageIndex], VK_TRUE, UINT64_MAX));
+            static_cast<void>(renderer.context.device.waitForFences(renderer.swapchain.imagesInFlight[renderer.frame.imageIndex], VK_TRUE, UINT64_MAX));
         }
-        renderer.imagesInFlight[renderer.imageIndex] = frame.inFlight;
+        renderer.swapchain.imagesInFlight[renderer.frame.imageIndex] = frame.inFlight;
 
         // Apply a pending Viewport resize (requested last frame). Single shared
         // target, so a full device idle is required before recreating it.
-        if (renderer.viewportDesiredWidth > 0 && renderer.viewportDesiredHeight > 0 &&
-            (renderer.viewportDesiredWidth != renderer.offscreenViewport.extent.width ||
-             renderer.viewportDesiredHeight != renderer.offscreenViewport.extent.height))
+        if (renderer.targets.desiredWidth > 0 && renderer.targets.desiredHeight > 0 &&
+            (renderer.targets.desiredWidth != renderer.targets.offscreen.extent.width ||
+             renderer.targets.desiredHeight != renderer.targets.offscreen.extent.height))
         {
-            static_cast<void>(renderer.device.waitIdle());
-            auto resized = newColorImage(renderer, renderer.viewportDesiredWidth,
-                                         renderer.viewportDesiredHeight, OffscreenColorFormat, true);
+            static_cast<void>(renderer.context.device.waitIdle());
+            auto resized = newColorImage(renderer, renderer.targets.desiredWidth,
+                                         renderer.targets.desiredHeight, OffscreenColorFormat, true);
             if (resized)
             {
-                renderer.offscreenViewport = std::move(*resized);
-                renderer.viewportGeneration = renderer.viewportGeneration + 1;
+                renderer.targets.offscreen = std::move(*resized);
+                renderer.targets.generation = renderer.targets.generation + 1;
                 updateTonemapSet(renderer);  // the storage-image binding follows the new view
-                auto resizedDepth = newDepthImage(renderer, renderer.viewportDesiredWidth, renderer.viewportDesiredHeight);
+                auto resizedDepth = newDepthImage(renderer, renderer.targets.desiredWidth, renderer.targets.desiredHeight);
                 if (resizedDepth)
                 {
-                    renderer.offscreenDepth = std::move(*resizedDepth);
+                    renderer.targets.depth = std::move(*resizedDepth);
                 }
                 else
                 {
@@ -413,11 +413,11 @@ namespace se
             }
         }
 
-        static_cast<void>(renderer.device.resetFences(frame.inFlight));
+        static_cast<void>(renderer.context.device.resetFences(frame.inFlight));
         static_cast<void>(frame.commandBuffer.reset());
-        renderer.sceneDrawList = SceneDrawList{};  // last frame's geometry has presented
-        renderer.sceneSubmissions.clear();
-        renderer.uiSubmissions.clear();
+        renderer.frame.sceneDrawList = SceneDrawList{};  // last frame's geometry has presented
+        renderer.frame.sceneSubmissions.clear();
+        renderer.frame.uiSubmissions.clear();
 
         vk::CommandBufferBeginInfo beginInfo{};
         beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -430,82 +430,82 @@ namespace se
 
     void submit(Renderer& renderer, RenderFn fn)
     {
-        renderer.sceneSubmissions.push_back(std::move(fn));
+        renderer.frame.sceneSubmissions.push_back(std::move(fn));
     }
 
     void submitUi(Renderer& renderer, RenderFn fn)
     {
-        renderer.uiSubmissions.push_back(std::move(fn));
+        renderer.frame.uiSubmissions.push_back(std::move(fn));
     }
 
     void setViewportDesiredSize(Renderer& renderer, u32 width, u32 height)
     {
-        renderer.viewportDesiredWidth = width;
-        renderer.viewportDesiredHeight = height;
+        renderer.targets.desiredWidth = width;
+        renderer.targets.desiredHeight = height;
     }
 
     auto viewportImageView(const Renderer& renderer) -> vk::ImageView
     {
-        return renderer.offscreenViewport.view;
+        return renderer.targets.offscreen.view;
     }
 
     auto viewportGeneration(const Renderer& renderer) -> u32
     {
-        return renderer.viewportGeneration;
+        return renderer.targets.generation;
     }
 
     auto viewportWidth(const Renderer& renderer) -> u32
     {
-        return renderer.offscreenViewport.extent.width;
+        return renderer.targets.offscreen.extent.width;
     }
 
     auto viewportHeight(const Renderer& renderer) -> u32
     {
-        return renderer.offscreenViewport.extent.height;
+        return renderer.targets.offscreen.extent.height;
     }
 
     void beginFrameGraph(Renderer& renderer)
     {
-        Image& offscreen = renderer.offscreenViewport;
-        Image& depth = renderer.offscreenDepth;
-        const u32 f = renderer.frameIndex;
-        const bool doCull = renderer.clusterDispatchPending && renderer.cullPipeline;
-        renderer.clusterDispatchPending = false;
+        Image& offscreen = renderer.targets.offscreen;
+        Image& depth = renderer.targets.depth;
+        const u32 f = renderer.frame.index;
+        const bool doCull = renderer.lighting.clusterDispatchPending && renderer.pipelines.cull;
+        renderer.lighting.clusterDispatchPending = false;
 
         // The frame as a render graph: declare each pass's resource usage and let the
         // graph derive the barriers + layout transitions. The offscreen color carries
         // its layout across frames (sampled by ImGui last frame → WAR into this scene).
-        renderer.renderGraph = newRenderGraph();
-        RenderGraph& graph = renderer.renderGraph;
+        renderer.graph.current = newRenderGraph();
+        RenderGraph& graph = renderer.graph.current;
         // frameSceneColor is always the offscreen (what ImGui samples + tonemap reads). The
         // scene's 1x result lands in `sceneOutput`: the offscreen normally, or the FXAA
         // scratch when FXAA is on (FXAA then edge-blurs scratch → offscreen). With MSAA the
         // scene renders to msaaColor and resolves into sceneOutput. mutually exclusive via set-aa.
-        const bool msaa = renderer.sampleCount != vk::SampleCountFlagBits::e1 && renderer.msaaColor.image;
-        const bool fxaa = renderer.fxaaEnabled && renderer.offscreenScratch.image && renderer.fxaaPipeline;
-        renderer.frameSceneColor = importImage(graph, offscreen.image, offscreen.view,
+        const bool msaa = renderer.targets.sampleCount != vk::SampleCountFlagBits::e1 && renderer.targets.msaaColor.image;
+        const bool fxaa = renderer.targets.fxaaEnabled && renderer.targets.scratch.image && renderer.pipelines.fxaa;
+        renderer.graph.sceneColor = importImage(graph, offscreen.image, offscreen.view,
             vk::ImageAspectFlagBits::eColor, offscreen.layout, &offscreen.layout);
-        RgResource sceneOutput = renderer.frameSceneColor;
+        RgResource sceneOutput = renderer.graph.sceneColor;
         if (fxaa)
         {
-            sceneOutput = importImage(graph, renderer.offscreenScratch.image, renderer.offscreenScratch.view,
+            sceneOutput = importImage(graph, renderer.targets.scratch.image, renderer.targets.scratch.view,
                 vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
         }
         RgResource sceneColorAttachment = sceneOutput;
         if (msaa)
         {
-            sceneColorAttachment = importImage(graph, renderer.msaaColor.image, renderer.msaaColor.view,
+            sceneColorAttachment = importImage(graph, renderer.targets.msaaColor.image, renderer.targets.msaaColor.view,
                 vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
         }
         Image* depthTarget = &depth;
         if (msaa)
         {
-            depthTarget = &renderer.msaaDepth;
+            depthTarget = &renderer.targets.msaaDepth;
         }
         RgResource sceneDepth = importImage(graph, depthTarget->image, depthTarget->view,
             vk::ImageAspectFlagBits::eDepth, vk::ImageLayout::eUndefined, nullptr);
-        renderer.frameSwapImage = importImage(graph, renderer.swapchainImages[renderer.imageIndex],
-            renderer.swapchainImageViews[renderer.imageIndex], vk::ImageAspectFlagBits::eColor,
+        renderer.graph.swapImage = importImage(graph, renderer.swapchain.images[renderer.frame.imageIndex],
+            renderer.swapchain.imageViews[renderer.frame.imageIndex], vk::ImageAspectFlagBits::eColor,
             vk::ImageLayout::eUndefined, nullptr);
 
         // Clustered forward: a compute pass culls the punctual lights into the froxel
@@ -514,7 +514,7 @@ namespace se
         RgResource clusterBuffer{};
         if (doCull)
         {
-            clusterBuffer = importBuffer(graph, renderer.clusterBuffers[f]->buffer);
+            clusterBuffer = importBuffer(graph, renderer.lighting.clusterBuffers[f]->buffer);
 
             RgPass cull;
             cull.name = "light-cull";
@@ -522,9 +522,9 @@ namespace se
             cull.accesses = { RgAccess{ clusterBuffer, RgUsage::StorageWriteCompute } };
             cull.execute = [&renderer, f](vk::CommandBuffer cmd)
         {
-                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.cullPipeline->pipeline);
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.cull->pipeline);
                 cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                    renderer.cullPipeline->layout, 0, renderer.clusterSets[f], {});
+                    renderer.pipelines.cull->layout, 0, renderer.lighting.clusterSets[f], {});
                 const u32 groups = (ClusterCount + 63) / 64;
                 cmd.dispatch(groups, 1, 1);
             };
@@ -534,7 +534,7 @@ namespace se
         // Optional depth pre-pass: lay down scene depth first, so the scene pass loads it
         // and shades only the front-most fragments. The graph derives the depth WAW
         // barrier (pre-pass write → scene write) from the two declared depth usages.
-        const bool doDepthPrepass = renderer.useDepthPrepass && renderer.depthPrepassPipeline;
+        const bool doDepthPrepass = renderer.useDepthPrepass && renderer.pipelines.depthPrepass;
         if (doDepthPrepass)
         {
             RgPass depthPass;
@@ -560,7 +560,7 @@ namespace se
         // MSAA: render to the multisampled color, resolve into the offscreen (don't store
         // the multisampled samples). Otherwise render straight into the offscreen.
         scene.color = RgAttachment{ sceneColorAttachment, vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } } };
+            vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearColorValue{ renderer.frame.clearColor } } };
         if (msaa)
         {
             scene.color->storeOp = vk::AttachmentStoreOp::eDontCare;
@@ -578,7 +578,7 @@ namespace se
         scene.execute = [&renderer](vk::CommandBuffer cmd)
         {
             recordSceneDrawList(renderer, cmd);
-            for (RenderFn& fn : renderer.sceneSubmissions)
+            for (RenderFn& fn : renderer.frame.sceneSubmissions)
             {
                 fn(cmd);
             }
@@ -593,13 +593,13 @@ namespace se
             fxaaPass.name = "fxaa";
             fxaaPass.kind = RgPassKind::Compute;
             fxaaPass.accesses = { RgAccess{ sceneOutput, RgUsage::SampledReadCompute },
-                                  RgAccess{ renderer.frameSceneColor, RgUsage::StorageImageRWCompute } };
+                                  RgAccess{ renderer.graph.sceneColor, RgUsage::StorageImageRWCompute } };
             const vk::Extent2D extent = offscreen.extent;
             fxaaPass.execute = [&renderer, extent](vk::CommandBuffer cmd)
         {
-                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.fxaaPipeline->pipeline);
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.fxaa->pipeline);
                 cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                    renderer.fxaaPipeline->layout, 0, renderer.fxaaSet, {});
+                    renderer.pipelines.fxaa->layout, 0, renderer.descriptors.fxaaSet, {});
                 cmd.dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
             };
             addPass(graph, std::move(fxaaPass));
@@ -608,12 +608,12 @@ namespace se
 
     auto frameGraph(Renderer& renderer) -> RenderGraph&
     {
-        return renderer.renderGraph;
+        return renderer.graph.current;
     }
 
     auto viewportColorResource(const Renderer& renderer) -> RgResource
     {
-        return renderer.frameSceneColor;
+        return renderer.graph.sceneColor;
     }
 
     void addTonemapPass(Renderer& renderer, RenderGraph& graph)
@@ -621,13 +621,13 @@ namespace se
         RgPass pass;
         pass.name = "tonemap";
         pass.kind = RgPassKind::Compute;
-        pass.accesses = { RgAccess{ renderer.frameSceneColor, RgUsage::StorageImageRWCompute } };
+        pass.accesses = { RgAccess{ renderer.graph.sceneColor, RgUsage::StorageImageRWCompute } };
         pass.execute = [&renderer](vk::CommandBuffer cmd)
         {
-            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.tonemapPipeline->pipeline);
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.tonemap->pipeline);
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                renderer.tonemapPipeline->layout, 0, renderer.tonemapSet, {});
-            const vk::Extent2D extent = renderer.offscreenViewport.extent;
+                renderer.pipelines.tonemap->layout, 0, renderer.descriptors.tonemapSet, {});
+            const vk::Extent2D extent = renderer.targets.offscreen.extent;
             cmd.dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
         };
         addPass(graph, std::move(pass));
@@ -635,21 +635,21 @@ namespace se
 
     void endFrame(Renderer& renderer)
     {
-        FrameData& frame = renderer.frames[renderer.frameIndex];
-        RenderGraph& graph = renderer.renderGraph;
+        FrameData& frame = renderer.frame.frames[renderer.frame.index];
+        RenderGraph& graph = renderer.graph.current;
 
         // The ui pass samples the (now post-processed) offscreen color and composites
         // ImGui into the swapchain. Added last so app-authored passes land before it.
         RgPass ui;
         ui.name = "ui";
         ui.kind = RgPassKind::Graphics;
-        ui.accesses = { RgAccess{ renderer.frameSceneColor, RgUsage::SampledRead } };
-        ui.color = RgAttachment{ renderer.frameSwapImage, vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } } };
-        ui.renderArea = renderer.swapchainExtent;
+        ui.accesses = { RgAccess{ renderer.graph.sceneColor, RgUsage::SampledRead } };
+        ui.color = RgAttachment{ renderer.graph.swapImage, vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearColorValue{ renderer.frame.clearColor } } };
+        ui.renderArea = renderer.swapchain.extent;
         ui.execute = [&renderer](vk::CommandBuffer cmd)
         {
-            for (RenderFn& fn : renderer.uiSubmissions)
+            for (RenderFn& fn : renderer.frame.uiSubmissions)
             {
                 fn(cmd);
             }
@@ -668,7 +668,7 @@ namespace se
         bool doCapture = renderer.captureNextSwapchainPath.has_value();
         if (doCapture)
         {
-            captureExtent = renderer.swapchainExtent;
+            captureExtent = renderer.swapchain.extent;
             const vk::DeviceSize bytes =
                 static_cast<vk::DeviceSize>(captureExtent.width) * captureExtent.height * 4;
             Result<void> created =
@@ -683,7 +683,7 @@ namespace se
         if (doCapture)
         {
             captureImageToBuffer(
-                frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex], captureExtent,
+                frame.commandBuffer, renderer.swapchain.images[renderer.frame.imageIndex], captureExtent,
                 vk::ImageLayout::eColorAttachmentOptimal,
                 vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
                 vk::ImageLayout::ePresentSrcKHR,
@@ -693,7 +693,7 @@ namespace se
         else
         {
             transitionImage(
-                frame.commandBuffer, renderer.swapchainImages[renderer.imageIndex],
+                frame.commandBuffer, renderer.swapchain.images[renderer.frame.imageIndex],
                 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                 vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
                 vk::PipelineStageFlagBits2::eBottomOfPipe, vk::AccessFlagBits2::eNone);
@@ -701,7 +701,7 @@ namespace se
 
         static_cast<void>(frame.commandBuffer.end());
 
-        vk::Semaphore signalSemaphore = renderer.renderFinished[renderer.imageIndex];
+        vk::Semaphore signalSemaphore = renderer.swapchain.renderFinished[renderer.frame.imageIndex];
 
         vk::SemaphoreSubmitInfo waitInfo{};
         waitInfo.semaphore = frame.imageAvailable;
@@ -718,13 +718,13 @@ namespace se
         submitInfo.setWaitSemaphoreInfos(waitInfo);
         submitInfo.setCommandBufferInfos(cmdInfo);
         submitInfo.setSignalSemaphoreInfos(signalInfo);
-        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, frame.inFlight));
+        static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, frame.inFlight));
 
         vk::PresentInfoKHR presentInfo{};
         presentInfo.setWaitSemaphores(signalSemaphore);
-        presentInfo.setSwapchains(renderer.swapchain);
-        presentInfo.setImageIndices(renderer.imageIndex);
-        vk::Result present = renderer.graphicsQueue.presentKHR(presentInfo);
+        presentInfo.setSwapchains(renderer.swapchain.handle);
+        presentInfo.setImageIndices(renderer.frame.imageIndex);
+        vk::Result present = renderer.context.graphicsQueue.presentKHR(presentInfo);
         if (present == vk::Result::eErrorOutOfDateKHR || present == vk::Result::eSuboptimalKHR)
         {
             recreateSwapchain(renderer);
@@ -733,12 +733,12 @@ namespace se
         // The recorded copy is now submitted; idle so it completed, then write the PNG.
         if (doCapture && captureBuffer != VK_NULL_HANDLE)
         {
-            static_cast<void>(renderer.device.waitIdle());
-            vmaInvalidateAllocation(renderer.allocator, captureAlloc, 0, VK_WHOLE_SIZE);
+            static_cast<void>(renderer.context.device.waitIdle());
+            vmaInvalidateAllocation(renderer.context.allocator, captureAlloc, 0, VK_WHOLE_SIZE);
             auto wrote = writeBufferToPng(
                 static_cast<const unsigned char*>(captureInfo.pMappedData),
                 captureExtent.width, captureExtent.height,
-                renderer.swapchainFormat, *renderer.captureNextSwapchainPath);
+                renderer.swapchain.format, *renderer.captureNextSwapchainPath);
             if (!wrote)
             {
                 logError(wrote.error());
@@ -749,11 +749,11 @@ namespace se
                                     captureExtent.width, captureExtent.height,
                                     *renderer.captureNextSwapchainPath));
             }
-            vmaDestroyBuffer(renderer.allocator, captureBuffer, captureAlloc);
+            vmaDestroyBuffer(renderer.context.allocator, captureBuffer, captureAlloc);
             renderer.captureNextSwapchainPath.reset();
         }
 
-        renderer.frameIndex = (renderer.frameIndex + 1) % MaxFramesInFlight;
+        renderer.frame.index = (renderer.frame.index + 1) % MaxFramesInFlight;
     }
 
     auto assetPath(std::string_view relative) -> std::string
@@ -771,7 +771,7 @@ namespace se
     auto newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit) -> Result<Ref<Pipeline>>
     {
         std::string path = assetPath(shaderName);
-        auto moduleResult = loadShaderModule(renderer.device, path);
+        auto moduleResult = loadShaderModule(renderer.context.device, path);
         if (!moduleResult)
         {
             return Err(moduleResult.error());
@@ -827,7 +827,7 @@ namespace se
         raster.lineWidth = 1.0f;
 
         vk::PipelineMultisampleStateCreateInfo multisample{};
-        multisample.rasterizationSamples = renderer.sampleCount;  // match the MSAA target
+        multisample.rasterizationSamples = renderer.targets.sampleCount;  // match the MSAA target
 
         vk::PipelineDepthStencilStateCreateInfo depthStencil{};
         depthStencil.depthTestEnable = VK_TRUE;
@@ -855,14 +855,14 @@ namespace se
         pushConstant.size = sizeof(glm::mat4);  // viewProj
 
         std::array<vk::DescriptorSetLayout, 3> setLayouts{
-            renderer.bindlessSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
+            renderer.descriptors.bindlessSetLayout, renderer.descriptors.lightSetLayout, renderer.descriptors.instanceSetLayout };
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayouts);
         layoutInfo.setPushConstantRanges(pushConstant);
-        auto layoutResult = checked(renderer.device.createPipelineLayout(layoutInfo), "createPipelineLayout (mesh)");
+        auto layoutResult = checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (mesh)");
         if (!layoutResult)
         {
-            renderer.device.destroyShaderModule(shaderModule);
+            renderer.context.device.destroyShaderModule(shaderModule);
             return Err(layoutResult.error());
         }
 
@@ -879,16 +879,16 @@ namespace se
         pipelineInfo.pDynamicState = &dynamic;
         pipelineInfo.layout = *layoutResult;
 
-        vk::ResultValue<vk::Pipeline> created = renderer.device.createGraphicsPipeline(nullptr, pipelineInfo);
-        renderer.device.destroyShaderModule(shaderModule);
+        vk::ResultValue<vk::Pipeline> created = renderer.context.device.createGraphicsPipeline(nullptr, pipelineInfo);
+        renderer.context.device.destroyShaderModule(shaderModule);
         if (created.result != vk::Result::eSuccess)
         {
-            renderer.device.destroyPipelineLayout(*layoutResult);
+            renderer.context.device.destroyPipelineLayout(*layoutResult);
             return Err(std::format("createGraphicsPipeline (mesh): {}", vk::to_string(created.result)));
         }
 
         Pipeline pipeline;
-        pipeline.device = renderer.device;
+        pipeline.device = renderer.context.device;
         pipeline.pipeline = created.value;
         pipeline.layout = *layoutResult;
         return std::make_shared<Pipeline>(std::move(pipeline));
@@ -901,8 +901,8 @@ namespace se
         {
             key = key + "|unlit";
         }
-        auto found = renderer.pipelineCache.find(key);
-        if (found != renderer.pipelineCache.end())
+        auto found = renderer.pipelines.cache.find(key);
+        if (found != renderer.pipelines.cache.end())
         {
             return found->second;
         }
@@ -912,13 +912,13 @@ namespace se
             logError(built.error());
             return nullptr;
         }
-        renderer.pipelineCache.emplace(key, *built);
+        renderer.pipelines.cache.emplace(key, *built);
         return *built;
     }
 
     auto pipelineCount(const Renderer& renderer) -> u32
     {
-        return static_cast<u32>(renderer.pipelineCache.size());
+        return static_cast<u32>(renderer.pipelines.cache.size());
     }
 
     auto uploadMesh(Renderer& renderer, const Mesh& mesh) -> Result<Ref<GpuMesh>>
@@ -941,13 +941,13 @@ namespace se
         VkBuffer staging = VK_NULL_HANDLE;
         VmaAllocation stagingAllocation = nullptr;
         VmaAllocationInfo stagingMapped{};
-        if (vmaCreateBuffer(renderer.allocator, &stagingInfo, &stagingAlloc, &staging, &stagingAllocation, &stagingMapped) != VK_SUCCESS)
+        if (vmaCreateBuffer(renderer.context.allocator, &stagingInfo, &stagingAlloc, &staging, &stagingAllocation, &stagingMapped) != VK_SUCCESS)
         {
             return Err(std::string{ "uploadMesh: staging vmaCreateBuffer failed" });
         }
         std::memcpy(stagingMapped.pMappedData, mesh.vertices.data(), vertexBytes);
         std::memcpy(static_cast<char*>(stagingMapped.pMappedData) + vertexBytes, mesh.indices.data(), indexBytes);
-        vmaFlushAllocation(renderer.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(renderer.context.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
 
         auto makeDeviceBuffer = [&](vk::DeviceSize size, VkBufferUsageFlags usage, VkBuffer& outBuffer, VmaAllocation& outAlloc) -> bool
         {
@@ -956,11 +956,11 @@ namespace se
             info.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
             VmaAllocationCreateInfo alloc{};
             alloc.usage = VMA_MEMORY_USAGE_AUTO;
-            return vmaCreateBuffer(renderer.allocator, &info, &alloc, &outBuffer, &outAlloc, nullptr) == VK_SUCCESS;
+            return vmaCreateBuffer(renderer.context.allocator, &info, &alloc, &outBuffer, &outAlloc, nullptr) == VK_SUCCESS;
         };
 
         GpuMesh gpu;
-        gpu.allocator = renderer.allocator;
+        gpu.allocator = renderer.context.allocator;
         gpu.indexCount = static_cast<u32>(mesh.indices.size());
         gpu.submeshes = mesh.submeshes;
         gpu.boundsMin = glm::vec3(std::numeric_limits<f32>::max());
@@ -980,9 +980,9 @@ namespace se
         {
             if (vertexBuffer != VK_NULL_HANDLE)
             {
-                vmaDestroyBuffer(renderer.allocator, vertexBuffer, vertexAlloc);
+                vmaDestroyBuffer(renderer.context.allocator, vertexBuffer, vertexAlloc);
             }
-            vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
+            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
             return Err(std::string{ "uploadMesh: device vmaCreateBuffer failed" });
         }
         gpu.vertexBuffer = vk::Buffer{ vertexBuffer };
@@ -991,13 +991,13 @@ namespace se
         gpu.indexAlloc = indexAlloc;
 
         vk::CommandBufferAllocateInfo cmdAlloc{};
-        cmdAlloc.commandPool = renderer.frames[0].commandPool;
+        cmdAlloc.commandPool = renderer.frame.frames[0].commandPool;
         cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
         cmdAlloc.commandBufferCount = 1;
-        auto cmds = checked(renderer.device.allocateCommandBuffers(cmdAlloc), "uploadMesh: allocateCommandBuffers");
+        auto cmds = checked(renderer.context.device.allocateCommandBuffers(cmdAlloc), "uploadMesh: allocateCommandBuffers");
         if (!cmds)
         {
-            vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
+            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
             return Err(cmds.error());
         }
         vk::CommandBuffer cmd = (*cmds)[0];
@@ -1013,10 +1013,10 @@ namespace se
         cmdInfo.commandBuffer = cmd;
         vk::SubmitInfo2 submitInfo{};
         submitInfo.setCommandBufferInfos(cmdInfo);
-        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, nullptr));
-        static_cast<void>(renderer.device.waitIdle());
-        renderer.device.freeCommandBuffers(renderer.frames[0].commandPool, cmd);
-        vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
+        static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.context.device.waitIdle());
+        renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
+        vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
 
         logInfo(std::format("uploaded mesh: {} vertices, {} indices, {} submeshes",
                             mesh.vertices.size(), mesh.indices.size(), mesh.submeshes.size()));
@@ -1027,11 +1027,11 @@ namespace se
     // growing to the next power of two (never shrinking) and rewriting its set.
     auto ensureInstanceCapacity(Renderer& renderer, u32 frame, u32 count) -> Result<void>
     {
-        if (renderer.instanceBuffers[frame] && renderer.instanceCapacity[frame] >= count)
+        if (renderer.instancing.buffers[frame] && renderer.instancing.capacity[frame] >= count)
         {
             return {};
         }
-        u32 capacity = renderer.instanceCapacity[frame];
+        u32 capacity = renderer.instancing.capacity[frame];
         if (capacity == 0)
         {
             capacity = 256;
@@ -1049,16 +1049,16 @@ namespace se
         {
             return Err(buffer.error());
         }
-        renderer.instanceBuffers[frame] = *buffer;
-        renderer.instanceCapacity[frame] = capacity;
+        renderer.instancing.buffers[frame] = *buffer;
+        renderer.instancing.capacity[frame] = capacity;
 
         vk::DescriptorBufferInfo bufferInfo{ (*buffer)->buffer, 0, (*buffer)->size };
         vk::WriteDescriptorSet write{};
-        write.dstSet = renderer.instanceSets[frame];
+        write.dstSet = renderer.instancing.sets[frame];
         write.dstBinding = 0;
         write.descriptorType = vk::DescriptorType::eStorageBuffer;
         write.setBufferInfo(bufferInfo);
-        renderer.device.updateDescriptorSets(write, {});
+        renderer.context.device.updateDescriptorSets(write, {});
         return {};
     }
 
@@ -1066,11 +1066,11 @@ namespace se
     // growing to the next power of two (never shrinking) and rewriting its set.
     auto ensureLightCapacity(Renderer& renderer, u32 frame, u32 count) -> Result<void>
     {
-        if (renderer.lightListBuffers[frame] && renderer.lightListCapacity[frame] >= count)
+        if (renderer.lighting.lightListBuffers[frame] && renderer.lighting.lightListCapacity[frame] >= count)
         {
             return {};
         }
-        u32 capacity = renderer.lightListCapacity[frame];
+        u32 capacity = renderer.lighting.lightListCapacity[frame];
         if (capacity == 0)
         {
             capacity = LightListInitial;
@@ -1085,29 +1085,29 @@ namespace se
         {
             return Err(buffer.error());
         }
-        renderer.lightListBuffers[frame] = *buffer;
-        renderer.lightListCapacity[frame] = capacity;
+        renderer.lighting.lightListBuffers[frame] = *buffer;
+        renderer.lighting.lightListCapacity[frame] = capacity;
 
         // Both the fragment lighting set (binding 1) and the compute cluster set
         // (binding 1) read this buffer — rewrite both to the grown allocation.
         vk::DescriptorBufferInfo bufferInfo{ (*buffer)->buffer, 0, (*buffer)->size };
         std::array<vk::WriteDescriptorSet, 2> writes{};
-        writes[0].dstSet = renderer.lightSets[frame];
+        writes[0].dstSet = renderer.lighting.lightSets[frame];
         writes[0].dstBinding = 1;
         writes[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         writes[0].setBufferInfo(bufferInfo);
-        writes[1].dstSet = renderer.clusterSets[frame];
+        writes[1].dstSet = renderer.lighting.clusterSets[frame];
         writes[1].dstBinding = 1;
         writes[1].descriptorType = vk::DescriptorType::eStorageBuffer;
         writes[1].setBufferInfo(bufferInfo);
-        renderer.device.updateDescriptorSets(writes, {});
+        renderer.context.device.updateDescriptorSets(writes, {});
         return {};
     }
 
     void submitDrawList(Renderer& renderer, const glm::mat4& viewProj, const std::vector<DrawItem>& items)
     {
         renderer.stats = RenderStats{};
-        renderer.sceneDrawList = SceneDrawList{};
+        renderer.frame.sceneDrawList = SceneDrawList{};
         if (items.empty())
         {
             return;
@@ -1183,15 +1183,15 @@ namespace se
         {
             return;
         }
-        const u32 frame = renderer.frameIndex;
+        const u32 frame = renderer.frame.index;
         if (Result<void> ok = ensureInstanceCapacity(renderer, frame, static_cast<u32>(instances.size())); !ok)
         {
             logError(ok.error());
             return;
         }
         const vk::DeviceSize bytes = instances.size() * sizeof(InstanceData);
-        std::memcpy(renderer.instanceBuffers[frame]->mapped, instances.data(), bytes);
-        vmaFlushAllocation(renderer.allocator, renderer.instanceBuffers[frame]->alloc, 0, bytes);
+        std::memcpy(renderer.instancing.buffers[frame]->mapped, instances.data(), bytes);
+        vmaFlushAllocation(renderer.context.allocator, renderer.instancing.buffers[frame]->alloc, 0, bytes);
 
         u32 drawCalls = 0;
         u32 drawnInstances = 0;
@@ -1208,10 +1208,10 @@ namespace se
         list.viewProj = viewProj;
         list.batches = std::move(batches);
         list.liveTextures = std::move(liveTextures);
-        list.lightSet = renderer.lightSets[frame];
-        list.instanceSet = renderer.instanceSets[frame];
+        list.lightSet = renderer.lighting.lightSets[frame];
+        list.instanceSet = renderer.instancing.sets[frame];
         list.valid = true;
-        renderer.sceneDrawList = std::move(list);
+        renderer.frame.sceneDrawList = std::move(list);
     }
 
     // Record the scene's shaded geometry. All mesh PSOs share the layout, so the light +
@@ -1219,7 +1219,7 @@ namespace se
     // material set and issues one instanced drawIndexed.
     void recordSceneDrawList(Renderer& renderer, vk::CommandBuffer cmd)
     {
-        SceneDrawList& list = renderer.sceneDrawList;
+        SceneDrawList& list = renderer.frame.sceneDrawList;
         if (!list.valid || list.batches.empty())
         {
             return;
@@ -1227,7 +1227,7 @@ namespace se
         vk::PipelineLayout layout = list.batches[0].pipeline->layout;
         // All sets bind once: the bindless albedo array (0) + light (1) + instance (2).
         // Per-instance texture indices live in the instance buffer, so no per-batch set.
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0, renderer.bindlessSet, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0, renderer.descriptors.bindlessSet, {});
         std::array<vk::DescriptorSet, 2> frameSets{ list.lightSet, list.instanceSet };
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 1, frameSets, {});
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &list.viewProj);
@@ -1247,14 +1247,14 @@ namespace se
 
     void recordDepthPrepass(Renderer& renderer, vk::CommandBuffer cmd)
     {
-        SceneDrawList& list = renderer.sceneDrawList;
-        if (!list.valid || !renderer.depthPrepassPipeline)
+        SceneDrawList& list = renderer.frame.sceneDrawList;
+        if (!list.valid || !renderer.pipelines.depthPrepass)
         {
             return;
         }
         // The vertex-only pipeline needs only the instance set (set 2) + viewProj push.
-        vk::PipelineLayout layout = renderer.depthPrepassPipeline->layout;
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.depthPrepassPipeline->pipeline);
+        vk::PipelineLayout layout = renderer.pipelines.depthPrepass->layout;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.depthPrepass->pipeline);
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 2, list.instanceSet, {});
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &list.viewProj);
         for (const DrawBatch& batch : list.batches)
@@ -1282,9 +1282,9 @@ namespace se
 
     void waitGpuIdle(Renderer& renderer)
     {
-        if (renderer.device)
+        if (renderer.context.device)
         {
-            static_cast<void>(renderer.device.waitIdle());
+            static_cast<void>(renderer.context.device.waitIdle());
         }
     }
 
@@ -1298,8 +1298,8 @@ namespace se
     {
         // Write the current frame's copies; beginFrame already waited on its fence, so
         // no in-flight frame is reading them.
-        const u32 frame = renderer.frameIndex;
-        if (renderer.lightMapped[frame] == nullptr)
+        const u32 frame = renderer.frame.index;
+        if (renderer.lighting.lightMapped[frame] == nullptr)
         {
             return;
         }
@@ -1312,47 +1312,47 @@ namespace se
                 return;
             }
             const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(count) * sizeof(GpuLight);
-            std::memcpy(renderer.lightListBuffers[frame]->mapped, lights.data(), bytes);
-            vmaFlushAllocation(renderer.allocator, renderer.lightListBuffers[frame]->alloc, 0, bytes);
+            std::memcpy(renderer.lighting.lightListBuffers[frame]->mapped, lights.data(), bytes);
+            vmaFlushAllocation(renderer.context.allocator, renderer.lighting.lightListBuffers[frame]->alloc, 0, bytes);
         }
 
         LightUbo ubo;
         ubo.directionAmbient = glm::vec4(glm::normalize(direction), ambient);
         ubo.colorIntensity = glm::vec4(color, intensity);
         ubo.counts = glm::uvec4(count, 0, 0, 0);
-        std::memcpy(renderer.lightMapped[frame], &ubo, sizeof(ubo));
-        vmaFlushAllocation(renderer.allocator, renderer.lightAllocs[frame], 0, sizeof(ubo));
-        renderer.frameLightCount = count;
+        std::memcpy(renderer.lighting.lightMapped[frame], &ubo, sizeof(ubo));
+        vmaFlushAllocation(renderer.context.allocator, renderer.lighting.lightAllocs[frame], 0, sizeof(ubo));
+        renderer.lighting.frameLightCount = count;
     }
 
     void setClusterCamera(Renderer& renderer, const glm::mat4& view, const glm::mat4& proj,
                           f32 nearPlane, f32 farPlane)
     {
-        const u32 frame = renderer.frameIndex;
-        if (renderer.clusterParamMapped[frame] == nullptr)
+        const u32 frame = renderer.frame.index;
+        if (renderer.lighting.clusterParamMapped[frame] == nullptr)
         {
             return;
         }
         ClusterParams params;
         params.view = view;
         params.inverseProjection = glm::inverse(proj);
-        params.gridSize = glm::uvec4(ClusterGridX, ClusterGridY, ClusterGridZ, renderer.frameLightCount);
+        params.gridSize = glm::uvec4(ClusterGridX, ClusterGridY, ClusterGridZ, renderer.lighting.frameLightCount);
         params.screenSize = glm::uvec4(viewportWidth(renderer), viewportHeight(renderer),
-                                       renderer.useClustered ? 1u : 0u, 0u);
+                                       renderer.lighting.useClustered ? 1u : 0u, 0u);
         params.zPlanes = glm::vec4(nearPlane, farPlane, 0.0f, 0.0f);
-        std::memcpy(renderer.clusterParamMapped[frame], &params, sizeof(params));
-        vmaFlushAllocation(renderer.allocator, renderer.clusterParamAllocs[frame], 0, sizeof(params));
-        renderer.clusterDispatchPending = renderer.useClustered && renderer.frameLightCount > 0;
+        std::memcpy(renderer.lighting.clusterParamMapped[frame], &params, sizeof(params));
+        vmaFlushAllocation(renderer.context.allocator, renderer.lighting.clusterParamAllocs[frame], 0, sizeof(params));
+        renderer.lighting.clusterDispatchPending = renderer.lighting.useClustered && renderer.lighting.frameLightCount > 0;
     }
 
     void setClustered(Renderer& renderer, bool enabled)
     {
-        renderer.useClustered = enabled;
+        renderer.lighting.useClustered = enabled;
     }
 
     auto clusteredEnabled(const Renderer& renderer) -> bool
     {
-        return renderer.useClustered;
+        return renderer.lighting.useClustered;
     }
 
     void setPostProcess(Renderer& renderer, bool enabled)
@@ -1381,24 +1381,24 @@ namespace se
         if (msaaSamples >= 8) { count = vk::SampleCountFlagBits::e8; }
         else if (msaaSamples >= 4) { count = vk::SampleCountFlagBits::e4; }
         else if (msaaSamples >= 2) { count = vk::SampleCountFlagBits::e2; }
-        if (static_cast<u32>(count) > static_cast<u32>(renderer.maxSampleCount))
+        if (static_cast<u32>(count) > static_cast<u32>(renderer.targets.maxSampleCount))
         {
-            count = renderer.maxSampleCount;
+            count = renderer.targets.maxSampleCount;
         }
 
         waitGpuIdle(renderer);
-        renderer.sampleCount = count;
-        renderer.fxaaEnabled = fxaa;
+        renderer.targets.sampleCount = count;
+        renderer.targets.fxaaEnabled = fxaa;
         recreateMsaaTargets(renderer);
         recreateFxaaTarget(renderer);
 
         // The mesh + depth-prepass PSOs bake the sample count — rebuild them.
-        renderer.pipelineCache.clear();
+        renderer.pipelines.cache.clear();
         Result<Ref<Pipeline>> depthPrepass =
             makeDepthPrepassPipeline(renderer, "shaders/mesh.spv");
         if (depthPrepass)
         {
-            renderer.depthPrepassPipeline = *depthPrepass;
+            renderer.pipelines.depthPrepass = *depthPrepass;
         }
         else
         {
@@ -1408,11 +1408,11 @@ namespace se
 
     auto aaMode(const Renderer& renderer) -> std::string
     {
-        if (renderer.fxaaEnabled)
+        if (renderer.targets.fxaaEnabled)
         {
             return "fxaa";
         }
-        const u32 n = static_cast<u32>(renderer.sampleCount);
+        const u32 n = static_cast<u32>(renderer.targets.sampleCount);
         if (n <= 1)
         {
             return "off";
@@ -1472,7 +1472,7 @@ namespace se
     // descriptor sets). Color format matches the offscreen thumbnail image.
     auto newThumbnailPipeline(Renderer& renderer) -> Result<Ref<Pipeline>>
     {
-        auto moduleResult = loadShaderModule(renderer.device, assetPath("shaders/thumbnail.spv"));
+        auto moduleResult = loadShaderModule(renderer.context.device, assetPath("shaders/thumbnail.spv"));
         if (!moduleResult)
         {
             return Err(moduleResult.error());
@@ -1525,7 +1525,7 @@ namespace se
         dynamic.setDynamicStates(dynamicStates);
 
         vk::PipelineRenderingCreateInfo renderingInfo{};
-        renderingInfo.setColorAttachmentFormats(renderer.swapchainFormat);
+        renderingInfo.setColorAttachmentFormats(renderer.swapchain.format);
         renderingInfo.depthAttachmentFormat = DepthFormat;
 
         vk::PushConstantRange pushConstant{};
@@ -1535,10 +1535,10 @@ namespace se
 
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setPushConstantRanges(pushConstant);
-        auto layoutResult = checked(renderer.device.createPipelineLayout(layoutInfo), "createPipelineLayout (thumbnail)");
+        auto layoutResult = checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (thumbnail)");
         if (!layoutResult)
         {
-            renderer.device.destroyShaderModule(shaderModule);
+            renderer.context.device.destroyShaderModule(shaderModule);
             return Err(layoutResult.error());
         }
 
@@ -1555,15 +1555,15 @@ namespace se
         pipelineInfo.pDynamicState = &dynamic;
         pipelineInfo.layout = *layoutResult;
 
-        vk::ResultValue<vk::Pipeline> created = renderer.device.createGraphicsPipeline(nullptr, pipelineInfo);
-        renderer.device.destroyShaderModule(shaderModule);
+        vk::ResultValue<vk::Pipeline> created = renderer.context.device.createGraphicsPipeline(nullptr, pipelineInfo);
+        renderer.context.device.destroyShaderModule(shaderModule);
         if (created.result != vk::Result::eSuccess)
         {
-            renderer.device.destroyPipelineLayout(*layoutResult);
+            renderer.context.device.destroyPipelineLayout(*layoutResult);
             return Err(std::format("createGraphicsPipeline (thumbnail): {}", vk::to_string(created.result)));
         }
         Pipeline pipeline;
-        pipeline.device = renderer.device;
+        pipeline.device = renderer.context.device;
         pipeline.pipeline = created.value;
         pipeline.layout = *layoutResult;
         return std::make_shared<Pipeline>(std::move(pipeline));
@@ -1575,17 +1575,17 @@ namespace se
         {
             return Err(std::string{ "renderMeshThumbnail: null mesh" });
         }
-        if (!renderer.thumbnailPipeline)
+        if (!renderer.pipelines.thumbnail)
         {
             auto pipeline = newThumbnailPipeline(renderer);
             if (!pipeline)
             {
                 return Err(pipeline.error());
             }
-            renderer.thumbnailPipeline = *pipeline;
+            renderer.pipelines.thumbnail = *pipeline;
         }
 
-        auto colorImage = newColorImage(renderer, size, size, renderer.swapchainFormat);
+        auto colorImage = newColorImage(renderer, size, size, renderer.swapchain.format);
         if (!colorImage)
         {
             return Err(colorImage.error());
@@ -1618,10 +1618,10 @@ namespace se
         } push{ proj * view, glm::mat4(1.0f) };
 
         vk::CommandBufferAllocateInfo cmdAlloc{};
-        cmdAlloc.commandPool = renderer.frames[0].commandPool;
+        cmdAlloc.commandPool = renderer.frame.frames[0].commandPool;
         cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
         cmdAlloc.commandBufferCount = 1;
-        auto cmds = checked(renderer.device.allocateCommandBuffers(cmdAlloc), "renderMeshThumbnail: allocateCommandBuffers");
+        auto cmds = checked(renderer.context.device.allocateCommandBuffers(cmdAlloc), "renderMeshThumbnail: allocateCommandBuffers");
         if (!cmds)
         {
             return Err(cmds.error());
@@ -1661,8 +1661,8 @@ namespace se
         vk::Viewport viewport{ 0.0f, 0.0f, static_cast<f32>(size), static_cast<f32>(size), 0.0f, 1.0f };
         cmd.setViewport(0, viewport);
         cmd.setScissor(0, vk::Rect2D{ vk::Offset2D{ 0, 0 }, vk::Extent2D{ size, size } });
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.thumbnailPipeline->pipeline);
-        cmd.pushConstants(renderer.thumbnailPipeline->layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(push), &push);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.thumbnail->pipeline);
+        cmd.pushConstants(renderer.pipelines.thumbnail->layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(push), &push);
         vk::DeviceSize offset = 0;
         cmd.bindVertexBuffers(0, mesh->vertexBuffer, offset);
         cmd.bindIndexBuffer(mesh->indexBuffer, 0, vk::IndexType::eUint32);
@@ -1681,16 +1681,16 @@ namespace se
         cmdInfo.commandBuffer = cmd;
         vk::SubmitInfo2 submitInfo{};
         submitInfo.setCommandBufferInfos(cmdInfo);
-        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, nullptr));
-        static_cast<void>(renderer.device.waitIdle());
-        renderer.device.freeCommandBuffers(renderer.frames[0].commandPool, cmd);
+        static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.context.device.waitIdle());
+        renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
 
         // Take ownership of the color image as a sampled GpuTexture (no material set;
         // ImGui samples it via uiRegisterTexture). Null the Image's handles so it does
         // not free them on scope exit.
         GpuTexture texture;
-        texture.device = renderer.device;
-        texture.allocator = renderer.allocator;
+        texture.device = renderer.context.device;
+        texture.allocator = renderer.context.allocator;
         texture.image = color.image;
         texture.view = color.view;
         texture.alloc = color.alloc;
@@ -1719,12 +1719,12 @@ namespace se
         VkBuffer staging = VK_NULL_HANDLE;
         VmaAllocation stagingAllocation = nullptr;
         VmaAllocationInfo stagingMapped{};
-        if (vmaCreateBuffer(renderer.allocator, &stagingInfo, &stagingAlloc, &staging, &stagingAllocation, &stagingMapped) != VK_SUCCESS)
+        if (vmaCreateBuffer(renderer.context.allocator, &stagingInfo, &stagingAlloc, &staging, &stagingAllocation, &stagingMapped) != VK_SUCCESS)
         {
             return Err(std::string{ "uploadTexture: staging vmaCreateBuffer failed" });
         }
         std::memcpy(stagingMapped.pMappedData, rgba, bytes);
-        vmaFlushAllocation(renderer.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(renderer.context.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
 
         const vk::Format format = srgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm;
         VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -1742,21 +1742,21 @@ namespace se
         imageAlloc.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
         VkImage rawImage = VK_NULL_HANDLE;
         VmaAllocation imageAllocation = nullptr;
-        if (vmaCreateImage(renderer.allocator, &imageInfo, &imageAlloc, &rawImage, &imageAllocation, nullptr) != VK_SUCCESS)
+        if (vmaCreateImage(renderer.context.allocator, &imageInfo, &imageAlloc, &rawImage, &imageAllocation, nullptr) != VK_SUCCESS)
         {
-            vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
+            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
             return Err(std::string{ "uploadTexture: vmaCreateImage failed" });
         }
 
         vk::CommandBufferAllocateInfo cmdAlloc{};
-        cmdAlloc.commandPool = renderer.frames[0].commandPool;
+        cmdAlloc.commandPool = renderer.frame.frames[0].commandPool;
         cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
         cmdAlloc.commandBufferCount = 1;
-        auto cmds = checked(renderer.device.allocateCommandBuffers(cmdAlloc), "uploadTexture: allocateCommandBuffers");
+        auto cmds = checked(renderer.context.device.allocateCommandBuffers(cmdAlloc), "uploadTexture: allocateCommandBuffers");
         if (!cmds)
         {
-            vmaDestroyImage(renderer.allocator, rawImage, imageAllocation);
-            vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
+            vmaDestroyImage(renderer.context.allocator, rawImage, imageAllocation);
+            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
             return Err(cmds.error());
         }
         vk::CommandBuffer cmd = (*cmds)[0];
@@ -1780,31 +1780,31 @@ namespace se
         cmdInfo.commandBuffer = cmd;
         vk::SubmitInfo2 submitInfo{};
         submitInfo.setCommandBufferInfos(cmdInfo);
-        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, nullptr));
-        static_cast<void>(renderer.device.waitIdle());
-        renderer.device.freeCommandBuffers(renderer.frames[0].commandPool, cmd);
-        vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
+        static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.context.device.waitIdle());
+        renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
+        vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
 
         vk::ImageViewCreateInfo viewInfo{};
         viewInfo.image = vk::Image{ rawImage };
         viewInfo.viewType = vk::ImageViewType::e2D;
         viewInfo.format = format;
         viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-        auto view = checked(renderer.device.createImageView(viewInfo), "uploadTexture: createImageView");
+        auto view = checked(renderer.context.device.createImageView(viewInfo), "uploadTexture: createImageView");
         if (!view)
         {
-            vmaDestroyImage(renderer.allocator, rawImage, imageAllocation);
+            vmaDestroyImage(renderer.context.allocator, rawImage, imageAllocation);
             return Err(view.error());
         }
 
         // Claim a bindless slot and write the texture into the global array.
-        const u32 index = renderer.nextBindlessIndex;
-        renderer.nextBindlessIndex = renderer.nextBindlessIndex + 1;
+        const u32 index = renderer.descriptors.nextBindlessIndex;
+        renderer.descriptors.nextBindlessIndex = renderer.descriptors.nextBindlessIndex + 1;
         writeBindlessTexture(renderer, *view, index);
 
         GpuTexture texture;
-        texture.device = renderer.device;
-        texture.allocator = renderer.allocator;
+        texture.device = renderer.context.device;
+        texture.allocator = renderer.context.allocator;
         texture.image = vk::Image{ rawImage };
         texture.view = *view;
         texture.alloc = imageAllocation;

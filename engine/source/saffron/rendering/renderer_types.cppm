@@ -454,12 +454,11 @@ export namespace se
         u32 instances = 0;  // total entities drawn
     };
 
-    struct Renderer
+    // The Vulkan device + allocator the whole renderer borrows from.
+    struct VulkanContext
     {
-        // vk-bootstrap keeps the bits we need for clean teardown.
-        vkb::Instance vkbInstance;
+        vkb::Instance vkbInstance;  // vk-bootstrap keeps the bits we need for clean teardown
         vkb::Device vkbDevice;
-
         vk::Instance instance;
         vk::SurfaceKHR surface;
         vk::PhysicalDevice physicalDevice;
@@ -467,28 +466,37 @@ export namespace se
         vk::Queue graphicsQueue;
         u32 graphicsQueueFamily = 0;
         VmaAllocator allocator = nullptr;
+    };
 
-        vk::SwapchainKHR swapchain;
-        vk::Format swapchainFormat = vk::Format::eUndefined;
-        vk::Extent2D swapchainExtent;
-        bool swapchainCaptureSupported = false;  // surface allows TRANSFER_SRC (window screenshots)
-        std::vector<vk::Image> swapchainImages;
-        std::vector<vk::ImageView> swapchainImageViews;
+    // The surface swapchain + its per-image sync, recreated as a unit on resize.
+    struct Swapchain
+    {
+        vk::SwapchainKHR handle;
+        vk::Format format = vk::Format::eUndefined;
+        vk::Extent2D extent;
+        bool captureSupported = false;  // surface allows TRANSFER_SRC (window screenshots)
+        std::vector<vk::Image> images;
+        std::vector<vk::ImageView> imageViews;
         std::vector<vk::Semaphore> renderFinished;  // one per swapchain image
         std::vector<vk::Fence> imagesInFlight;       // borrowed per-frame fence per image
+    };
 
+    // Per-frame ring + the frame-scoped geometry beginFrame resets / endFrame consumes.
+    struct FrameSync
+    {
         std::array<FrameData, MaxFramesInFlight> frames{};
-        u32 frameIndex = 0;
+        u32 index = 0;
         u32 imageIndex = 0;
-
         std::array<f32, 4> clearColor{ 0.05f, 0.06f, 0.08f, 1.0f };
-        SceneDrawList sceneDrawList;              // structured scene geometry for the frame
+        SceneDrawList sceneDrawList;             // structured scene geometry for the frame
         std::vector<RenderFn> sceneSubmissions;  // ad-hoc geometry replayed into the offscreen pass
         std::vector<RenderFn> uiSubmissions;     // replayed into the swapchain pass
+    };
 
-        // Meshes/textures/pipelines are passed around as Ref<T> objects owned by the
-        // caller (AssetServer, editor), not by the Renderer; their RAII dtors free
-        // the vk/VMA resources when the last Ref drops (before the allocator/device).
+    // Descriptor infrastructure built once: layouts, pools, the bindless set, and the
+    // post-process compute sets. set 0 = bindless image array, 1 = light UBO, 2 = instances.
+    struct Descriptors
+    {
         vk::Sampler linearSampler;
         vk::DescriptorSetLayout bindlessSetLayout;   // set 0: bindless combined-image-sampler array
         vk::DescriptorSetLayout lightSetLayout;      // set 1: directional light UBO
@@ -499,6 +507,16 @@ export namespace se
         vk::DescriptorPool bindlessPool;             // eUpdateAfterBindPool
         vk::DescriptorSet bindlessSet;               // the single set 0 for all draws
         u32 nextBindlessIndex = 0;
+        vk::DescriptorSetLayout tonemapSetLayout;    // compute set 0: storage image
+        vk::DescriptorSet tonemapSet;                // points at the offscreen color view (GENERAL)
+        vk::DescriptorSetLayout fxaaSetLayout;
+        vk::DescriptorSet fxaaSet;
+        vk::DescriptorSetLayout clusterSetLayout;    // compute set 0
+    };
+
+    // Directional + punctual lights and the clustered-forward froxel apparatus.
+    struct Lighting
+    {
         // Per-frame light UBO + set (one per in-flight frame), so the host write in
         // setDirectionalLight never races a frame still reading the light on the GPU.
         std::array<vk::DescriptorSet, MaxFramesInFlight> lightSets;
@@ -508,72 +526,84 @@ export namespace se
         // Per-frame punctual-light storage buffer (set 1, binding 1), grown on demand.
         std::array<Ref<Buffer>, MaxFramesInFlight> lightListBuffers;
         std::array<u32, MaxFramesInFlight> lightListCapacity{};
-        Ref<Pipeline> thumbnailPipeline;              // lazy mesh-thumbnail graphics pipeline
-        // Post-process: an in-place compute tonemap on the offscreen color (the
-        // offscreen bound as a storage image). Added to the frame graph by an app layer.
-        Ref<Pipeline> tonemapPipeline;
-        vk::DescriptorSetLayout tonemapSetLayout;     // compute set 0: storage image
-        vk::DescriptorSet tonemapSet;                 // points at the offscreen color view (GENERAL)
-        bool usePostProcess = false;
-        // Depth pre-pass: a vertex-only pipeline lays down scene depth before the scene
-        // pass (which then loads it + tests eLessOrEqual). Reduces shaded overdraw.
-        Ref<Pipeline> depthPrepassPipeline;
-        bool useDepthPrepass = false;
-        // FXAA: when on, the scene renders to offscreenScratch (1x sampled), and a compute
-        // pass edge-blurs it into the offscreen. set 0: 0 = source sampler, 1 = target storage.
-        Image offscreenScratch;
-        Ref<Pipeline> fxaaPipeline;
-        vk::DescriptorSetLayout fxaaSetLayout;
-        vk::DescriptorSet fxaaSet;
-        // Clustered forward (Forward+): a compute pass culls the punctual lights into a
-        // froxel grid each frame; the fragment loops only its cluster's lights.
-        Ref<Pipeline> cullPipeline;                   // compute light-cull pipeline
-        vk::DescriptorSetLayout clusterSetLayout;     // compute set 0
-        std::array<vk::DescriptorSet, MaxFramesInFlight> clusterSets;     // compute
-        std::array<Ref<Buffer>, MaxFramesInFlight> clusterBuffers;        // per-cluster count + indices
-        std::array<VkBuffer, MaxFramesInFlight> clusterParamBuffers{};    // cluster params UBO
+        std::array<vk::DescriptorSet, MaxFramesInFlight> clusterSets;  // compute
+        std::array<Ref<Buffer>, MaxFramesInFlight> clusterBuffers;     // per-cluster count + indices
+        std::array<VkBuffer, MaxFramesInFlight> clusterParamBuffers{}; // cluster params UBO
         std::array<VmaAllocation, MaxFramesInFlight> clusterParamAllocs{};
         std::array<void*, MaxFramesInFlight> clusterParamMapped{};
         bool useClustered = true;        // false = fragment loops all lights (reference)
         u32 frameLightCount = 0;         // punctual lights uploaded this frame
         bool clusterDispatchPending = false;
-        // Per-frame instance storage buffer + set. Grown on demand (never shrunk);
-        // capacity is in InstanceData elements. drawInstanced writes it each frame.
-        std::array<Ref<Buffer>, MaxFramesInFlight> instanceBuffers;
-        std::array<vk::DescriptorSet, MaxFramesInFlight> instanceSets;
-        std::array<u32, MaxFramesInFlight> instanceCapacity{};
-        Ref<GpuTexture> defaultWhiteTexture;         // 1x1 white; bound when a material has no albedo
+    };
 
-        // PSO cache: mesh pipelines built on demand and keyed by their variant (shader +
-        // render-state permutation). The übershader maps many materials to one PSO; a
-        // permutation (e.g. unlit) adds an entry. The renderer owns these (not the client).
-        std::unordered_map<std::string, Ref<Pipeline>> pipelineCache;
+    // Per-frame instance storage buffer + set. Grown on demand (never shrunk);
+    // capacity is in InstanceData elements.
+    struct Instancing
+    {
+        std::array<Ref<Buffer>, MaxFramesInFlight> buffers;
+        std::array<vk::DescriptorSet, MaxFramesInFlight> sets;
+        std::array<u32, MaxFramesInFlight> capacity{};
+    };
 
-        RenderStats stats;  // populated each frame by submitDrawList
+    // Renderer-owned pipelines + the mesh PSO cache (built on demand, keyed by variant;
+    // the uebershader maps many materials to one PSO, permutations add cache entries).
+    struct Pipelines
+    {
+        Ref<Pipeline> thumbnail;     // lazy mesh-thumbnail graphics pipeline
+        Ref<Pipeline> tonemap;       // in-place compute tonemap (post-process)
+        Ref<Pipeline> depthPrepass;  // vertex-only depth pre-pass
+        Ref<Pipeline> fxaa;          // compute FXAA post-process
+        Ref<Pipeline> cull;          // compute light-cull (clustered forward)
+        std::unordered_map<std::string, Ref<Pipeline>> cache;
+    };
 
-        Image offscreenViewport;       // scene render target shown in the Viewport panel
-        Image offscreenDepth;          // depth buffer for the scene pass, sized to the viewport
+    // The offscreen render targets + the AA state that decides which targets exist.
+    struct Targets
+    {
+        Image offscreen;  // scene render target shown in the Viewport panel
+        Image depth;      // depth buffer for the scene pass, sized to the viewport
         // MSAA: when sampleCount > 1 the scene renders to these multisampled targets and
-        // resolves color into offscreenViewport. Sized to the viewport, recreated with it.
+        // resolves color into offscreen. Sized to the viewport, recreated with it.
         Image msaaColor;
         Image msaaDepth;
-        vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1;  // 1 = MSAA off
+        // FXAA: when on, the scene renders to scratch (1x sampled), and a compute pass
+        // edge-blurs it into offscreen.
+        Image scratch;
+        vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1;     // 1 = MSAA off
         vk::SampleCountFlagBits maxSampleCount = vk::SampleCountFlagBits::e1;  // device cap
-        bool fxaaEnabled = false;      // FXAA post-process (mutually exclusive with MSAA)
-        u32 viewportDesiredWidth = 0;  // requested by the UI panel (applied next frame)
-        u32 viewportDesiredHeight = 0;
-        u32 viewportGeneration = 0;    // bumped whenever the offscreen image is recreated
+        bool fxaaEnabled = false;  // FXAA post-process (mutually exclusive with MSAA)
+        u32 desiredWidth = 0;      // requested by the UI panel (applied next frame)
+        u32 desiredHeight = 0;
+        u32 generation = 0;        // bumped whenever the offscreen image is recreated
+    };
 
-        // The frame as a render graph: built in beginFrameGraph (cull + scene), extended
-        // by layers via the onRenderGraph hook, finished + executed in endFrame.
-        RenderGraph renderGraph;
-        RgResource frameSceneColor;  // the offscreen color handle, for app-authored passes
-        RgResource frameSwapImage;
+    // The frame as a render graph + the resource handles app-authored passes reference.
+    struct FrameGraphState
+    {
+        RenderGraph current;
+        RgResource sceneColor;  // the offscreen color handle, for app-authored passes
+        RgResource swapImage;
+    };
 
+    struct Renderer
+    {
+        VulkanContext context;
+        Swapchain swapchain;
+        FrameSync frame;
+        Descriptors descriptors;
+        Lighting lighting;
+        Instancing instancing;
+        Pipelines pipelines;
+        Targets targets;
+        FrameGraphState graph;
+
+        bool usePostProcess = false;
+        bool useDepthPrepass = false;
+        Ref<GpuTexture> defaultWhiteTexture;  // 1x1 white; bound when a material has no albedo
+        RenderStats stats;                    // populated each frame by submitDrawList
         // Pending window screenshot, consumed in endFrame: the swapchain image is
         // only safely owned in-frame, so the copy is deferred there.
         std::optional<std::string> captureNextSwapchainPath;
-
         Window* window = nullptr;  // borrowed
     };
 

@@ -81,22 +81,22 @@ export namespace se
 
     void destroySwapchainResources(Renderer& renderer)
     {
-        for (vk::ImageView view : renderer.swapchainImageViews)
+        for (vk::ImageView view : renderer.swapchain.imageViews)
         {
-            renderer.device.destroyImageView(view);
+            renderer.context.device.destroyImageView(view);
         }
-        renderer.swapchainImageViews.clear();
+        renderer.swapchain.imageViews.clear();
 
-        for (vk::Semaphore semaphore : renderer.renderFinished)
+        for (vk::Semaphore semaphore : renderer.swapchain.renderFinished)
         {
-            renderer.device.destroySemaphore(semaphore);
+            renderer.context.device.destroySemaphore(semaphore);
         }
-        renderer.renderFinished.clear();
+        renderer.swapchain.renderFinished.clear();
 
-        if (renderer.swapchain)
+        if (renderer.swapchain.handle)
         {
-            renderer.device.destroySwapchainKHR(renderer.swapchain);
-            renderer.swapchain = nullptr;
+            renderer.context.device.destroySwapchainKHR(renderer.swapchain.handle);
+            renderer.swapchain.handle = nullptr;
         }
     }
 
@@ -106,22 +106,22 @@ export namespace se
         // COLOR_ATTACHMENT is). Query support and only request it when present
         // so an exotic surface disables window screenshots rather than failing
         // the whole swapchain build.
-        renderer.swapchainCaptureSupported = false;
+        renderer.swapchain.captureSupported = false;
         vk::ResultValue<vk::SurfaceCapabilitiesKHR> caps =
-            renderer.physicalDevice.getSurfaceCapabilitiesKHR(renderer.surface);
+            renderer.context.physicalDevice.getSurfaceCapabilitiesKHR(renderer.context.surface);
         if (caps.result == vk::Result::eSuccess &&
             (caps.value.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferSrc))
         {
-            renderer.swapchainCaptureSupported = true;
+            renderer.swapchain.captureSupported = true;
         }
 
         VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        if (renderer.swapchainCaptureSupported)
+        if (renderer.swapchain.captureSupported)
         {
             usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         }
 
-        vkb::SwapchainBuilder builder{ renderer.vkbDevice };
+        vkb::SwapchainBuilder builder{ renderer.context.vkbDevice };
         builder.set_desired_format(VkSurfaceFormatKHR{
                    .format = VK_FORMAT_B8G8R8A8_UNORM,
                    .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })
@@ -129,9 +129,9 @@ export namespace se
             .set_desired_extent(width, height)
             .add_image_usage_flags(usage);
 
-        if (renderer.swapchain)
+        if (renderer.swapchain.handle)
         {
-            builder.set_old_swapchain(static_cast<VkSwapchainKHR>(renderer.swapchain));
+            builder.set_old_swapchain(static_cast<VkSwapchainKHR>(renderer.swapchain.handle));
         }
 
         auto result = builder.build();
@@ -143,44 +143,44 @@ export namespace se
         destroySwapchainResources(renderer);
 
         vkb::Swapchain swapchain = result.value();
-        renderer.swapchain = vk::SwapchainKHR{ swapchain.swapchain };
-        renderer.swapchainFormat = vk::Format{ static_cast<vk::Format>(swapchain.image_format) };
-        renderer.swapchainExtent = vk::Extent2D{ swapchain.extent.width, swapchain.extent.height };
+        renderer.swapchain.handle = vk::SwapchainKHR{ swapchain.swapchain };
+        renderer.swapchain.format = vk::Format{ static_cast<vk::Format>(swapchain.image_format) };
+        renderer.swapchain.extent = vk::Extent2D{ swapchain.extent.width, swapchain.extent.height };
 
-        renderer.swapchainImages.clear();
+        renderer.swapchain.images.clear();
         for (VkImage image : swapchain.get_images().value())
         {
-            renderer.swapchainImages.push_back(vk::Image{ image });
+            renderer.swapchain.images.push_back(vk::Image{ image });
         }
 
-        renderer.swapchainImageViews.clear();
-        for (vk::Image image : renderer.swapchainImages)
+        renderer.swapchain.imageViews.clear();
+        for (vk::Image image : renderer.swapchain.images)
         {
             vk::ImageViewCreateInfo viewInfo{};
             viewInfo.image = image;
             viewInfo.viewType = vk::ImageViewType::e2D;
-            viewInfo.format = renderer.swapchainFormat;
+            viewInfo.format = renderer.swapchain.format;
             viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-            auto view = checked(renderer.device.createImageView(viewInfo), "createImageView");
+            auto view = checked(renderer.context.device.createImageView(viewInfo), "createImageView");
             if (!view)
             {
                 return Err(view.error());
             }
-            renderer.swapchainImageViews.push_back(*view);
+            renderer.swapchain.imageViews.push_back(*view);
         }
 
-        renderer.renderFinished.clear();
-        for (std::size_t i = 0; i < renderer.swapchainImages.size(); i = i + 1)
+        renderer.swapchain.renderFinished.clear();
+        for (std::size_t i = 0; i < renderer.swapchain.images.size(); i = i + 1)
         {
-            auto semaphore = checked(renderer.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
+            auto semaphore = checked(renderer.context.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
             if (!semaphore)
             {
                 return Err(semaphore.error());
             }
-            renderer.renderFinished.push_back(*semaphore);
+            renderer.swapchain.renderFinished.push_back(*semaphore);
         }
 
-        renderer.imagesInFlight.assign(renderer.swapchainImages.size(), vk::Fence{});
+        renderer.swapchain.imagesInFlight.assign(renderer.swapchain.images.size(), vk::Fence{});
         return {};
     }
 
@@ -192,7 +192,7 @@ export namespace se
         {
             return;  // minimized — keep the old swapchain, retry once restored
         }
-        static_cast<void>(renderer.device.waitIdle());
+        static_cast<void>(renderer.context.device.waitIdle());
         auto built = buildSwapchain(renderer, width, height);
         if (!built)
         {
@@ -226,7 +226,7 @@ export namespace se
                                                     vk::Format format, bool storage = false,
                                                     vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1) -> Result<Image>
     {
-        vk::FormatProperties props = renderer.physicalDevice.getFormatProperties(format);
+        vk::FormatProperties props = renderer.context.physicalDevice.getFormatProperties(format);
         vk::FormatFeatureFlags needed =
             vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eSampledImage;
         if (storage)
@@ -266,7 +266,7 @@ export namespace se
 
         VkImage rawImage = VK_NULL_HANDLE;
         VmaAllocation allocation = nullptr;
-        if (vmaCreateImage(renderer.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
+        if (vmaCreateImage(renderer.context.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
         {
             return Err(std::string{ "vmaCreateImage failed for offscreen target" });
         }
@@ -276,16 +276,16 @@ export namespace se
         viewInfo.viewType = vk::ImageViewType::e2D;
         viewInfo.format = format;
         viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-        vk::ResultValue<vk::ImageView> view = renderer.device.createImageView(viewInfo);
+        vk::ResultValue<vk::ImageView> view = renderer.context.device.createImageView(viewInfo);
         if (view.result != vk::Result::eSuccess)
         {
-            vmaDestroyImage(renderer.allocator, rawImage, allocation);
+            vmaDestroyImage(renderer.context.allocator, rawImage, allocation);
             return Err(std::format("createImageView (offscreen): {}", vk::to_string(view.result)));
         }
 
         Image result;
-        result.device = renderer.device;
-        result.allocator = renderer.allocator;
+        result.device = renderer.context.device;
+        result.allocator = renderer.context.allocator;
         result.image = vk::Image{ rawImage };
         result.view = view.value;
         result.alloc = allocation;
@@ -315,7 +315,7 @@ export namespace se
 
         VkImage rawImage = VK_NULL_HANDLE;
         VmaAllocation allocation = nullptr;
-        if (vmaCreateImage(renderer.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
+        if (vmaCreateImage(renderer.context.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
         {
             return Err(std::string{ "vmaCreateImage failed for depth target" });
         }
@@ -325,16 +325,16 @@ export namespace se
         viewInfo.viewType = vk::ImageViewType::e2D;
         viewInfo.format = DepthFormat;
         viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1 };
-        vk::ResultValue<vk::ImageView> view = renderer.device.createImageView(viewInfo);
+        vk::ResultValue<vk::ImageView> view = renderer.context.device.createImageView(viewInfo);
         if (view.result != vk::Result::eSuccess)
         {
-            vmaDestroyImage(renderer.allocator, rawImage, allocation);
+            vmaDestroyImage(renderer.context.allocator, rawImage, allocation);
             return Err(std::format("createImageView (depth): {}", vk::to_string(view.result)));
         }
 
         Image result;
-        result.device = renderer.device;
-        result.allocator = renderer.allocator;
+        result.device = renderer.context.device;
+        result.allocator = renderer.context.allocator;
         result.image = vk::Image{ rawImage };
         result.view = view.value;
         result.alloc = allocation;
@@ -349,32 +349,32 @@ export namespace se
     // sample-count change. The caller has already idled the GPU.
     void recreateMsaaTargets(Renderer& renderer)
     {
-        renderer.msaaColor.reset();
-        renderer.msaaDepth.reset();
-        if (renderer.sampleCount == vk::SampleCountFlagBits::e1)
+        renderer.targets.msaaColor.reset();
+        renderer.targets.msaaDepth.reset();
+        if (renderer.targets.sampleCount == vk::SampleCountFlagBits::e1)
         {
             return;
         }
-        const u32 w = renderer.offscreenViewport.extent.width;
-        const u32 h = renderer.offscreenViewport.extent.height;
+        const u32 w = renderer.targets.offscreen.extent.width;
+        const u32 h = renderer.targets.offscreen.extent.height;
         if (w == 0 || h == 0)
         {
             return;
         }
         Result<Image> color =
-            newColorImage(renderer, w, h, OffscreenColorFormat, false, renderer.sampleCount);
+            newColorImage(renderer, w, h, OffscreenColorFormat, false, renderer.targets.sampleCount);
         if (color)
         {
-            renderer.msaaColor = std::move(*color);
+            renderer.targets.msaaColor = std::move(*color);
         }
         else
         {
             logError(color.error());
         }
-        auto depth = newDepthImage(renderer, w, h, renderer.sampleCount);
+        auto depth = newDepthImage(renderer, w, h, renderer.targets.sampleCount);
         if (depth)
         {
-            renderer.msaaDepth = std::move(*depth);
+            renderer.targets.msaaDepth = std::move(*depth);
         }
         else
         {
@@ -388,13 +388,13 @@ export namespace se
     // FXAA is on); drop it when off. Sized to the offscreen; the GPU is already idle.
     void recreateFxaaTarget(Renderer& renderer)
     {
-        renderer.offscreenScratch.reset();
-        if (!renderer.fxaaEnabled)
+        renderer.targets.scratch.reset();
+        if (!renderer.targets.fxaaEnabled)
         {
             return;
         }
-        const u32 w = renderer.offscreenViewport.extent.width;
-        const u32 h = renderer.offscreenViewport.extent.height;
+        const u32 w = renderer.targets.offscreen.extent.width;
+        const u32 h = renderer.targets.offscreen.extent.height;
         if (w == 0 || h == 0)
         {
             return;
@@ -402,7 +402,7 @@ export namespace se
         auto scratch = newColorImage(renderer, w, h, OffscreenColorFormat, false);
         if (scratch)
         {
-            renderer.offscreenScratch = std::move(*scratch);
+            renderer.targets.scratch = std::move(*scratch);
             updateFxaaSet(renderer);
         }
         else
@@ -422,7 +422,7 @@ export namespace se
         VmaAllocationCreateInfo allocInfo{};
         allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
         allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        if (vmaCreateBuffer(renderer.allocator, &bufferInfo, &allocInfo, &outBuffer, &outAlloc, &outInfo) != VK_SUCCESS)
+        if (vmaCreateBuffer(renderer.context.allocator, &bufferInfo, &allocInfo, &outBuffer, &outAlloc, &outInfo) != VK_SUCCESS)
         {
             return Err(std::string{ "capture: vmaCreateBuffer failed" });
         }
@@ -525,12 +525,12 @@ export namespace se
         VkBuffer raw = VK_NULL_HANDLE;
         VmaAllocation allocation = nullptr;
         VmaAllocationInfo mapped{};
-        if (vmaCreateBuffer(renderer.allocator, &info, &alloc, &raw, &allocation, &mapped) != VK_SUCCESS)
+        if (vmaCreateBuffer(renderer.context.allocator, &info, &alloc, &raw, &allocation, &mapped) != VK_SUCCESS)
         {
             return Err(std::string{ "makeMappedStorageBuffer: vmaCreateBuffer failed" });
         }
         Buffer buffer;
-        buffer.allocator = renderer.allocator;
+        buffer.allocator = renderer.context.allocator;
         buffer.buffer = vk::Buffer{ raw };
         buffer.alloc = allocation;
         buffer.mapped = mapped.pMappedData;
@@ -549,12 +549,12 @@ export namespace se
         alloc.usage = VMA_MEMORY_USAGE_AUTO;
         VkBuffer raw = VK_NULL_HANDLE;
         VmaAllocation allocation = nullptr;
-        if (vmaCreateBuffer(renderer.allocator, &info, &alloc, &raw, &allocation, nullptr) != VK_SUCCESS)
+        if (vmaCreateBuffer(renderer.context.allocator, &info, &alloc, &raw, &allocation, nullptr) != VK_SUCCESS)
         {
             return Err(std::string{ "makeDeviceStorageBuffer: vmaCreateBuffer failed" });
         }
         Buffer buffer;
-        buffer.allocator = renderer.allocator;
+        buffer.allocator = renderer.context.allocator;
         buffer.buffer = vk::Buffer{ raw };
         buffer.alloc = allocation;
         buffer.size = bytes;
@@ -566,7 +566,7 @@ export namespace se
     auto newComputePipeline(
         Renderer& renderer, std::string_view shaderName, vk::DescriptorSetLayout setLayout) -> Result<Ref<Pipeline>>
     {
-        auto moduleResult = loadShaderModule(renderer.device, assetPath(shaderName));
+        auto moduleResult = loadShaderModule(renderer.context.device, assetPath(shaderName));
         if (!moduleResult)
         {
             return Err(moduleResult.error());
@@ -575,10 +575,10 @@ export namespace se
 
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayout);
-        auto layoutResult = checked(renderer.device.createPipelineLayout(layoutInfo), "createPipelineLayout (compute)");
+        auto layoutResult = checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (compute)");
         if (!layoutResult)
         {
-            renderer.device.destroyShaderModule(shaderModule);
+            renderer.context.device.destroyShaderModule(shaderModule);
             return Err(layoutResult.error());
         }
 
@@ -590,16 +590,16 @@ export namespace se
         vk::ComputePipelineCreateInfo pipelineInfo{};
         pipelineInfo.stage = stage;
         pipelineInfo.layout = *layoutResult;
-        vk::ResultValue<vk::Pipeline> created = renderer.device.createComputePipeline(nullptr, pipelineInfo);
-        renderer.device.destroyShaderModule(shaderModule);
+        vk::ResultValue<vk::Pipeline> created = renderer.context.device.createComputePipeline(nullptr, pipelineInfo);
+        renderer.context.device.destroyShaderModule(shaderModule);
         if (created.result != vk::Result::eSuccess)
         {
-            renderer.device.destroyPipelineLayout(*layoutResult);
+            renderer.context.device.destroyPipelineLayout(*layoutResult);
             return Err(std::format("createComputePipeline: {}", vk::to_string(created.result)));
         }
 
         Pipeline pipeline;
-        pipeline.device = renderer.device;
+        pipeline.device = renderer.context.device;
         pipeline.pipeline = created.value;
         pipeline.layout = *layoutResult;
         return std::make_shared<Pipeline>(std::move(pipeline));
@@ -611,7 +611,7 @@ export namespace se
     // Its pipeline layout matches the mesh layout (so the same set 2 + push bind).
     auto makeDepthPrepassPipeline(Renderer& renderer, std::string_view shaderName) -> Result<Ref<Pipeline>>
     {
-        auto moduleResult = loadShaderModule(renderer.device, assetPath(shaderName));
+        auto moduleResult = loadShaderModule(renderer.context.device, assetPath(shaderName));
         if (!moduleResult)
         {
             return Err(moduleResult.error());
@@ -646,7 +646,7 @@ export namespace se
         raster.frontFace = vk::FrontFace::eCounterClockwise;
         raster.lineWidth = 1.0f;
         vk::PipelineMultisampleStateCreateInfo multisample{};
-        multisample.rasterizationSamples = renderer.sampleCount;  // match the MSAA target
+        multisample.rasterizationSamples = renderer.targets.sampleCount;  // match the MSAA target
         vk::PipelineDepthStencilStateCreateInfo depthStencil{};
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_TRUE;
@@ -664,14 +664,14 @@ export namespace se
         pushConstant.offset = 0;
         pushConstant.size = sizeof(glm::mat4);
         std::array<vk::DescriptorSetLayout, 3> setLayouts{
-            renderer.bindlessSetLayout, renderer.lightSetLayout, renderer.instanceSetLayout };
+            renderer.descriptors.bindlessSetLayout, renderer.descriptors.lightSetLayout, renderer.descriptors.instanceSetLayout };
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayouts);
         layoutInfo.setPushConstantRanges(pushConstant);
-        auto layoutResult = checked(renderer.device.createPipelineLayout(layoutInfo), "createPipelineLayout (depth-prepass)");
+        auto layoutResult = checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (depth-prepass)");
         if (!layoutResult)
         {
-            renderer.device.destroyShaderModule(shaderModule);
+            renderer.context.device.destroyShaderModule(shaderModule);
             return Err(layoutResult.error());
         }
 
@@ -688,16 +688,16 @@ export namespace se
         pipelineInfo.pDynamicState = &dynamic;
         pipelineInfo.layout = *layoutResult;
 
-        vk::ResultValue<vk::Pipeline> created = renderer.device.createGraphicsPipeline(nullptr, pipelineInfo);
-        renderer.device.destroyShaderModule(shaderModule);
+        vk::ResultValue<vk::Pipeline> created = renderer.context.device.createGraphicsPipeline(nullptr, pipelineInfo);
+        renderer.context.device.destroyShaderModule(shaderModule);
         if (created.result != vk::Result::eSuccess)
         {
-            renderer.device.destroyPipelineLayout(*layoutResult);
+            renderer.context.device.destroyPipelineLayout(*layoutResult);
             return Err(std::format("createGraphicsPipeline (depth-prepass): {}", vk::to_string(created.result)));
         }
 
         Pipeline pipeline;
-        pipeline.device = renderer.device;
+        pipeline.device = renderer.context.device;
         pipeline.pipeline = created.value;
         pipeline.layout = *layoutResult;
         return std::make_shared<Pipeline>(std::move(pipeline));
@@ -707,58 +707,58 @@ export namespace se
     // update-after-bind: safe to write a live set between draws.
     void writeBindlessTexture(Renderer& renderer, vk::ImageView view, u32 index)
     {
-        vk::DescriptorImageInfo info{ renderer.linearSampler, view, vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::DescriptorImageInfo info{ renderer.descriptors.linearSampler, view, vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::WriteDescriptorSet write{};
-        write.dstSet = renderer.bindlessSet;
+        write.dstSet = renderer.descriptors.bindlessSet;
         write.dstBinding = 0;
         write.dstArrayElement = index;
         write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
         write.setImageInfo(info);
-        renderer.device.updateDescriptorSets(write, {});
+        renderer.context.device.updateDescriptorSets(write, {});
     }
 
     // Point the tonemap set's storage-image binding at the current offscreen color
     // view (GENERAL layout). Called after the offscreen color is (re)created.
     void updateTonemapSet(Renderer& renderer)
     {
-        if (!renderer.tonemapSet)
+        if (!renderer.descriptors.tonemapSet)
         {
             return;
         }
         vk::DescriptorImageInfo imageInfo{};
-        imageInfo.imageView = renderer.offscreenViewport.view;
+        imageInfo.imageView = renderer.targets.offscreen.view;
         imageInfo.imageLayout = vk::ImageLayout::eGeneral;
         vk::WriteDescriptorSet write{};
-        write.dstSet = renderer.tonemapSet;
+        write.dstSet = renderer.descriptors.tonemapSet;
         write.dstBinding = 0;
         write.descriptorType = vk::DescriptorType::eStorageImage;
         write.setImageInfo(imageInfo);
-        renderer.device.updateDescriptorSets(write, {});
+        renderer.context.device.updateDescriptorSets(write, {});
     }
 
     // Point the FXAA set at the current scratch (sampled source) + offscreen (storage
     // target) views. Called after either is (re)created.
     void updateFxaaSet(Renderer& renderer)
     {
-        if (!renderer.fxaaSet || !renderer.offscreenScratch.view)
+        if (!renderer.descriptors.fxaaSet || !renderer.targets.scratch.view)
         {
             return;
         }
-        vk::DescriptorImageInfo sourceInfo{ renderer.linearSampler, renderer.offscreenScratch.view,
+        vk::DescriptorImageInfo sourceInfo{ renderer.descriptors.linearSampler, renderer.targets.scratch.view,
                                             vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::DescriptorImageInfo targetInfo{};
-        targetInfo.imageView = renderer.offscreenViewport.view;
+        targetInfo.imageView = renderer.targets.offscreen.view;
         targetInfo.imageLayout = vk::ImageLayout::eGeneral;
         std::array<vk::WriteDescriptorSet, 2> writes{};
-        writes[0].dstSet = renderer.fxaaSet;
+        writes[0].dstSet = renderer.descriptors.fxaaSet;
         writes[0].dstBinding = 0;
         writes[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
         writes[0].setImageInfo(sourceInfo);
-        writes[1].dstSet = renderer.fxaaSet;
+        writes[1].dstSet = renderer.descriptors.fxaaSet;
         writes[1].dstBinding = 1;
         writes[1].descriptorType = vk::DescriptorType::eStorageImage;
         writes[1].setImageInfo(targetInfo);
-        renderer.device.updateDescriptorSets(writes, {});
+        renderer.context.device.updateDescriptorSets(writes, {});
     }
 
     // The shared sampler, material/light set layouts, descriptor pool, and the
@@ -773,12 +773,12 @@ export namespace se
         samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
         samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
         samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
-        auto sampler = checked(renderer.device.createSampler(samplerInfo), "createSampler");
+        auto sampler = checked(renderer.context.device.createSampler(samplerInfo), "createSampler");
         if (!sampler)
         {
             return Err(sampler.error());
         }
-        renderer.linearSampler = *sampler;
+        renderer.descriptors.linearSampler = *sampler;
 
         // Set 0 is the bindless albedo array: a runtime-sized combined-image-sampler
         // array, partially bound (not every slot filled) + update-after-bind (new
@@ -796,12 +796,12 @@ export namespace se
         materialLayoutInfo.setBindings(albedoBinding);
         materialLayoutInfo.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
         materialLayoutInfo.pNext = &bindingFlagsInfo;
-        auto materialLayout = checked(renderer.device.createDescriptorSetLayout(materialLayoutInfo), "bindlessSetLayout");
+        auto materialLayout = checked(renderer.context.device.createDescriptorSetLayout(materialLayoutInfo), "bindlessSetLayout");
         if (!materialLayout)
         {
             return Err(materialLayout.error());
         }
-        renderer.bindlessSetLayout = *materialLayout;
+        renderer.descriptors.bindlessSetLayout = *materialLayout;
 
         std::array<vk::DescriptorSetLayoutBinding, 4> lightBindings{};
         lightBindings[0].binding = 0;  // directional + ambient + counts UBO
@@ -822,12 +822,12 @@ export namespace se
         lightBindings[3].stageFlags = vk::ShaderStageFlagBits::eFragment;
         vk::DescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.setBindings(lightBindings);
-        auto lightLayout = checked(renderer.device.createDescriptorSetLayout(lightLayoutInfo), "lightSetLayout");
+        auto lightLayout = checked(renderer.context.device.createDescriptorSetLayout(lightLayoutInfo), "lightSetLayout");
         if (!lightLayout)
         {
             return Err(lightLayout.error());
         }
-        renderer.lightSetLayout = *lightLayout;
+        renderer.descriptors.lightSetLayout = *lightLayout;
 
         std::array<vk::DescriptorSetLayoutBinding, 3> clusterBindings{};
         clusterBindings[0].binding = 0;  // cluster params UBO
@@ -844,12 +844,12 @@ export namespace se
         clusterBindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
         vk::DescriptorSetLayoutCreateInfo clusterLayoutInfo{};
         clusterLayoutInfo.setBindings(clusterBindings);
-        auto clusterLayout = checked(renderer.device.createDescriptorSetLayout(clusterLayoutInfo), "clusterSetLayout");
+        auto clusterLayout = checked(renderer.context.device.createDescriptorSetLayout(clusterLayoutInfo), "clusterSetLayout");
         if (!clusterLayout)
         {
             return Err(clusterLayout.error());
         }
-        renderer.clusterSetLayout = *clusterLayout;
+        renderer.descriptors.clusterSetLayout = *clusterLayout;
 
         vk::DescriptorSetLayoutBinding instanceBinding{};
         instanceBinding.binding = 0;
@@ -858,12 +858,12 @@ export namespace se
         instanceBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
         vk::DescriptorSetLayoutCreateInfo instanceLayoutInfo{};
         instanceLayoutInfo.setBindings(instanceBinding);
-        auto instanceLayout = checked(renderer.device.createDescriptorSetLayout(instanceLayoutInfo), "instanceSetLayout");
+        auto instanceLayout = checked(renderer.context.device.createDescriptorSetLayout(instanceLayoutInfo), "instanceSetLayout");
         if (!instanceLayout)
         {
             return Err(instanceLayout.error());
         }
-        renderer.instanceSetLayout = *instanceLayout;
+        renderer.descriptors.instanceSetLayout = *instanceLayout;
 
         vk::DescriptorSetLayoutBinding tonemapBinding{};
         tonemapBinding.binding = 0;  // the offscreen color as a storage image
@@ -872,12 +872,12 @@ export namespace se
         tonemapBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
         vk::DescriptorSetLayoutCreateInfo tonemapLayoutInfo{};
         tonemapLayoutInfo.setBindings(tonemapBinding);
-        auto tonemapLayout = checked(renderer.device.createDescriptorSetLayout(tonemapLayoutInfo), "tonemapSetLayout");
+        auto tonemapLayout = checked(renderer.context.device.createDescriptorSetLayout(tonemapLayoutInfo), "tonemapSetLayout");
         if (!tonemapLayout)
         {
             return Err(tonemapLayout.error());
         }
-        renderer.tonemapSetLayout = *tonemapLayout;
+        renderer.descriptors.tonemapSetLayout = *tonemapLayout;
 
         std::array<vk::DescriptorSetLayoutBinding, 2> fxaaBindings{};
         fxaaBindings[0].binding = 0;  // source (scene scratch) sampler
@@ -890,12 +890,12 @@ export namespace se
         fxaaBindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
         vk::DescriptorSetLayoutCreateInfo fxaaLayoutInfo{};
         fxaaLayoutInfo.setBindings(fxaaBindings);
-        auto fxaaLayout = checked(renderer.device.createDescriptorSetLayout(fxaaLayoutInfo), "fxaaSetLayout");
+        auto fxaaLayout = checked(renderer.context.device.createDescriptorSetLayout(fxaaLayoutInfo), "fxaaSetLayout");
         if (!fxaaLayout)
         {
             return Err(fxaaLayout.error());
         }
-        renderer.fxaaSetLayout = *fxaaLayout;
+        renderer.descriptors.fxaaSetLayout = *fxaaLayout;
 
         std::array<vk::DescriptorPoolSize, 4> poolSizes{
             vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, 1024 },
@@ -906,12 +906,12 @@ export namespace se
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;  // texture sets freed on Ref drop
         poolInfo.maxSets = 1024 + 8 * MaxFramesInFlight + 16;
         poolInfo.setPoolSizes(poolSizes);
-        auto pool = checked(renderer.device.createDescriptorPool(poolInfo), "descriptorPool");
+        auto pool = checked(renderer.context.device.createDescriptorPool(poolInfo), "descriptorPool");
         if (!pool)
         {
             return Err(pool.error());
         }
-        renderer.descriptorPool = *pool;
+        renderer.descriptors.descriptorPool = *pool;
 
         // The bindless set comes from its own update-after-bind pool.
         vk::DescriptorPoolSize bindlessPoolSize{ vk::DescriptorType::eCombinedImageSampler, MaxBindlessTextures };
@@ -919,22 +919,22 @@ export namespace se
         bindlessPoolInfo.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind;
         bindlessPoolInfo.maxSets = 1;
         bindlessPoolInfo.setPoolSizes(bindlessPoolSize);
-        auto bindlessPoolResult = checked(renderer.device.createDescriptorPool(bindlessPoolInfo), "bindlessPool");
+        auto bindlessPoolResult = checked(renderer.context.device.createDescriptorPool(bindlessPoolInfo), "bindlessPool");
         if (!bindlessPoolResult)
         {
             return Err(bindlessPoolResult.error());
         }
-        renderer.bindlessPool = *bindlessPoolResult;
+        renderer.descriptors.bindlessPool = *bindlessPoolResult;
 
         vk::DescriptorSetAllocateInfo bindlessAlloc{};
-        bindlessAlloc.descriptorPool = renderer.bindlessPool;
-        bindlessAlloc.setSetLayouts(renderer.bindlessSetLayout);
-        auto bindlessAllocated = checked(renderer.device.allocateDescriptorSets(bindlessAlloc), "allocate bindlessSet");
+        bindlessAlloc.descriptorPool = renderer.descriptors.bindlessPool;
+        bindlessAlloc.setSetLayouts(renderer.descriptors.bindlessSetLayout);
+        auto bindlessAllocated = checked(renderer.context.device.allocateDescriptorSets(bindlessAlloc), "allocate bindlessSet");
         if (!bindlessAllocated)
         {
             return Err(bindlessAllocated.error());
         }
-        renderer.bindlessSet = (*bindlessAllocated)[0];
+        renderer.descriptors.bindlessSet = (*bindlessAllocated)[0];
 
         for (u32 i = 0; i < MaxFramesInFlight; i = i + 1)
         {
@@ -945,29 +945,29 @@ export namespace se
             allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
             allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
             VmaAllocationInfo mapped{};
-            if (vmaCreateBuffer(renderer.allocator, &bufferInfo, &allocInfo, &renderer.lightBuffers[i], &renderer.lightAllocs[i], &mapped) != VK_SUCCESS)
+            if (vmaCreateBuffer(renderer.context.allocator, &bufferInfo, &allocInfo, &renderer.lighting.lightBuffers[i], &renderer.lighting.lightAllocs[i], &mapped) != VK_SUCCESS)
             {
                 return Err(std::string{ "light UBO vmaCreateBuffer failed" });
             }
-            renderer.lightMapped[i] = mapped.pMappedData;
+            renderer.lighting.lightMapped[i] = mapped.pMappedData;
 
             vk::DescriptorSetAllocateInfo setAlloc{};
-            setAlloc.descriptorPool = renderer.descriptorPool;
-            setAlloc.setSetLayouts(renderer.lightSetLayout);
-            auto allocated = checked(renderer.device.allocateDescriptorSets(setAlloc), "allocate lightSet");
+            setAlloc.descriptorPool = renderer.descriptors.descriptorPool;
+            setAlloc.setSetLayouts(renderer.descriptors.lightSetLayout);
+            auto allocated = checked(renderer.context.device.allocateDescriptorSets(setAlloc), "allocate lightSet");
             if (!allocated)
             {
                 return Err(allocated.error());
             }
-            renderer.lightSets[i] = (*allocated)[0];
+            renderer.lighting.lightSets[i] = (*allocated)[0];
 
-            vk::DescriptorBufferInfo lightBufferInfo{ vk::Buffer{ renderer.lightBuffers[i] }, 0, sizeof(LightUbo) };
+            vk::DescriptorBufferInfo lightBufferInfo{ vk::Buffer{ renderer.lighting.lightBuffers[i] }, 0, sizeof(LightUbo) };
             vk::WriteDescriptorSet lightWrite{};
-            lightWrite.dstSet = renderer.lightSets[i];
+            lightWrite.dstSet = renderer.lighting.lightSets[i];
             lightWrite.dstBinding = 0;
             lightWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
             lightWrite.setBufferInfo(lightBufferInfo);
-            renderer.device.updateDescriptorSets(lightWrite, {});
+            renderer.context.device.updateDescriptorSets(lightWrite, {});
 
             // The punctual-light buffer starts at LightListInitial capacity and is
             // grown by ensureLightCapacity; bind it now so the set is complete.
@@ -977,27 +977,27 @@ export namespace se
             {
                 return Err(lightList.error());
             }
-            renderer.lightListBuffers[i] = *lightList;
-            renderer.lightListCapacity[i] = LightListInitial;
+            renderer.lighting.lightListBuffers[i] = *lightList;
+            renderer.lighting.lightListCapacity[i] = LightListInitial;
             vk::DescriptorBufferInfo lightListInfo{ (*lightList)->buffer, 0, (*lightList)->size };
             vk::WriteDescriptorSet lightListWrite{};
-            lightListWrite.dstSet = renderer.lightSets[i];
+            lightListWrite.dstSet = renderer.lighting.lightSets[i];
             lightListWrite.dstBinding = 1;
             lightListWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
             lightListWrite.setBufferInfo(lightListInfo);
-            renderer.device.updateDescriptorSets(lightListWrite, {});
+            renderer.context.device.updateDescriptorSets(lightListWrite, {});
 
             // The instance buffer is created lazily (ensureInstanceCapacity), which
             // also writes this set; allocate the set up front so it is stable.
             vk::DescriptorSetAllocateInfo instanceAlloc{};
-            instanceAlloc.descriptorPool = renderer.descriptorPool;
-            instanceAlloc.setSetLayouts(renderer.instanceSetLayout);
-            auto instanceAllocated = checked(renderer.device.allocateDescriptorSets(instanceAlloc), "allocate instanceSet");
+            instanceAlloc.descriptorPool = renderer.descriptors.descriptorPool;
+            instanceAlloc.setSetLayouts(renderer.descriptors.instanceSetLayout);
+            auto instanceAllocated = checked(renderer.context.device.allocateDescriptorSets(instanceAlloc), "allocate instanceSet");
             if (!instanceAllocated)
             {
                 return Err(instanceAllocated.error());
             }
-            renderer.instanceSets[i] = (*instanceAllocated)[0];
+            renderer.instancing.sets[i] = (*instanceAllocated)[0];
 
             // Cluster light-list buffer (device-local, compute-written) + the
             // cluster params UBO (host-mapped, written each frame).
@@ -1007,7 +1007,7 @@ export namespace se
             {
                 return Err(clusterBuffer.error());
             }
-            renderer.clusterBuffers[i] = *clusterBuffer;
+            renderer.lighting.clusterBuffers[i] = *clusterBuffer;
 
             VkBufferCreateInfo paramInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             paramInfo.size = sizeof(ClusterParams);
@@ -1016,101 +1016,101 @@ export namespace se
             paramAlloc.usage = VMA_MEMORY_USAGE_AUTO;
             paramAlloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
             VmaAllocationInfo paramMapped{};
-            if (vmaCreateBuffer(renderer.allocator, &paramInfo, &paramAlloc, &renderer.clusterParamBuffers[i],
-                                &renderer.clusterParamAllocs[i], &paramMapped) != VK_SUCCESS)
+            if (vmaCreateBuffer(renderer.context.allocator, &paramInfo, &paramAlloc, &renderer.lighting.clusterParamBuffers[i],
+                                &renderer.lighting.clusterParamAllocs[i], &paramMapped) != VK_SUCCESS)
             {
                 return Err(std::string{ "cluster params vmaCreateBuffer failed" });
             }
-            renderer.clusterParamMapped[i] = paramMapped.pMappedData;
+            renderer.lighting.clusterParamMapped[i] = paramMapped.pMappedData;
 
             // Lighting set bindings 2 (cluster lists) + 3 (cluster params).
             vk::DescriptorBufferInfo clusterInfo{ (*clusterBuffer)->buffer, 0, (*clusterBuffer)->size };
-            vk::DescriptorBufferInfo paramBufferInfo{ vk::Buffer{ renderer.clusterParamBuffers[i] }, 0, sizeof(ClusterParams) };
+            vk::DescriptorBufferInfo paramBufferInfo{ vk::Buffer{ renderer.lighting.clusterParamBuffers[i] }, 0, sizeof(ClusterParams) };
             std::array<vk::WriteDescriptorSet, 2> lightClusterWrites{};
-            lightClusterWrites[0].dstSet = renderer.lightSets[i];
+            lightClusterWrites[0].dstSet = renderer.lighting.lightSets[i];
             lightClusterWrites[0].dstBinding = 2;
             lightClusterWrites[0].descriptorType = vk::DescriptorType::eStorageBuffer;
             lightClusterWrites[0].setBufferInfo(clusterInfo);
-            lightClusterWrites[1].dstSet = renderer.lightSets[i];
+            lightClusterWrites[1].dstSet = renderer.lighting.lightSets[i];
             lightClusterWrites[1].dstBinding = 3;
             lightClusterWrites[1].descriptorType = vk::DescriptorType::eUniformBuffer;
             lightClusterWrites[1].setBufferInfo(paramBufferInfo);
-            renderer.device.updateDescriptorSets(lightClusterWrites, {});
+            renderer.context.device.updateDescriptorSets(lightClusterWrites, {});
 
             // Compute cluster set: params UBO + light list (read) + cluster lists (write).
             vk::DescriptorSetAllocateInfo clusterAlloc{};
-            clusterAlloc.descriptorPool = renderer.descriptorPool;
-            clusterAlloc.setSetLayouts(renderer.clusterSetLayout);
-            auto clusterAllocated = checked(renderer.device.allocateDescriptorSets(clusterAlloc), "allocate clusterSet");
+            clusterAlloc.descriptorPool = renderer.descriptors.descriptorPool;
+            clusterAlloc.setSetLayouts(renderer.descriptors.clusterSetLayout);
+            auto clusterAllocated = checked(renderer.context.device.allocateDescriptorSets(clusterAlloc), "allocate clusterSet");
             if (!clusterAllocated)
             {
                 return Err(clusterAllocated.error());
             }
-            renderer.clusterSets[i] = (*clusterAllocated)[0];
+            renderer.lighting.clusterSets[i] = (*clusterAllocated)[0];
             std::array<vk::WriteDescriptorSet, 3> clusterWrites{};
-            clusterWrites[0].dstSet = renderer.clusterSets[i];
+            clusterWrites[0].dstSet = renderer.lighting.clusterSets[i];
             clusterWrites[0].dstBinding = 0;
             clusterWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
             clusterWrites[0].setBufferInfo(paramBufferInfo);
-            clusterWrites[1].dstSet = renderer.clusterSets[i];
+            clusterWrites[1].dstSet = renderer.lighting.clusterSets[i];
             clusterWrites[1].dstBinding = 1;
             clusterWrites[1].descriptorType = vk::DescriptorType::eStorageBuffer;
             clusterWrites[1].setBufferInfo(lightListInfo);
-            clusterWrites[2].dstSet = renderer.clusterSets[i];
+            clusterWrites[2].dstSet = renderer.lighting.clusterSets[i];
             clusterWrites[2].dstBinding = 2;
             clusterWrites[2].descriptorType = vk::DescriptorType::eStorageBuffer;
             clusterWrites[2].setBufferInfo(clusterInfo);
-            renderer.device.updateDescriptorSets(clusterWrites, {});
+            renderer.context.device.updateDescriptorSets(clusterWrites, {});
         }
 
         // The cull compute pipeline reads/writes the cluster set layout.
         Result<Ref<Pipeline>> cull =
-            newComputePipeline(renderer, "shaders/light_cull.spv", renderer.clusterSetLayout);
+            newComputePipeline(renderer, "shaders/light_cull.spv", renderer.descriptors.clusterSetLayout);
         if (!cull)
         {
             return Err(cull.error());
         }
-        renderer.cullPipeline = *cull;
+        renderer.pipelines.cull = *cull;
 
         // Post-process tonemap: a compute pipeline + a set binding the offscreen
         // color as a storage image (read+written in place). A layer adds the pass.
         Result<Ref<Pipeline>> tonemap =
-            newComputePipeline(renderer, "shaders/tonemap.spv", renderer.tonemapSetLayout);
+            newComputePipeline(renderer, "shaders/tonemap.spv", renderer.descriptors.tonemapSetLayout);
         if (!tonemap)
         {
             return Err(tonemap.error());
         }
-        renderer.tonemapPipeline = *tonemap;
+        renderer.pipelines.tonemap = *tonemap;
 
         vk::DescriptorSetAllocateInfo tonemapAlloc{};
-        tonemapAlloc.descriptorPool = renderer.descriptorPool;
-        tonemapAlloc.setSetLayouts(renderer.tonemapSetLayout);
-        auto tonemapAllocated = checked(renderer.device.allocateDescriptorSets(tonemapAlloc), "allocate tonemapSet");
+        tonemapAlloc.descriptorPool = renderer.descriptors.descriptorPool;
+        tonemapAlloc.setSetLayouts(renderer.descriptors.tonemapSetLayout);
+        auto tonemapAllocated = checked(renderer.context.device.allocateDescriptorSets(tonemapAlloc), "allocate tonemapSet");
         if (!tonemapAllocated)
         {
             return Err(tonemapAllocated.error());
         }
-        renderer.tonemapSet = (*tonemapAllocated)[0];
+        renderer.descriptors.tonemapSet = (*tonemapAllocated)[0];
         updateTonemapSet(renderer);
 
         // FXAA: a compute pipeline + a set (source sampler + offscreen storage). The
         // scratch source is created on demand when FXAA is enabled (recreateFxaaTarget).
         Result<Ref<Pipeline>> fxaa =
-            newComputePipeline(renderer, "shaders/fxaa.spv", renderer.fxaaSetLayout);
+            newComputePipeline(renderer, "shaders/fxaa.spv", renderer.descriptors.fxaaSetLayout);
         if (!fxaa)
         {
             return Err(fxaa.error());
         }
-        renderer.fxaaPipeline = *fxaa;
+        renderer.pipelines.fxaa = *fxaa;
         vk::DescriptorSetAllocateInfo fxaaAlloc{};
-        fxaaAlloc.descriptorPool = renderer.descriptorPool;
-        fxaaAlloc.setSetLayouts(renderer.fxaaSetLayout);
-        auto fxaaAllocated = checked(renderer.device.allocateDescriptorSets(fxaaAlloc), "allocate fxaaSet");
+        fxaaAlloc.descriptorPool = renderer.descriptors.descriptorPool;
+        fxaaAlloc.setSetLayouts(renderer.descriptors.fxaaSetLayout);
+        auto fxaaAllocated = checked(renderer.context.device.allocateDescriptorSets(fxaaAlloc), "allocate fxaaSet");
         if (!fxaaAllocated)
         {
             return Err(fxaaAllocated.error());
         }
-        renderer.fxaaSet = (*fxaaAllocated)[0];
+        renderer.descriptors.fxaaSet = (*fxaaAllocated)[0];
 
         // Depth pre-pass: a vertex-only pipeline that reuses the mesh vertex shader.
         Result<Ref<Pipeline>> depthPrepass =
@@ -1119,7 +1119,7 @@ export namespace se
         {
             return Err(depthPrepass.error());
         }
-        renderer.depthPrepassPipeline = *depthPrepass;
+        renderer.pipelines.depthPrepass = *depthPrepass;
         return {};
     }
 }
