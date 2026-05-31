@@ -1,6 +1,7 @@
 // imgui.h is a heavy C++ header, so this TU uses classic includes (no `import
 // std`) — consistent with the engine's rendering/ui/scene modules.
 #include <imgui.h>
+#include <ImGuizmo.h>
 #include <glm/glm.hpp>
 
 #include <expected>
@@ -120,6 +121,20 @@ int main()
                 se::drawGizmo(*state->editor, cam.view, proj,
                               se::viewportContentPos(app.ui), se::viewportContentSize(app.ui),
                               se::viewportHovered(app.ui));
+
+                // Left-click in empty viewport space ray-picks an entity (or clears the
+                // selection). Skipped when the click is on/using the gizmo.
+                if (se::viewportHovered(app.ui) && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                    !ImGuizmo::IsOver() && !ImGuizmo::IsUsing())
+                {
+                    const ImVec2 origin = se::viewportContentPos(app.ui);
+                    const ImVec2 size = se::viewportContentSize(app.ui);
+                    const ImVec2 mouse = ImGui::GetIO().MousePos;
+                    const glm::vec2 ndc{ (mouse.x - origin.x) / size.x * 2.0f - 1.0f,
+                                         (mouse.y - origin.y) / size.y * 2.0f - 1.0f };
+                    se::setSelection(*state->editor,
+                                     se::pickEntity(state->editor->scene, state->assets, app.renderer, cam, ndc));
+                }
             }
 
             se::hierarchyPanel(*state->editor);

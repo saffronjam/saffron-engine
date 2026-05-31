@@ -12,8 +12,10 @@ module;
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 export module Saffron.Assets;
 
@@ -450,5 +452,82 @@ export namespace se
             batches.push_back(std::move(batch));
         }
         drawInstanced(renderer, meshPipeline, viewProjection, instances, batches);
+    }
+
+    // Picks the nearest entity whose world-space mesh AABB the camera ray hits. `ndc` is
+    // the click point in clip space [-1,1] matching the rendered image (Y-flipped proj).
+    // Returns a null Entity on a miss (the caller clears the selection).
+    Entity pickEntity(Scene& scene, AssetServer& assets, Renderer& renderer,
+                      const CameraView& camera, glm::vec2 ndc)
+    {
+        if (!camera.valid)
+        {
+            return Entity{ entt::null };
+        }
+        const u32 width = viewportWidth(renderer);
+        const u32 height = viewportHeight(renderer);
+        if (width == 0 || height == 0)
+        {
+            return Entity{ entt::null };
+        }
+        const f32 aspect = static_cast<f32>(width) / static_cast<f32>(height);
+        glm::mat4 proj = cameraProjection(camera, aspect);
+        proj[1][1] *= -1.0f;  // match the renderer's clip space
+        const glm::mat4 invViewProj = glm::inverse(proj * camera.view);
+        const glm::vec4 nearH = invViewProj * glm::vec4(ndc.x, ndc.y, 0.0f, 1.0f);  // GLM 0..1 depth: near = 0
+        const glm::vec4 farH = invViewProj * glm::vec4(ndc.x, ndc.y, 1.0f, 1.0f);
+        const glm::vec3 origin = glm::vec3(nearH) / nearH.w;
+        const glm::vec3 dir = glm::normalize(glm::vec3(farH) / farH.w - origin);
+        const glm::vec3 invDir = 1.0f / dir;  // inf for axis-aligned components is fine for the slab test
+
+        Entity hit{ entt::null };
+        f32 nearest = std::numeric_limits<f32>::max();
+        forEach<TransformComponent, MeshComponent>(scene,
+            [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
+            {
+                Ref<GpuMesh> meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
+                if (!meshRef)
+                {
+                    return;
+                }
+                // World AABB from the 8 transformed local-AABB corners.
+                const glm::mat4 model = transformMatrix(transform);
+                const glm::vec3 lo = meshRef->boundsMin;
+                const glm::vec3 hi = meshRef->boundsMax;
+                glm::vec3 worldMin{ std::numeric_limits<f32>::max() };
+                glm::vec3 worldMax{ std::numeric_limits<f32>::lowest() };
+                for (u32 corner = 0; corner < 8; corner = corner + 1)
+                {
+                    glm::vec3 p = lo;
+                    if (corner & 1u) { p.x = hi.x; }
+                    if (corner & 2u) { p.y = hi.y; }
+                    if (corner & 4u) { p.z = hi.z; }
+                    const glm::vec3 world = glm::vec3(model * glm::vec4(p, 1.0f));
+                    worldMin = glm::min(worldMin, world);
+                    worldMax = glm::max(worldMax, world);
+                }
+
+                const glm::vec3 t0 = (worldMin - origin) * invDir;
+                const glm::vec3 t1 = (worldMax - origin) * invDir;
+                const glm::vec3 tlo = glm::min(t0, t1);
+                const glm::vec3 thi = glm::max(t0, t1);
+                const f32 tEnter = glm::max(glm::max(tlo.x, tlo.y), tlo.z);
+                const f32 tExit = glm::min(glm::min(thi.x, thi.y), thi.z);
+                if (tExit < 0.0f || tEnter > tExit)
+                {
+                    return;
+                }
+                f32 t = tEnter;
+                if (t < 0.0f)
+                {
+                    t = tExit;  // ray origin inside the box
+                }
+                if (t < nearest)
+                {
+                    nearest = t;
+                    hit = entity;
+                }
+            });
+        return hit;
     }
 }

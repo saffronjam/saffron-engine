@@ -2,6 +2,7 @@ module;
 
 #include <nlohmann/json.hpp>
 #include <entt/entt.hpp>
+#include <glm/glm.hpp>
 
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -498,6 +499,28 @@ export namespace se
                 }
                 setSelection(ctx.editor, *entity);
                 return entityRef(ctx.editor.scene, *entity);
+            });
+
+        registerCommand(reg, "pick", "pick {u=0.5, v=0.5} — ray-pick at viewport UV (0,0 = top-left)",
+            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            {
+                const json uParam = positionalOr(params, "u", 0);
+                const json vParam = positionalOr(params, "v", 1);
+                f32 u = 0.5f;
+                f32 v = 0.5f;
+                if (uParam.is_number()) { u = static_cast<f32>(uParam.get<double>()); }
+                if (vParam.is_number()) { v = static_cast<f32>(vParam.get<double>()); }
+                const CameraView cam = editorCameraView(ctx.editor.camera);
+                const Entity hit = pickEntity(ctx.editor.scene, ctx.assets, ctx.renderer, cam,
+                                              glm::vec2{ u * 2.0f - 1.0f, v * 2.0f - 1.0f });
+                setSelection(ctx.editor, hit);
+                if (hit.handle == entt::null)
+                {
+                    return json{ { "hit", false } };
+                }
+                json result = entityRef(ctx.editor.scene, hit);
+                result["hit"] = true;
+                return result;
             });
 
         registerCommand(reg, "save-scene", "save-scene {path}",

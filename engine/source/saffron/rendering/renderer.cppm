@@ -19,6 +19,7 @@ module;
 #include <format>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -194,6 +195,8 @@ export namespace se
         VmaAllocation indexAlloc = nullptr;
         u32 indexCount = 0;
         std::vector<Submesh> submeshes;
+        glm::vec3 boundsMin{ 0.0f };  // local-space AABB, for ray picking
+        glm::vec3 boundsMax{ 0.0f };
 
         GpuMesh() = default;
         GpuMesh(const GpuMesh&) = delete;
@@ -202,7 +205,7 @@ export namespace se
         GpuMesh(GpuMesh&& other) noexcept
             : allocator(other.allocator), vertexBuffer(other.vertexBuffer), vertexAlloc(other.vertexAlloc),
               indexBuffer(other.indexBuffer), indexAlloc(other.indexAlloc), indexCount(other.indexCount),
-              submeshes(std::move(other.submeshes))
+              submeshes(std::move(other.submeshes)), boundsMin(other.boundsMin), boundsMax(other.boundsMax)
         {
             other.allocator = nullptr;
             other.vertexBuffer = nullptr;
@@ -223,6 +226,8 @@ export namespace se
                 indexAlloc = other.indexAlloc;
                 indexCount = other.indexCount;
                 submeshes = std::move(other.submeshes);
+                boundsMin = other.boundsMin;
+                boundsMax = other.boundsMax;
                 other.allocator = nullptr;
                 other.vertexBuffer = nullptr;
                 other.vertexAlloc = nullptr;
@@ -2084,6 +2089,13 @@ namespace se
         gpu.allocator = renderer.allocator;
         gpu.indexCount = static_cast<u32>(mesh.indices.size());
         gpu.submeshes = mesh.submeshes;
+        gpu.boundsMin = glm::vec3(std::numeric_limits<f32>::max());
+        gpu.boundsMax = glm::vec3(std::numeric_limits<f32>::lowest());
+        for (const Vertex& vertex : mesh.vertices)
+        {
+            gpu.boundsMin = glm::min(gpu.boundsMin, vertex.position);
+            gpu.boundsMax = glm::max(gpu.boundsMax, vertex.position);
+        }
 
         VkBuffer vertexBuffer = VK_NULL_HANDLE;
         VkBuffer indexBuffer = VK_NULL_HANDLE;
