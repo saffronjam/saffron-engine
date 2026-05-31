@@ -30,8 +30,8 @@ code does now — and *why* if it's non-obvious — never by contrast with the p
   ```sh
   toolbox run -c saffron-build bash -lc '
     cd /var/home/saffronjam/repos/SaffronEngine
-    cmake --preset debug          # first time / after CMake changes
-    cmake --build build/debug
+    cmake --preset debug           # first time / after CMake changes
+    cmake --build build/debug -j1  # -j1: parallel builds intermittently hit a clang module-BMI ICE
     ./build/debug/bin/SaffronEditor
   '
   ```
