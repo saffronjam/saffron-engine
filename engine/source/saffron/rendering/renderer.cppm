@@ -16,6 +16,7 @@ module;
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -604,6 +605,10 @@ namespace se
             };
             addPass(graph, std::move(fxaaPass));
         }
+
+        // HDR offscreen → display: the tonemap is mandatory (the scene wrote linear HDR
+        // radiance). Added after the scene + AA passes, before any app-authored pass + ui.
+        addTonemapPass(renderer, graph);
     }
 
     auto frameGraph(Renderer& renderer) -> RenderGraph&
@@ -627,6 +632,9 @@ namespace se
             cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.tonemap->pipeline);
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
                 renderer.pipelines.tonemap->layout, 0, renderer.descriptors.tonemapSet, {});
+            const f32 exposure = std::exp2(renderer.exposureEv);
+            cmd.pushConstants(renderer.pipelines.tonemap->layout, vk::ShaderStageFlagBits::eCompute,
+                              0, sizeof(f32), &exposure);
             const vk::Extent2D extent = renderer.targets.offscreen.extent;
             cmd.dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
         };
@@ -776,6 +784,16 @@ namespace se
     auto renderStats(const Renderer& renderer) -> RenderStats
     {
         return renderer.stats;
+    }
+
+    void setExposure(Renderer& renderer, f32 ev)
+    {
+        renderer.exposureEv = ev;
+    }
+
+    auto exposureEv(const Renderer& renderer) -> f32
+    {
+        return renderer.exposureEv;
     }
 
     void waitGpuIdle(Renderer& renderer)

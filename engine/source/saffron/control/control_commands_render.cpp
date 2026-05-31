@@ -43,9 +43,10 @@ namespace se
                              { "batches", stats.batches },
                              { "instances", stats.instances },
                              { "clustered", clusteredEnabled(ctx.renderer) },
-                             { "postProcess", postProcessEnabled(ctx.renderer) },
                              { "depthPrepass", depthPrepassEnabled(ctx.renderer) },
                              { "pipelines", pipelineCount(ctx.renderer) },
+                             { "hdr", true },
+                             { "exposureEv", exposureEv(ctx.renderer) },
                              { "aa", aaMode(ctx.renderer) } };
             });
 
@@ -94,26 +95,16 @@ namespace se
                 return json{ { "clustered", enabled } };
             });
 
-        registerCommand(reg, "set-postprocess", "set-postprocess {0|1} — toggle the post-process tonemap pass",
+        registerCommand(reg, "set-exposure", "set-exposure {ev} — tonemap exposure in stops (exp2)",
             [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                const json value = positionalOr(params, "enabled", 0);
-                bool enabled = true;
-                if (value.is_number())
+                const json value = positionalOr(params, "ev", 0);
+                if (!value.is_number())
                 {
-                    enabled = value.get<double>() != 0.0;
+                    return Err(std::string{ "expected a numeric EV" });
                 }
-                else if (value.is_boolean())
-                {
-                    enabled = value.get<bool>();
-                }
-                else if (value.is_string())
-                {
-                    const std::string s = value.get<std::string>();
-                    enabled = !(s == "0" || s == "false" || s == "off");
-                }
-                setPostProcess(ctx.renderer, enabled);
-                return json{ { "postProcess", enabled } };
+                setExposure(ctx.renderer, static_cast<f32>(value.get<double>()));
+                return json{ { "exposureEv", exposureEv(ctx.renderer) } };
             });
 
         registerCommand(reg, "set-depth-prepass", "set-depth-prepass {0|1} — toggle the depth pre-pass",

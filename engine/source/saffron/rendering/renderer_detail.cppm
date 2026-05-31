@@ -8,6 +8,7 @@ module;
 #include <stb_image_write.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/packing.hpp>
 
 #include <array>
 #include <cstddef>
@@ -453,24 +454,55 @@ export namespace se
             toStage, toAccess);
     }
 
-    // Writes a PNG, reordering BGRA source pixels to RGB.
+    // Bytes per pixel for the capture formats (8-bit RGBA/BGRA, or HDR RGBA16F).
+    auto formatPixelBytes(vk::Format format) -> u32
+    {
+        if (format == vk::Format::eR16G16B16A16Sfloat)
+        {
+            return 8;
+        }
+        return 4;
+    }
+
+    // Writes a PNG. 8-bit sources reorder BGRA->RGB; the HDR (RGBA16F) offscreen is
+    // already tonemapped to display range, so its half floats are clamped to [0,1]*255.
     auto writeBufferToPng(
         const unsigned char* pixels, u32 width, u32 height, vk::Format format, const std::string& path) -> Result<void>
     {
-        const bool bgr = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
         std::vector<unsigned char> rgb(static_cast<std::size_t>(width) * height * 3);
-        for (u32 i = 0; i < width * height; i = i + 1)
+        if (format == vk::Format::eR16G16B16A16Sfloat)
         {
-            u32 r = i * 4 + 0;
-            u32 b = i * 4 + 2;
-            if (bgr)
+            const u32* halfs = reinterpret_cast<const u32*>(pixels);  // two halves per u32
+            for (u32 i = 0; i < width * height; i = i + 1)
             {
-                r = i * 4 + 2;
-                b = i * 4 + 0;
+                const glm::vec2 rg = glm::unpackHalf2x16(halfs[i * 2 + 0]);
+                const glm::vec2 ba = glm::unpackHalf2x16(halfs[i * 2 + 1]);
+                const auto encode = [](f32 c) -> unsigned char
+                {
+                    const f32 clamped = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+                    return static_cast<unsigned char>(clamped * 255.0f + 0.5f);
+                };
+                rgb[i * 3 + 0] = encode(rg.x);
+                rgb[i * 3 + 1] = encode(rg.y);
+                rgb[i * 3 + 2] = encode(ba.x);
             }
-            rgb[i * 3 + 0] = pixels[r];
-            rgb[i * 3 + 1] = pixels[i * 4 + 1];
-            rgb[i * 3 + 2] = pixels[b];
+        }
+        else
+        {
+            const bool bgr = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
+            for (u32 i = 0; i < width * height; i = i + 1)
+            {
+                u32 r = i * 4 + 0;
+                u32 b = i * 4 + 2;
+                if (bgr)
+                {
+                    r = i * 4 + 2;
+                    b = i * 4 + 0;
+                }
+                rgb[i * 3 + 0] = pixels[r];
+                rgb[i * 3 + 1] = pixels[i * 4 + 1];
+                rgb[i * 3 + 2] = pixels[b];
+            }
         }
         const int ok = stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height),
                                       3, rgb.data(), static_cast<int>(width) * 3);
@@ -487,6 +519,7 @@ export namespace se
         glm::vec4 directionAmbient;  // xyz direction, w ambient
         glm::vec4 colorIntensity;    // rgb color, a intensity
         glm::uvec4 counts;           // x = punctual light count
+        glm::vec4 eyePosition;       // xyz world-space camera position
     };
 
     // Froxel cluster grid (X x Y screen tiles, Z exponential view-space slices) and
@@ -562,9 +595,11 @@ export namespace se
     }
 
     // Builds a compute pipeline from a SPIR-V module (entry "computeMain") + a single
-    // descriptor set layout. Returned as a Ref<Pipeline> (move-only RAII).
+    // descriptor set layout, optionally with a compute-stage push constant of the given
+    // size. Returned as a Ref<Pipeline> (move-only RAII).
     auto newComputePipeline(
-        Renderer& renderer, std::string_view shaderName, vk::DescriptorSetLayout setLayout) -> Result<Ref<Pipeline>>
+        Renderer& renderer, std::string_view shaderName, vk::DescriptorSetLayout setLayout,
+        u32 pushConstantSize = 0) -> Result<Ref<Pipeline>>
     {
         auto moduleResult = loadShaderModule(renderer.context.device, assetPath(shaderName));
         if (!moduleResult)
@@ -575,6 +610,14 @@ export namespace se
 
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayout);
+        vk::PushConstantRange pushRange{};
+        if (pushConstantSize > 0)
+        {
+            pushRange.stageFlags = vk::ShaderStageFlagBits::eCompute;
+            pushRange.offset = 0;
+            pushRange.size = pushConstantSize;
+            layoutInfo.setPushConstantRanges(pushRange);
+        }
         auto layoutResult = checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (compute)");
         if (!layoutResult)
         {
@@ -1072,10 +1115,12 @@ export namespace se
         }
         renderer.pipelines.cull = *cull;
 
-        // Post-process tonemap: a compute pipeline + a set binding the offscreen
-        // color as a storage image (read+written in place). A layer adds the pass.
+        // Tonemap: a compute pipeline + a set binding the offscreen color as a storage
+        // image (read+written in place). beginFrameGraph adds the pass every frame; the
+        // exposure multiplier is a compute-stage push constant.
         Result<Ref<Pipeline>> tonemap =
-            newComputePipeline(renderer, "shaders/tonemap.spv", renderer.descriptors.tonemapSetLayout);
+            newComputePipeline(renderer, "shaders/tonemap.spv", renderer.descriptors.tonemapSetLayout,
+                               static_cast<u32>(sizeof(f32)));
         if (!tonemap)
         {
             return Err(tonemap.error());

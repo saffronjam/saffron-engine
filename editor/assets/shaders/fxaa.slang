@@ -10,7 +10,7 @@ static const float REDUCE_MUL = 1.0 / 8.0;
 static const float SPAN_MAX = 8.0;
 
 [[vk::binding(0, 0)]] Sampler2D source;
-[[vk::image_format("rgba8")]]
+[[vk::image_format("rgba16f")]]
 [[vk::binding(1, 0)]] RWTexture2D<float4> target;
 
 float luma(float3 c)

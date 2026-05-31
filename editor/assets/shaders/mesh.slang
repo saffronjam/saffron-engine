@@ -25,6 +25,8 @@ struct VertexOutput
     float2 uv0 : TEXCOORD0;
     float4 baseColor : COLOR0;
     nointerpolation uint textureIndex : TEXCOORD1;
+    nointerpolation float2 mr : TEXCOORD2;        // x = metallic, y = roughness
+    nointerpolation float3 emissive : TEXCOORD3;  // emissive radiance (strength baked in)
 };
 
 struct Camera
@@ -43,6 +45,7 @@ struct LightGlobals
     float4 directionAmbient;  // xyz = travel direction, w = ambient
     float4 colorIntensity;    // rgb = color, a = intensity
     uint4 counts;             // x = punctual light count
+    float4 eyePosition;       // xyz = world-space camera position (for the view vector)
 };
 [[vk::binding(0, 1)]] ConstantBuffer<LightGlobals> globals;
 
@@ -77,7 +80,9 @@ struct Instance
     float4x4 model;
     float4x4 normalMatrix;
     float4 baseColor;
-    uint4 texture;  // x = bindless albedo index
+    uint4 texture;    // x = bindless albedo index
+    float4 pbr;       // x = metallic, y = roughness
+    float4 emissive;  // rgb = emissive radiance (strength baked in)
 };
 [[vk::binding(0, 2)]] StructuredBuffer<Instance> instances;
 
@@ -93,6 +98,8 @@ VertexOutput vertexMain(VertexInput input, uint instanceIndex : SV_VulkanInstanc
     output.uv0 = input.uv0;
     output.baseColor = inst.baseColor;
     output.textureIndex = inst.texture.x;
+    output.mr = inst.pbr.xy;
+    output.emissive = inst.emissive.rgb;
     return output;
 }
 
@@ -104,8 +111,51 @@ float distanceAttenuation(float dist, float range)
     return invSquare * t * t;
 }
 
-// One punctual light's diffuse contribution at a world-space surface point.
-float3 punctual(GpuLight lt, float3 worldPos, float3 n)
+// Cook-Torrance metallic/roughness BRDF (energy-conserving). `radiance` is the
+// incoming light's color * intensity * attenuation * cone; the cosine + diffuse/PI
+// are applied here. Shared by the directional and the punctual lights.
+static const float PI = 3.14159265;
+
+float3 fresnelSchlick(float cosT, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - cosT, 5.0);
+}
+
+float distributionGGX(float ndoth, float a)  // a = roughness^2
+{
+    float a2 = a * a;
+    float d = ndoth * ndoth * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * d * d, 1e-5);
+}
+
+float visibilitySmithGGX(float ndotv, float ndotl, float a)  // height-correlated Smith
+{
+    float a2 = a * a;
+    float v = ndotl * sqrt(ndotv * ndotv * (1.0 - a2) + a2);
+    float l = ndotv * sqrt(ndotl * ndotl * (1.0 - a2) + a2);
+    return 0.5 / max(v + l, 1e-5);
+}
+
+float3 brdf(float3 n, float3 v, float3 l, float3 albedo, float metallic, float roughness, float3 radiance)
+{
+    float3 h = normalize(v + l);
+    float ndotl = max(dot(n, l), 0.0);
+    float ndotv = max(dot(n, v), 1e-4);
+    float ndoth = max(dot(n, h), 0.0);
+    float a = roughness * roughness;
+    float3 F0 = lerp(float3(0.04), albedo, metallic);
+    float3 F = fresnelSchlick(max(dot(h, v), 0.0), F0);
+    float D = distributionGGX(ndoth, a);
+    float Vis = visibilitySmithGGX(ndotv, ndotl, a);
+    float3 spec = D * Vis * F;
+    float3 kd = (1.0 - F) * (1.0 - metallic);
+    float3 diff = kd * albedo / PI;
+    return (diff + spec) * radiance * ndotl;
+}
+
+// One punctual light's Cook-Torrance contribution at a world-space surface point.
+float3 punctual(GpuLight lt, float3 worldPos, float3 n, float3 v,
+                float3 albedo, float metallic, float roughness)
 {
     float3 toLight = lt.positionRange.xyz - worldPos;
     float dist = length(toLight);
@@ -114,7 +164,6 @@ float3 punctual(GpuLight lt, float3 worldPos, float3 n)
         return float3(0.0);
     }
     float3 l = toLight / max(dist, 0.0001);
-    float nl = max(dot(n, l), 0.0);
     float attenuation = distanceAttenuation(dist, lt.positionRange.w);
 
     float cone = 1.0;
@@ -124,7 +173,8 @@ float3 punctual(GpuLight lt, float3 worldPos, float3 n)
         float cosAngle = dot(spotDir, -l);
         cone = smoothstep(lt.spotCos.y, lt.spotCos.x, cosAngle);
     }
-    return lt.colorIntensity.rgb * lt.colorIntensity.a * nl * attenuation * cone;
+    float3 radiance = lt.colorIntensity.rgb * lt.colorIntensity.a * attenuation * cone;
+    return brdf(n, v, l, albedo, metallic, roughness, radiance);
 }
 
 // Froxel cluster index for a fragment, from its pixel position + view-space depth.
@@ -151,17 +201,22 @@ float4 fragmentMain(VertexOutput input) : SV_Target
 {
     float3 n = normalize(input.worldNormal);
     float4 tex = albedoTextures[NonUniformResourceIndex(input.textureIndex)].Sample(input.uv0);
+    float3 albedo = tex.rgb * input.baseColor.rgb;
 
-    // Unlit: albedo * base color, no lighting (a different cached PSO via kUnlit).
+    // Unlit: albedo * base color + emissive, no lighting (a different cached PSO via kUnlit).
     if (kUnlit)
     {
-        return float4(tex.rgb * input.baseColor.rgb, tex.a * input.baseColor.a);
+        return float4(albedo + input.emissive, tex.a * input.baseColor.a);
     }
 
-    // Directional light + ambient.
-    float3 lightDir = normalize(globals.directionAmbient.xyz);
-    float ndotl = max(dot(n, -lightDir), 0.0);
-    float3 lit = globals.colorIntensity.rgb * globals.colorIntensity.a * ndotl + globals.directionAmbient.w;
+    float metallic = saturate(input.mr.x);
+    float roughness = clamp(input.mr.y, 0.045, 1.0);  // clamp away from 0 (specular singularity)
+    float3 v = normalize(globals.eyePosition.xyz - input.worldPos);
+
+    // Directional light, evaluated through the same BRDF as the punctual lights.
+    float3 lDir = -normalize(globals.directionAmbient.xyz);
+    float3 lo = brdf(n, v, lDir, albedo, metallic, roughness,
+                     globals.colorIntensity.rgb * globals.colorIntensity.a);
 
     // Punctual lights — clustered when enabled, else loop every light.
     if (clusterParams.screenSize.z != 0)
@@ -171,17 +226,20 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         uint count = clusters[clusterIndex].count;
         for (uint i = 0; i < count; i = i + 1)
         {
-            lit += punctual(lights[clusters[clusterIndex].indices[i]], input.worldPos, n);
+            lo += punctual(lights[clusters[clusterIndex].indices[i]], input.worldPos, n, v,
+                           albedo, metallic, roughness);
         }
     }
     else
     {
         for (uint i = 0; i < globals.counts.x; i = i + 1)
         {
-            lit += punctual(lights[i], input.worldPos, n);
+            lo += punctual(lights[i], input.worldPos, n, v, albedo, metallic, roughness);
         }
     }
 
-    float3 color = tex.rgb * input.baseColor.rgb * lit;
+    // Flat scalar ambient is a placeholder for indirect light — phase 2 (IBL) replaces it.
+    float3 ambient = albedo * (1.0 - metallic) * globals.directionAmbient.w;
+    float3 color = lo + ambient + input.emissive;
     return float4(color, tex.a * input.baseColor.a);
 }

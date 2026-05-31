@@ -28,9 +28,10 @@ export namespace se
     // Format of the offscreen depth buffer. D32_SFLOAT is universally supported.
     inline constexpr vk::Format DepthFormat = vk::Format::eD32Sfloat;
 
-    // Format of the offscreen color target. RGBA8_UNORM (not the swapchain's BGRA8) so
-    // it is a spec-guaranteed storage image — the post-process compute pass writes it.
-    inline constexpr vk::Format OffscreenColorFormat = vk::Format::eR8G8B8A8Unorm;
+    // Format of the offscreen color target. RGBA16_SFLOAT so the scene pass can write
+    // linear HDR radiance that survives to the mandatory tonemap pass; it is also a
+    // storage image (the tonemap/FXAA compute passes write it) and sampled by ImGui.
+    inline constexpr vk::Format OffscreenColorFormat = vk::Format::eR16G16B16A16Sfloat;
 
     // A unit of GPU work recorded into the active command buffer — the deferred
     // submission seam. The backend supplies the command buffer.
@@ -418,6 +419,10 @@ export namespace se
         glm::mat4 model{ 1.0f };
         glm::mat4 normalMatrix{ 1.0f };
         glm::vec4 baseColor{ 1.0f };
+        f32 metallic = 0.0f;
+        f32 roughness = 1.0f;
+        glm::vec3 emissive{ 0.0f };
+        f32 emissiveStrength = 1.0f;
         Material material;
     };
 
@@ -597,8 +602,8 @@ export namespace se
         Targets targets;
         FrameGraphState graph;
 
-        bool usePostProcess = false;
         bool useDepthPrepass = false;
+        f32 exposureEv = 0.0f;  // tonemap exposure in stops; the tonemap pass applies exp2(this)
         Ref<GpuTexture> defaultWhiteTexture;  // 1x1 white; bound when a material has no albedo
         RenderStats stats;                    // populated each frame by submitDrawList
         // Pending window screenshot, consumed in endFrame: the swapchain image is
@@ -618,10 +623,10 @@ export namespace se
     void beginFrameGraph(Renderer& renderer);
     auto frameGraph(Renderer& renderer) -> RenderGraph&;
     // The offscreen color resource in the current frame graph — an app-authored pass
-    // (e.g. post-process) declares its reads/writes against this handle.
+    // declares its reads/writes against this handle.
     auto viewportColorResource(const Renderer& renderer) -> RgResource;
-    // Add an in-place post-process tonemap pass on the offscreen color (app-authored;
-    // called from a layer's onRenderGraph when post-process is enabled).
+    // The mandatory HDR->display tonemap pass on the offscreen color (exposure +
+    // Reinhard + gamma). beginFrameGraph adds it after the scene + AA passes.
     void addTonemapPass(Renderer& renderer, RenderGraph& graph);
     void endFrame(Renderer& renderer);
 
@@ -643,6 +648,8 @@ export namespace se
         glm::mat4 normalMatrix;  // transpose(inverse(mat3(model))), correct under non-uniform scale
         glm::vec4 baseColor;
         glm::uvec4 texture{ 0 };  // .x = bindless albedo index; rest pads to std430 16 bytes
+        glm::vec4 pbr{ 0.0f, 1.0f, 0.0f, 0.0f };  // x = metallic, y = roughness
+        glm::vec4 emissive{ 0.0f };               // rgb = emissive radiance (strength baked in)
     };
 
     // Mesh rendering: a depth-tested instanced pipeline (set 0 = material albedo,
@@ -690,10 +697,11 @@ export namespace se
     // the way the light travels. Sets the punctual light count to zero.
     void setDirectionalLight(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity, f32 ambient);
 
-    // Writes the whole per-frame lighting state: the directional light + ambient into
-    // the UBO and the punctual lights into the storage buffer (grown on demand).
+    // Writes the whole per-frame lighting state: the directional light + ambient + the
+    // camera eye position into the UBO and the punctual lights into the storage buffer
+    // (grown on demand). The eye position feeds the BRDF view vector.
     void setSceneLighting(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity,
-                          f32 ambient, const std::vector<GpuLight>& lights);
+                          f32 ambient, glm::vec3 eyePosition, const std::vector<GpuLight>& lights);
 
     // Uploads the camera into the cluster-params UBO and arms the per-frame light-cull
     // compute dispatch (clustered forward). `proj` is the Y-flipped projection used for
@@ -705,8 +713,9 @@ export namespace se
     // (the reference path) — useful for A/B verification.
     void setClustered(Renderer& renderer, bool enabled);
     auto clusteredEnabled(const Renderer& renderer) -> bool;
-    void setPostProcess(Renderer& renderer, bool enabled);
-    auto postProcessEnabled(const Renderer& renderer) -> bool;
+    // Tonemap exposure in stops (EV). exp2(ev) scales radiance before the tonemap.
+    void setExposure(Renderer& renderer, f32 ev);
+    auto exposureEv(const Renderer& renderer) -> f32;
     void setDepthPrepass(Renderer& renderer, bool enabled);
     auto depthPrepassEnabled(const Renderer& renderer) -> bool;
     // Anti-aliasing: msaaSamples is 1 (off) / 2 / 4 / 8 (clamped to the device cap); fxaa

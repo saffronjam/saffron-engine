@@ -233,8 +233,14 @@ namespace se
                 buckets.push_back(Bucket{ pipeline, item.mesh, {} });
                 bucket = &buckets.back();
             }
-            bucket->instances.push_back(InstanceData{ item.model, item.normalMatrix, item.baseColor,
-                                                      glm::uvec4{ textureIndex, 0, 0, 0 } });
+            InstanceData instance;
+            instance.model = item.model;
+            instance.normalMatrix = item.normalMatrix;
+            instance.baseColor = item.baseColor;
+            instance.texture = glm::uvec4{ textureIndex, 0, 0, 0 };
+            instance.pbr = glm::vec4{ item.metallic, item.roughness, 0.0f, 0.0f };
+            instance.emissive = glm::vec4{ item.emissive * item.emissiveStrength, 0.0f };
+            bucket->instances.push_back(instance);
         }
 
         // Flatten buckets into one contiguous instance array + per-batch ranges.

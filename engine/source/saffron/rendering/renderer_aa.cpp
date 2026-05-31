@@ -37,16 +37,6 @@ import :Detail;
 
 namespace se
 {
-    void setPostProcess(Renderer& renderer, bool enabled)
-    {
-        renderer.usePostProcess = enabled;
-    }
-
-    auto postProcessEnabled(const Renderer& renderer) -> bool
-    {
-        return renderer.usePostProcess;
-    }
-
     void setDepthPrepass(Renderer& renderer, bool enabled)
     {
         renderer.useDepthPrepass = enabled;

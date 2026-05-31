@@ -40,7 +40,8 @@ namespace se
         Image& img = renderer.targets.offscreen;
         const u32 width = img.extent.width;
         const u32 height = img.extent.height;
-        const vk::DeviceSize byteSize = static_cast<vk::DeviceSize>(width) * height * 4;
+        const vk::DeviceSize byteSize =
+            static_cast<vk::DeviceSize>(width) * height * formatPixelBytes(img.format);
 
         // The offscreen image may still be sampled by an in-flight frame; idle so
         // the capture's layout transition cannot race that read.

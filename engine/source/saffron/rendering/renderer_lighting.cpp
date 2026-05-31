@@ -80,11 +80,11 @@ namespace se
     }
     void setDirectionalLight(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity, f32 ambient)
     {
-        setSceneLighting(renderer, direction, color, intensity, ambient, {});
+        setSceneLighting(renderer, direction, color, intensity, ambient, glm::vec3(0.0f), {});
     }
 
     void setSceneLighting(Renderer& renderer, glm::vec3 direction, glm::vec3 color, f32 intensity,
-                          f32 ambient, const std::vector<GpuLight>& lights)
+                          f32 ambient, glm::vec3 eyePosition, const std::vector<GpuLight>& lights)
     {
         // Write the current frame's copies; beginFrame already waited on its fence, so
         // no in-flight frame is reading them.
@@ -110,6 +110,7 @@ namespace se
         ubo.directionAmbient = glm::vec4(glm::normalize(direction), ambient);
         ubo.colorIntensity = glm::vec4(color, intensity);
         ubo.counts = glm::uvec4(count, 0, 0, 0);
+        ubo.eyePosition = glm::vec4(eyePosition, 0.0f);
         std::memcpy(renderer.lighting.lightMapped[frame], &ubo, sizeof(ubo));
         vmaFlushAllocation(renderer.context.allocator, renderer.lighting.lightAllocs[frame], 0, sizeof(ubo));
         renderer.lighting.frameLightCount = count;

@@ -170,18 +170,30 @@ namespace se
                 MaterialComponent& material = getComponent<MaterialComponent>(s, e);
                 ImGui::ColorEdit4("Base Color", &material.baseColor.x);
                 drawAssetPicker(s, AssetType::Texture, "Albedo", material.albedoTexture, thumbnailFor);
+                ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
+                ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
+                ImGui::ColorEdit3("Emissive", &material.emissive.x);
+                ImGui::DragFloat("Emissive Strength", &material.emissiveStrength, 0.05f, 0.0f, 100.0f);
                 ImGui::Checkbox("Unlit", &material.unlit);
             },
             [](const MaterialComponent& c)
             -> nlohmann::json {
                 return nlohmann::json{ { "baseColor", vec4ToJson(c.baseColor) },
                                        { "albedoTexture", c.albedoTexture.value },
+                                       { "metallic", c.metallic },
+                                       { "roughness", c.roughness },
+                                       { "emissive", vec3ToJson(c.emissive) },
+                                       { "emissiveStrength", c.emissiveStrength },
                                        { "unlit", c.unlit } };
             },
             [](MaterialComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.baseColor = vec4FromJson(j.value("baseColor", nlohmann::json::object()));
                 c.albedoTexture = Uuid{ jsonU64Or(j, "albedoTexture", 0) };
+                c.metallic = jsonF32Or(j, "metallic", 0.0f);
+                c.roughness = jsonF32Or(j, "roughness", 1.0f);
+                c.emissive = vec3FromJson(j.value("emissive", nlohmann::json::object()));
+                c.emissiveStrength = jsonF32Or(j, "emissiveStrength", 1.0f);
                 c.unlit = jsonBoolOr(j, "unlit", false);
                 return {};
             },

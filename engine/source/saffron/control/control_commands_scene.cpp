@@ -172,7 +172,9 @@ namespace se
 
         // Adds/updates the entity's Material, merging the provided fields over its
         // current value (baseColor as {x,y,z,w}).
-        registerCommand(reg, "set-material", "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid, unlit?:0|1}",
+        registerCommand(reg, "set-material",
+            "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid, metallic?, roughness?, "
+            "emissive?:{x,y,z}, emissiveStrength?, unlit?:0|1}",
             [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 auto entity = resolveEntity(ctx, params);
@@ -208,6 +210,10 @@ namespace se
                         body["albedoTexture"] = a;
                     }
                 }
+                if (params.contains("metallic")) { body["metallic"] = params["metallic"]; }
+                if (params.contains("roughness")) { body["roughness"] = params["roughness"]; }
+                if (params.contains("emissive")) { body["emissive"] = params["emissive"]; }
+                if (params.contains("emissiveStrength")) { body["emissiveStrength"] = params["emissiveStrength"]; }
                 if (params.contains("unlit"))
                 {
                     const json& u = params["unlit"];

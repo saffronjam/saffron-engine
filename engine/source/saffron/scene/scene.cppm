@@ -50,10 +50,15 @@ export namespace se
 
     // Per-entity material applied to the whole mesh. albedoTexture == 0 means "none"
     // (the renderer binds its default white texture, so baseColor shows directly).
+    // metallic/roughness drive the Cook-Torrance BRDF; emissive adds unlit radiance.
     struct MaterialComponent
     {
         glm::vec4 baseColor{ 1.0f };
         Uuid albedoTexture;
+        f32 metallic = 0.0f;
+        f32 roughness = 1.0f;
+        glm::vec3 emissive{ 0.0f };
+        f32 emissiveStrength = 1.0f;
         bool unlit = false;  // skip lighting (albedo * base color only) — a distinct PSO
     };
 

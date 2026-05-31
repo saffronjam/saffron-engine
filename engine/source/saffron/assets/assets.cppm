@@ -457,7 +457,10 @@ export namespace se
                                         glm::cos(glm::radians(light.outerAngle)), 0.0f, 0.0f);
                 lights.push_back(gpu);
             });
-        setSceneLighting(renderer, lightDir, lightColor, lightIntensity, lightAmbient, lights);
+        // The camera world position is the inverse-view translation; the BRDF needs it
+        // as the view-vector origin for specular.
+        const glm::vec3 eyePosition = glm::vec3(glm::inverse(view)[3]);
+        setSceneLighting(renderer, lightDir, lightColor, lightIntensity, lightAmbient, eyePosition, lights);
         setClusterCamera(renderer, view, proj, camera.nearPlane, camera.farPlane);  // arms the cull dispatch
 
         // Gather the scene's renderables as a flat draw list; the renderer batches them
@@ -474,11 +477,19 @@ export namespace se
                 glm::vec4 baseColor{ 1.0f };
                 Ref<GpuTexture> textureRef;
                 bool unlit = false;
+                f32 metallic = 0.0f;
+                f32 roughness = 1.0f;
+                glm::vec3 emissive{ 0.0f };
+                f32 emissiveStrength = 1.0f;
                 if (hasComponent<MaterialComponent>(scene, entity))
                 {
                     const MaterialComponent& material = getComponent<MaterialComponent>(scene, entity);
                     baseColor = material.baseColor;
                     unlit = material.unlit;
+                    metallic = material.metallic;
+                    roughness = material.roughness;
+                    emissive = material.emissive;
+                    emissiveStrength = material.emissiveStrength;
                     if (material.albedoTexture.value != 0)
                     {
                         textureRef = loadTextureAsset(assets, renderer, material.albedoTexture);
@@ -491,6 +502,10 @@ export namespace se
                 item.model = model;
                 item.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(model))));
                 item.baseColor = baseColor;
+                item.metallic = metallic;
+                item.roughness = roughness;
+                item.emissive = emissive;
+                item.emissiveStrength = emissiveStrength;
                 item.material.unlit = unlit;
                 items.push_back(std::move(item));
             });
