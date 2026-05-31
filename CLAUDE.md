@@ -129,7 +129,7 @@ SaffronEngine/
 Modules form a DAG (real imports, not a single chain): `Signal→Core`, `Json→Core`,
 `Window→{Core,Signal}`, `Geometry→{Core}`, `Scene→{Core,Json}`, `Rendering→{Core,Window,Geometry}`
 (with a `:RenderGraph` partition), `Ui→{Core,Window,Rendering}`, `Assets→{Core,Json,Geometry,Rendering,Scene}`,
-`Editor→{Core,Signal,Scene,Json}`, `Control→{Core,Json,Window,Rendering,Scene,Editor,Assets}`, `App→{Core,Window,Rendering,Ui}`.
+`Editor→{Core,Signal,Scene,Json,Ui}`, `Control→{Core,Json,Window,Rendering,Scene,Editor,Assets}`, `App→{Core,Window,Rendering,Ui}`.
 The editor exe links `Saffron::Engine` and imports the modules it needs (Core/App/Window/Rendering/Ui/Editor/Control/Scene/Assets).
 
 ### Module conventions
