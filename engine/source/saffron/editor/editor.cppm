@@ -4,6 +4,7 @@ module;
 // classic includes (no `import std`), like the rendering/ui/scene modules.
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -13,6 +14,7 @@ module;
 #include <imgui_stdlib.h>
 #include <ImGuizmo.h>
 
+#include <cmath>
 #include <expected>
 #include <format>
 #include <functional>
@@ -26,6 +28,22 @@ import Saffron.Scene;
 
 export namespace se
 {
+    // The viewport's own fly-camera (the scene-view eye, distinct from any ECS
+    // CameraComponent / game camera). Hold RMB over the viewport to look + WASD/QE to
+    // move. yaw/pitch in degrees; at yaw 0 the camera looks down -Z.
+    struct EditorCamera
+    {
+        glm::vec3 position{ 3.0f, 2.5f, 4.0f };
+        f32 yaw = -37.0f;
+        f32 pitch = -29.0f;
+        f32 fov = 45.0f;
+        f32 nearPlane = 0.1f;
+        f32 farPlane = 100.0f;
+        f32 moveSpeed = 6.0f;   // units/second
+        f32 lookSpeed = 0.12f;  // degrees/pixel
+        bool controlling = false;  // latched while RMB is held (so a drag can leave the rect)
+    };
+
     // The editor's mutable state: the scene being edited, the component registry
     // that drives every panel, and the current selection (broadcast as a signal).
     struct EditorContext
@@ -35,6 +53,7 @@ export namespace se
         Entity selected{ entt::null };
         SubscriberList<Entity> onSelectionChanged;
         std::string scenePath;
+        EditorCamera camera;
 
         // Set by the client to import a model path (File > Import / drag-and-drop).
         // The editor has no renderer/assets, so importing is delegated to this hook.
@@ -61,7 +80,7 @@ export namespace se
         registerComponent<NameComponent>(reg, "Name",
             [](Scene& s, Entity e)
             {
-                ImGui::InputText("Name", &getComponent<NameComponent>(s, e).name);
+                ImGui::InputText("##name", &getComponent<NameComponent>(s, e).name);
             },
             [](const NameComponent& c) { return nlohmann::json{ { "name", c.name } }; },
             [](NameComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
@@ -476,14 +495,72 @@ export namespace se
         }
     }
 
+    // The editor camera's forward (world space) from its yaw/pitch.
+    glm::vec3 editorCameraForward(const EditorCamera& camera)
+    {
+        const f32 yaw = glm::radians(camera.yaw);
+        const f32 pitch = glm::radians(camera.pitch);
+        return glm::normalize(glm::vec3(std::cos(pitch) * std::sin(yaw),
+                                        std::sin(pitch),
+                                        -std::cos(pitch) * std::cos(yaw)));
+    }
+
+    // The editor camera as a Scene CameraView (view + projection params), so renderScene
+    // and the gizmo draw from the same eye.
+    CameraView editorCameraView(const EditorCamera& camera)
+    {
+        CameraView result;
+        const glm::vec3 forward = editorCameraForward(camera);
+        result.view = glm::lookAt(camera.position, camera.position + forward, glm::vec3(0.0f, 1.0f, 0.0f));
+        result.fov = camera.fov;
+        result.nearPlane = camera.nearPlane;
+        result.farPlane = camera.farPlane;
+        result.valid = true;
+        return result;
+    }
+
+    // Fly the editor camera while RMB is held over the viewport: mouse look + WASD move
+    // (Q/E down/up, Shift to sprint). Reads ImGui input, so call from onUi each frame.
+    void updateEditorCamera(EditorCamera& camera, bool viewportHovered, f32 dt)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        const bool rmb = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        if (!rmb || !(viewportHovered || camera.controlling))
+        {
+            camera.controlling = false;
+            return;
+        }
+        camera.controlling = true;  // latch so the drag keeps control if it leaves the rect
+
+        camera.yaw += io.MouseDelta.x * camera.lookSpeed;
+        camera.pitch -= io.MouseDelta.y * camera.lookSpeed;
+        camera.pitch = glm::clamp(camera.pitch, -89.0f, 89.0f);
+
+        const glm::vec3 forward = editorCameraForward(camera);
+        const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+        f32 speed = camera.moveSpeed * dt;
+        if (io.KeyShift)
+        {
+            speed *= 3.0f;
+        }
+        if (ImGui::IsKeyDown(ImGuiKey_W)) { camera.position += forward * speed; }
+        if (ImGui::IsKeyDown(ImGuiKey_S)) { camera.position -= forward * speed; }
+        if (ImGui::IsKeyDown(ImGuiKey_D)) { camera.position += right * speed; }
+        if (ImGui::IsKeyDown(ImGuiKey_A)) { camera.position -= right * speed; }
+        if (ImGui::IsKeyDown(ImGuiKey_E)) { camera.position += glm::vec3(0.0f, 1.0f, 0.0f) * speed; }
+        if (ImGui::IsKeyDown(ImGuiKey_Q)) { camera.position -= glm::vec3(0.0f, 1.0f, 0.0f) * speed; }
+    }
+
     // In-viewport translate/rotate/scale gizmo for the selected entity. `proj` MUST be
     // the un-flipped projection (the Vulkan Y-flip stays local to the renderer) or the
-    // gizmo mirrors vertically. Call from onUi after viewportPanel, passing the viewport
-    // image's screen rect. W/E/R cycle the operation while hovering the viewport.
+    // gizmo mirrors vertically. Drawn into the "Viewport" window's draw list so it clips
+    // to the panel and takes mouse input there. W/E/R cycle the op (not while flying the
+    // camera with RMB). `imagePos`/`imageSize` are the viewport image's screen rect.
     void drawGizmo(EditorContext& ctx, const glm::mat4& view, const glm::mat4& proj,
-                   ImVec2 panelPos, ImVec2 panelSize, bool hovered)
+                   ImVec2 imagePos, ImVec2 imageSize, bool hovered)
     {
-        if (hovered && !ImGuizmo::IsUsing() && !ImGui::IsAnyItemActive())
+        if (hovered && !ImGuizmo::IsUsing() && !ImGui::IsAnyItemActive() &&
+            !ImGui::IsMouseDown(ImGuiMouseButton_Right))
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W)) { ctx.gizmoOp = ImGuizmo::TRANSLATE; }
             if (ImGui::IsKeyPressed(ImGuiKey_E)) { ctx.gizmoOp = ImGuizmo::ROTATE; }
@@ -493,14 +570,17 @@ export namespace se
         Entity selected = ctx.selected;
         if (selected.handle == entt::null || !valid(ctx.scene, selected) ||
             !hasComponent<TransformComponent>(ctx.scene, selected) ||
-            panelSize.x <= 0.0f || panelSize.y <= 0.0f)
+            imageSize.x <= 0.0f || imageSize.y <= 0.0f)
         {
             return;
         }
 
+        // Draw into the viewport window so the gizmo clips to the panel and takes its
+        // mouse input.
+        ImGui::Begin("Viewport");
         ImGuizmo::SetOrthographic(false);
-        ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
-        ImGuizmo::SetRect(panelPos.x, panelPos.y, panelSize.x, panelSize.y);
+        ImGuizmo::SetDrawlist();
+        ImGuizmo::SetRect(imagePos.x, imagePos.y, imageSize.x, imageSize.y);
 
         TransformComponent& transform = getComponent<TransformComponent>(ctx.scene, selected);
         glm::mat4 model = transformMatrix(transform);
@@ -521,5 +601,6 @@ export namespace se
                 transform.scale = scale;
             }
         }
+        ImGui::End();
     }
 }

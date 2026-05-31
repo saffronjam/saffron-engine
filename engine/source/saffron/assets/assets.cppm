@@ -316,11 +316,11 @@ export namespace se
         return entity;
     }
 
-    // Draws every entity with a Transform + Mesh, viewed through the first primary
-    // camera, resolving each mesh on demand. A no-op without a camera or viewport.
-    void renderScene(Renderer& renderer, Scene& scene, AssetServer& assets, const Ref<Pipeline>& meshPipeline)
+    // Draws every entity with a Transform + Mesh through the given camera (the editor
+    // viewport camera), resolving each mesh on demand. A no-op without a viewport.
+    void renderScene(Renderer& renderer, Scene& scene, AssetServer& assets,
+                     const Ref<Pipeline>& meshPipeline, const CameraView& camera)
     {
-        const CameraView camera = primaryCamera(scene);
         if (!camera.valid)
         {
             return;

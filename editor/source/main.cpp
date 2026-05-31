@@ -97,26 +97,25 @@ int main()
                 se::pollControl(*state->control, app.window, app.renderer, *state->editor, state->assets);
             }
         };
-        layer.onRender = [state, &app]()
-        {
-            if (state->meshPipeline)
-            {
-                se::renderScene(app.renderer, state->editor->scene, state->assets, state->meshPipeline);
-            }
-        };
+        // The scene renders through the editor (viewport) camera, which is driven by
+        // ImGui input — valid only during onUi — so the scene draw + gizmo live here.
+        // renderScene records closures the renderer replays in endFrame.
         layer.onUi = [state, &app]()
         {
             se::drawEditorMenuBar(*state->editor);
             se::viewportPanel(app.ui, app.renderer);
 
-            // Gizmo overlay: drive it from the same camera the scene renders through,
-            // but with the UN-flipped projection (the renderer keeps the Vulkan Y-flip
-            // local). Aspect matches renderScene's (the offscreen viewport dimensions).
+            se::updateEditorCamera(state->editor->camera, se::viewportHovered(app.ui),
+                                   ImGui::GetIO().DeltaTime);
+            se::CameraView cam = se::editorCameraView(state->editor->camera);
             const se::u32 vw = se::viewportWidth(app.renderer);
             const se::u32 vh = se::viewportHeight(app.renderer);
-            se::CameraView cam = se::primaryCamera(state->editor->scene);
-            if (cam.valid && vw > 0 && vh > 0)
+            if (state->meshPipeline && vw > 0 && vh > 0)
             {
+                se::renderScene(app.renderer, state->editor->scene, state->assets, state->meshPipeline, cam);
+
+                // Gizmo: same camera, but the UN-flipped projection (the renderer keeps
+                // the Vulkan Y-flip local) so it is not mirrored.
                 glm::mat4 proj = se::cameraProjection(cam, static_cast<float>(vw) / static_cast<float>(vh));
                 se::drawGizmo(*state->editor, cam.view, proj,
                               se::viewportContentPos(app.ui), se::viewportContentSize(app.ui),

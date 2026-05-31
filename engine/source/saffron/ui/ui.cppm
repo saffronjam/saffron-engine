@@ -157,7 +157,9 @@ namespace se
     void viewportPanel(Ui& ui, Renderer& renderer)
     {
         ImGui::SetNextWindowSize(ImVec2{ 1280.0f, 720.0f }, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Viewport");
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0.0f, 0.0f });
+        ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoTitleBar);
+        ImGui::PopStyleVar();
 
         // Request the offscreen image be sized to the panel (in pixels). The
         // renderer applies the resize at the start of the next frame.
