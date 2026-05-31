@@ -14,15 +14,11 @@ module;
 #include <imgui_stdlib.h>
 #include <ImGuizmo.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <expected>
-#include <filesystem>
 #include <format>
 #include <functional>
 #include <string>
-#include <vector>
 
 export module Saffron.Editor;
 
@@ -59,17 +55,22 @@ export namespace se
         std::string scenePath;
         EditorCamera camera;
 
-        // Set by the client to import a model/texture path (File > Import, drag-and-drop,
-        // asset browser). The editor has no renderer/assets, so importing is delegated.
-        std::function<void(const std::string&)> onImportModel;
-        std::function<void(const std::string&)> onImportTexture;
+        // Imports a file into the asset catalog (File > Import, drag-and-drop, the asset
+        // panel). The editor has no renderer/assets, so the client routes by extension.
+        std::function<void(const std::string&)> onImport;
         std::string importPath;  // the Import dialog's text buffer
 
-        // Spawns the bundled cube mesh (Create > Cube); delegated like onImportModel
-        // because the editor has no AssetServer to resolve/upload the mesh itself.
+        // Spawns the bundled cube mesh (Create > Cube); delegated because the editor has
+        // no AssetServer to resolve/upload the mesh itself.
         std::function<void()> onCreateCube;
         ImGuizmo::OPERATION gizmoOp = ImGuizmo::TRANSLATE;  // W/E/R cycle translate/rotate/scale
-        std::string assetBrowserDir;  // current folder shown in the asset browser
+    };
+
+    // The payload dragged from an asset tile onto a component picker field.
+    struct AssetDragPayload
+    {
+        u64 id = 0;
+        AssetType type = AssetType::Mesh;
     };
 
     void setSelection(EditorContext& ctx, Entity entity)
@@ -127,6 +128,19 @@ export namespace se
                 }
             }
             ImGui::EndCombo();
+        }
+        // Accept an asset tile dragged from the catalog panel (matching type only).
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SE_ASSET"))
+            {
+                const AssetDragPayload* drag = static_cast<const AssetDragPayload*>(payload->Data);
+                if (drag != nullptr && drag->type == type)
+                {
+                    target = Uuid{ drag->id };
+                }
+            }
+            ImGui::EndDragDropTarget();
         }
     }
 
@@ -445,98 +459,112 @@ export namespace se
         ImGui::End();
     }
 
-    // A filesystem content browser: navigate folders under ctx.assetBrowserDir and
-    // import model (.gltf/.glb/.obj) or image (.png/.jpg) files through the editor's
-    // delegated hooks. The renderer/AssetServer work happens in those hooks.
-    void assetBrowserPanel(EditorContext& ctx)
+    // The shared "Import Asset" modal body (a path field → ctx.onImport). Drawn by the
+    // asset panel; opened from there or from File ▸ Import via OpenPopup("Import Asset").
+    void drawImportModal(EditorContext& ctx)
+    {
+        if (ImGui::BeginPopupModal("Import Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Path", &ctx.importPath);
+            if (ImGui::Button("Import") && ctx.onImport)
+            {
+                ctx.onImport(ctx.importPath);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    // The project asset catalog: a tile grid of imported assets (thumbnail + editable
+    // name). Import via the button/modal or drag-and-drop; drag a tile onto a component
+    // picker to assign it. `catalog` is mutable so names can be edited in place.
+    void assetCatalogPanel(EditorContext& ctx, AssetCatalog* catalog,
+                           const std::function<ImTextureID(const AssetEntry&)>& thumbnailFor)
     {
         ImGui::Begin("Assets");
-
-        namespace fs = std::filesystem;
-        if (ctx.assetBrowserDir.empty())
+        if (ImGui::Button("Import..."))
         {
-            ImGui::TextUnformatted("No asset directory set.");
+            ImGui::OpenPopup("Import Asset");
+        }
+        drawImportModal(ctx);
+        ImGui::Separator();
+
+        if (catalog == nullptr || catalog->entries.empty())
+        {
+            ImGui::TextUnformatted("No assets yet — import or drag-and-drop a model or texture.");
             ImGui::End();
             return;
         }
-        const fs::path dir = ctx.assetBrowserDir;
 
-        if (ImGui::Button("Up") && dir.has_parent_path())
+        const float tileSize = 72.0f;
+        const float cellWidth = tileSize + ImGui::GetStyle().ItemSpacing.x;
+        int columns = static_cast<int>(ImGui::GetContentRegionAvail().x / cellWidth);
+        if (columns < 1)
         {
-            ctx.assetBrowserDir = dir.parent_path().string();
+            columns = 1;
         }
-        ImGui::SameLine();
-        ImGui::TextUnformatted(dir.string().c_str());
-        ImGui::Separator();
 
-        std::error_code ec;
-        std::vector<fs::directory_entry> folders;
-        std::vector<fs::directory_entry> files;
-        for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec))
+        int column = 0;
+        for (AssetEntry& entry : catalog->entries)
         {
-            if (entry.is_directory(ec))
+            ImGui::PushID(static_cast<int>(entry.id.value));
+            ImGui::BeginGroup();
+
+            ImTextureID thumb = 0;
+            if (thumbnailFor)
             {
-                folders.push_back(entry);
+                thumb = thumbnailFor(entry);
+            }
+            if (thumb != 0)
+            {
+                ImGui::Image(thumb, ImVec2{ tileSize, tileSize });
             }
             else
             {
-                files.push_back(entry);
+                const char* glyph = "?";
+                if (entry.type == AssetType::Mesh)
+                {
+                    glyph = "MESH";
+                }
+                else if (entry.type == AssetType::Texture)
+                {
+                    glyph = "TEX";
+                }
+                ImGui::Button(glyph, ImVec2{ tileSize, tileSize });  // placeholder until thumbnails land
             }
-        }
-        auto byName = [](const fs::directory_entry& a, const fs::directory_entry& b)
-        {
-            return a.path().filename().string() < b.path().filename().string();
-        };
-        std::sort(folders.begin(), folders.end(), byName);
-        std::sort(files.begin(), files.end(), byName);
-
-        std::string nextDir;
-        for (const fs::directory_entry& folder : folders)
-        {
-            const std::string label = "[ ] " + folder.path().filename().string();
-            if (ImGui::Selectable(label.c_str()))
+            if (ImGui::BeginDragDropSource())
             {
-                nextDir = folder.path().string();
+                AssetDragPayload payload{ entry.id.value, entry.type };
+                ImGui::SetDragDropPayload("SE_ASSET", &payload, sizeof(payload));
+                ImGui::TextUnformatted(entry.name.c_str());
+                ImGui::EndDragDropSource();
             }
-        }
-        for (const fs::directory_entry& file : files)
-        {
-            std::string ext = file.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            const bool isModel = ext == ".gltf" || ext == ".glb" || ext == ".obj";
-            const bool isTexture = ext == ".png" || ext == ".jpg" || ext == ".jpeg";
 
-            ImGui::TextUnformatted(file.path().filename().string().c_str());
-            if (isModel || isTexture)
+            ImGui::SetNextItemWidth(tileSize);
+            ImGui::InputText("##name", &entry.name);  // rename in place (UTF-8)
+            ImGui::EndGroup();
+            ImGui::PopID();
+
+            column = column + 1;
+            if (column < columns)
             {
                 ImGui::SameLine();
-                ImGui::PushID(file.path().string().c_str());
-                if (ImGui::SmallButton("Import"))
-                {
-                    if (isModel && ctx.onImportModel)
-                    {
-                        ctx.onImportModel(file.path().string());
-                    }
-                    if (isTexture && ctx.onImportTexture)
-                    {
-                        ctx.onImportTexture(file.path().string());
-                    }
-                }
-                ImGui::PopID();
+            }
+            else
+            {
+                column = 0;
             }
         }
-        if (!nextDir.empty())
-        {
-            ctx.assetBrowserDir = nextDir;  // deferred so we don't mutate mid-iteration
-        }
-
         ImGui::End();
     }
 
     void drawEditorMenuBar(EditorContext& ctx)
     {
-        bool openImport = false;
         if (ImGui::BeginMainMenuBar())
         {
             if (ImGui::BeginMenu("File"))
@@ -575,9 +603,9 @@ export namespace se
                     }
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Import Model..."))
+                if (ImGui::MenuItem("Import..."))
                 {
-                    openImport = true;
+                    ImGui::OpenPopup("Import Asset");  // body drawn by the asset panel
                 }
                 ImGui::EndMenu();
             }
@@ -622,26 +650,6 @@ export namespace se
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
-        }
-
-        if (openImport)
-        {
-            ImGui::OpenPopup("Import Model");
-        }
-        if (ImGui::BeginPopupModal("Import Model", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            ImGui::InputText("Path", &ctx.importPath);
-            if (ImGui::Button("Import") && ctx.onImportModel)
-            {
-                ctx.onImportModel(ctx.importPath);
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel"))
-            {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
         }
     }
 

@@ -4,7 +4,11 @@
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <expected>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -48,7 +52,8 @@ int main()
         state->assets = se::newAssetServer(se::assetPath("assets"));
 
         // Asset thumbnails are added in a later phase; for now the pickers show names only.
-        auto thumbnailFor = [](const se::AssetEntry&) -> ImTextureID { return 0; };
+        std::function<ImTextureID(const se::AssetEntry&)> thumbnailFor =
+            [](const se::AssetEntry&) -> ImTextureID { return 0; };
         se::registerBuiltinComponents(state->editor->registry, thumbnailFor);
 
         std::expected<se::Ref<se::Pipeline>, std::string> pipeline = se::newMeshPipeline(app.renderer, "shaders/mesh.spv");
@@ -71,26 +76,28 @@ int main()
             }
         }
 
-        // Import a model into the asset catalog (no spawn). File > Import + drag-and-drop.
-        auto importModelToCatalog = [state, &app](const std::string& path)
+        // Import a file into the asset catalog (no spawn), routed by extension. Used by
+        // File > Import, the asset panel, and drag-and-drop.
+        auto importToCatalog = [state, &app](const std::string& path)
         {
-            std::expected<se::ImportResult, std::string> imported = se::importModel(state->assets, app.renderer, path);
-            if (!imported)
+            std::string ext = std::filesystem::path(path).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
             {
-                se::logError(imported.error());
+                if (std::expected<se::Uuid, std::string> id = se::importTexture(state->assets, app.renderer, path); !id)
+                {
+                    se::logError(id.error());
+                }
+                return;
+            }
+            if (std::expected<se::ImportResult, std::string> model = se::importModel(state->assets, app.renderer, path); !model)
+            {
+                se::logError(model.error());
             }
         };
-        state->editor->onImportModel = importModelToCatalog;
-        state->editor->onImportTexture = [state, &app](const std::string& path)
-        {
-            std::expected<se::Uuid, std::string> id = se::importTexture(state->assets, app.renderer, path);
-            if (!id)
-            {
-                se::logError(id.error());
-            }
-        };
-        // Create > Cube imports the bundled cube into the catalog (if needed) and spawns
-        // an entity referencing it.
+        state->editor->onImport = importToCatalog;
+        // Create > Cube imports the bundled cube into the catalog and spawns an entity.
         state->editor->onCreateCube = [state, &app]()
         {
             std::expected<se::ImportResult, std::string> cube =
@@ -102,9 +109,9 @@ int main()
             }
             se::setSelection(*state->editor, se::spawnModel(state->editor->scene, "Cube", *cube));
         };
-        app.window.onFileDropped.subscribe([importModelToCatalog](std::string path)
+        app.window.onFileDropped.subscribe([importToCatalog](std::string path)
         {
-            importModelToCatalog(path);
+            importToCatalog(path);
             return false;
         });
 
@@ -120,7 +127,7 @@ int main()
         // The scene renders through the editor (viewport) camera, which is driven by
         // ImGui input — valid only during onUi — so the scene draw + gizmo live here.
         // renderScene records closures the renderer replays in endFrame.
-        layer.onUi = [state, &app]()
+        layer.onUi = [state, &app, thumbnailFor]()
         {
             // The inspector pickers + asset panel read the catalog through the scene
             // (a borrowed pointer, valid only for this frame).
@@ -161,7 +168,7 @@ int main()
             }
 
             se::hierarchyPanel(*state->editor);
-            se::assetBrowserPanel(*state->editor);
+            se::assetCatalogPanel(*state->editor, &state->assets.catalog, thumbnailFor);
 
             // Numeric/data fields read better in a monospace font.
             ImGui::PushFont(se::uiMonoFont(app.ui));
