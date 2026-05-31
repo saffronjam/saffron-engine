@@ -258,6 +258,10 @@ Working and verified (validation-clean) in the toolbox:
   required at device select). `uploadTexture` returns a stable slot; the albedo index is per-instance, so items
   differing only by texture batch into **one** instanced draw (verified: 2 textures → 1 batch). `GpuTexture`
   carries a `bindlessIndex` (no per-texture descriptor set).
+- ✅ **Anti-aliasing** (`se set-aa off|fxaa|msaa2|msaa4|msaa8`): **MSAA** (multisampled scene color+depth, resolved
+  into the offscreen via a graph resolve attachment; PSOs bake the sample count) for clean geometry edges, and
+  **FXAA** (a compute post-process on a 1x scratch → offscreen) as the cheap alternative. Default off; `render-stats`
+  reports `aa`.
 
 Not done yet (planned):
 - **PBR** (metallic/roughness/normal maps — tangents + `materialSlot` per-submesh multi-material are reserved),
