@@ -105,7 +105,21 @@ int main()
             }
             if (entry.type == se::AssetType::Mesh)
             {
-                return state->meshIcon.id;
+                se::Ref<se::GpuMesh> mesh = se::loadMeshAsset(state->assets, app.renderer, entry.id);
+                if (!mesh)
+                {
+                    return state->meshIcon.id;
+                }
+                std::expected<se::Ref<se::GpuTexture>, std::string> rendered =
+                    se::renderMeshThumbnail(app.renderer, mesh, 128);
+                if (!rendered)
+                {
+                    se::logError(rendered.error());
+                    return state->meshIcon.id;
+                }
+                Thumbnail thumb{ *rendered, se::uiRegisterTexture(*rendered) };
+                state->thumbnails.emplace(entry.id.value, thumb);
+                return thumb.id;
             }
             return state->fileIcon.id;
         };

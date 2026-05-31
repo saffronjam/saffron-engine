@@ -13,6 +13,7 @@ module;
 #include <nanosvg.h>
 #include <nanosvgrast.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
 #include <cstddef>
@@ -467,6 +468,7 @@ export namespace se
         // Per-frame punctual-light storage buffer (set 1, binding 1), grown on demand.
         std::array<Ref<Buffer>, MaxFramesInFlight> lightListBuffers;
         std::array<u32, MaxFramesInFlight> lightListCapacity{};
+        Ref<Pipeline> thumbnailPipeline;              // lazy mesh-thumbnail graphics pipeline
         // Clustered forward (Forward+): a compute pass culls the punctual lights into a
         // froxel grid each frame; the fragment loops only its cluster's lights.
         Ref<Pipeline> cullPipeline;                   // compute light-cull pipeline
@@ -549,6 +551,10 @@ export namespace se
     // GPU texture — used for asset-browser type icons. "currentColor" maps to white.
     std::expected<Ref<GpuTexture>, std::string> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
                                                               u32 pixelSize, glm::vec4 tint);
+
+    // Renders a mesh to a square GPU texture (a 3/4 view framed by the mesh AABB, lit by
+    // a fixed light) for an asset thumbnail. Synchronous one-off render; safe between frames.
+    std::expected<Ref<GpuTexture>, std::string> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size);
 
     // Uploads the frame's instance data, then records ONE submit() closure that binds
     // the light + instance sets once and issues one instanced drawIndexed per batch.
@@ -1525,7 +1531,8 @@ namespace se
         renderer.sceneSubmissions.clear();
         renderer.uiSubmissions.clear();
         renderer.defaultWhiteTexture.reset();
-        renderer.cullPipeline.reset();  // RAII frees the compute pipeline + layout
+        renderer.cullPipeline.reset();        // RAII frees the compute pipeline + layout
+        renderer.thumbnailPipeline.reset();
 
         renderer.offscreenViewport.reset();  // free before the allocator/device
         renderer.offscreenDepth.reset();
@@ -2458,6 +2465,240 @@ namespace se
             rgba[i + 3] = static_cast<u8>(rgba[i + 3] * tint.a);
         }
         return uploadTexture(renderer, rgba.data(), pixelSize, pixelSize, false);
+    }
+
+    // The minimal mesh-thumbnail pipeline (vertex input + a 2x mat4 push constant, no
+    // descriptor sets). Color format matches the offscreen thumbnail image.
+    std::expected<Ref<Pipeline>, std::string> newThumbnailPipeline(Renderer& renderer)
+    {
+        auto moduleResult = loadShaderModule(renderer.device, assetPath("shaders/thumbnail.spv"));
+        if (!moduleResult)
+        {
+            return std::unexpected(moduleResult.error());
+        }
+        vk::ShaderModule shaderModule = *moduleResult;
+
+        std::array<vk::PipelineShaderStageCreateInfo, 2> stages{};
+        stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+        stages[0].module = shaderModule;
+        stages[0].pName = "vertexMain";
+        stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+        stages[1].module = shaderModule;
+        stages[1].pName = "fragmentMain";
+
+        vk::VertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(Vertex);
+        binding.inputRate = vk::VertexInputRate::eVertex;
+        std::array<vk::VertexInputAttributeDescription, 3> attributes{
+            vk::VertexInputAttributeDescription{ 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position) },
+            vk::VertexInputAttributeDescription{ 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal) },
+            vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uv0) } };
+        vk::PipelineVertexInputStateCreateInfo vertexInput{};
+        vertexInput.setVertexBindingDescriptions(binding);
+        vertexInput.setVertexAttributeDescriptions(attributes);
+
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+        vk::PipelineViewportStateCreateInfo viewportState{};
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+        vk::PipelineRasterizationStateCreateInfo raster{};
+        raster.polygonMode = vk::PolygonMode::eFill;
+        raster.cullMode = vk::CullModeFlagBits::eNone;
+        raster.frontFace = vk::FrontFace::eCounterClockwise;
+        raster.lineWidth = 1.0f;
+        vk::PipelineMultisampleStateCreateInfo multisample{};
+        multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = vk::CompareOp::eLess;
+        vk::PipelineColorBlendAttachmentState blendAttachment{};
+        blendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                         vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        vk::PipelineColorBlendStateCreateInfo colorBlend{};
+        colorBlend.setAttachments(blendAttachment);
+        std::array<vk::DynamicState, 2> dynamicStates{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamic{};
+        dynamic.setDynamicStates(dynamicStates);
+
+        vk::PipelineRenderingCreateInfo renderingInfo{};
+        renderingInfo.setColorAttachmentFormats(renderer.swapchainFormat);
+        renderingInfo.depthAttachmentFormat = DepthFormat;
+
+        vk::PushConstantRange pushConstant{};
+        pushConstant.stageFlags = vk::ShaderStageFlagBits::eVertex;
+        pushConstant.offset = 0;
+        pushConstant.size = 2 * sizeof(glm::mat4);  // mvp + normalMatrix
+
+        vk::PipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.setPushConstantRanges(pushConstant);
+        auto layoutResult = checked(renderer.device.createPipelineLayout(layoutInfo), "createPipelineLayout (thumbnail)");
+        if (!layoutResult)
+        {
+            renderer.device.destroyShaderModule(shaderModule);
+            return std::unexpected(layoutResult.error());
+        }
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.pNext = &renderingInfo;
+        pipelineInfo.setStages(stages);
+        pipelineInfo.pVertexInputState = &vertexInput;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &raster;
+        pipelineInfo.pMultisampleState = &multisample;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlend;
+        pipelineInfo.pDynamicState = &dynamic;
+        pipelineInfo.layout = *layoutResult;
+
+        vk::ResultValue<vk::Pipeline> created = renderer.device.createGraphicsPipeline(nullptr, pipelineInfo);
+        renderer.device.destroyShaderModule(shaderModule);
+        if (created.result != vk::Result::eSuccess)
+        {
+            renderer.device.destroyPipelineLayout(*layoutResult);
+            return std::unexpected(std::format("createGraphicsPipeline (thumbnail): {}", vk::to_string(created.result)));
+        }
+        Pipeline pipeline;
+        pipeline.device = renderer.device;
+        pipeline.pipeline = created.value;
+        pipeline.layout = *layoutResult;
+        return std::make_shared<Pipeline>(std::move(pipeline));
+    }
+
+    std::expected<Ref<GpuTexture>, std::string> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size)
+    {
+        if (!mesh)
+        {
+            return std::unexpected(std::string{ "renderMeshThumbnail: null mesh" });
+        }
+        if (!renderer.thumbnailPipeline)
+        {
+            std::expected<Ref<Pipeline>, std::string> pipeline = newThumbnailPipeline(renderer);
+            if (!pipeline)
+            {
+                return std::unexpected(pipeline.error());
+            }
+            renderer.thumbnailPipeline = *pipeline;
+        }
+
+        std::expected<Image, std::string> colorImage = newColorImage(renderer, size, size, renderer.swapchainFormat);
+        if (!colorImage)
+        {
+            return std::unexpected(colorImage.error());
+        }
+        Image color = std::move(*colorImage);
+        std::expected<Image, std::string> depthImage = newDepthImage(renderer, size, size);
+        if (!depthImage)
+        {
+            return std::unexpected(depthImage.error());
+        }
+        Image depth = std::move(*depthImage);
+
+        // Frame the mesh: a 3/4 view at a distance that fits its bounding sphere.
+        const glm::vec3 center = (mesh->boundsMin + mesh->boundsMax) * 0.5f;
+        f32 radius = glm::length(mesh->boundsMax - mesh->boundsMin) * 0.5f;
+        if (radius <= 0.0001f)
+        {
+            radius = 1.0f;
+        }
+        const f32 fovy = glm::radians(45.0f);
+        const f32 distance = radius / glm::tan(fovy * 0.5f) * 1.3f;
+        const glm::vec3 eye = center + glm::normalize(glm::vec3(1.0f, 0.7f, 1.0f)) * distance;
+        const glm::mat4 view = glm::lookAt(eye, center, glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 proj = glm::perspective(fovy, 1.0f, glm::max(0.01f, distance - radius * 2.0f), distance + radius * 2.0f);
+        proj[1][1] *= -1.0f;  // Vulkan clip; matches the viewport so the thumbnail is upright
+        struct ThumbnailPush
+        {
+            glm::mat4 mvp;
+            glm::mat4 normalMatrix;
+        } push{ proj * view, glm::mat4(1.0f) };
+
+        vk::CommandBufferAllocateInfo cmdAlloc{};
+        cmdAlloc.commandPool = renderer.frames[0].commandPool;
+        cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
+        cmdAlloc.commandBufferCount = 1;
+        auto cmds = checked(renderer.device.allocateCommandBuffers(cmdAlloc), "renderMeshThumbnail: allocateCommandBuffers");
+        if (!cmds)
+        {
+            return std::unexpected(cmds.error());
+        }
+        vk::CommandBuffer cmd = (*cmds)[0];
+        vk::CommandBufferBeginInfo begin{};
+        begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        static_cast<void>(cmd.begin(begin));
+
+        transitionImage(cmd, color.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                        vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
+        transitionImage(cmd, depth.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
+                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+                        vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::ImageAspectFlagBits::eDepth);
+
+        vk::RenderingAttachmentInfo colorAttach{};
+        colorAttach.imageView = color.view;
+        colorAttach.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        colorAttach.loadOp = vk::AttachmentLoadOp::eClear;
+        colorAttach.storeOp = vk::AttachmentStoreOp::eStore;
+        colorAttach.clearValue = vk::ClearValue{ vk::ClearColorValue{ std::array<f32, 4>{ 0.12f, 0.12f, 0.14f, 1.0f } } };
+        vk::RenderingAttachmentInfo depthAttach{};
+        depthAttach.imageView = depth.view;
+        depthAttach.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        depthAttach.loadOp = vk::AttachmentLoadOp::eClear;
+        depthAttach.storeOp = vk::AttachmentStoreOp::eDontCare;
+        depthAttach.clearValue = vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } };
+        vk::RenderingInfo rendering{};
+        rendering.renderArea = vk::Rect2D{ vk::Offset2D{ 0, 0 }, vk::Extent2D{ size, size } };
+        rendering.layerCount = 1;
+        rendering.setColorAttachments(colorAttach);
+        rendering.setPDepthAttachment(&depthAttach);
+        cmd.beginRendering(rendering);
+
+        vk::Viewport viewport{ 0.0f, 0.0f, static_cast<f32>(size), static_cast<f32>(size), 0.0f, 1.0f };
+        cmd.setViewport(0, viewport);
+        cmd.setScissor(0, vk::Rect2D{ vk::Offset2D{ 0, 0 }, vk::Extent2D{ size, size } });
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.thumbnailPipeline->pipeline);
+        cmd.pushConstants(renderer.thumbnailPipeline->layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(push), &push);
+        vk::DeviceSize offset = 0;
+        cmd.bindVertexBuffers(0, mesh->vertexBuffer, offset);
+        cmd.bindIndexBuffer(mesh->indexBuffer, 0, vk::IndexType::eUint32);
+        for (const Submesh& submesh : mesh->submeshes)
+        {
+            cmd.drawIndexed(submesh.indexCount, 1, submesh.firstIndex, submesh.vertexOffset, 0);
+        }
+        cmd.endRendering();
+
+        transitionImage(cmd, color.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
+                        vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        static_cast<void>(cmd.end());
+
+        vk::CommandBufferSubmitInfo cmdInfo{};
+        cmdInfo.commandBuffer = cmd;
+        vk::SubmitInfo2 submitInfo{};
+        submitInfo.setCommandBufferInfos(cmdInfo);
+        static_cast<void>(renderer.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.device.waitIdle());
+        renderer.device.freeCommandBuffers(renderer.frames[0].commandPool, cmd);
+
+        // Take ownership of the color image as a sampled GpuTexture (no material set;
+        // ImGui samples it via uiRegisterTexture). Null the Image's handles so it does
+        // not free them on scope exit.
+        GpuTexture texture;
+        texture.device = renderer.device;
+        texture.allocator = renderer.allocator;
+        texture.image = color.image;
+        texture.view = color.view;
+        texture.alloc = color.alloc;
+        texture.extent = color.extent;
+        texture.format = color.format;
+        color.image = nullptr;
+        color.view = nullptr;
+        color.alloc = nullptr;
+        return std::make_shared<GpuTexture>(std::move(texture));
     }
 
     std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb)
