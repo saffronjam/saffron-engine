@@ -306,7 +306,7 @@ namespace se
         shiftCursorY(3.0f);
 
         const float spacingX    = 4.0f;
-        const float framePad    = 2.0f;
+        const float framePad    = 3.0f;
         const float lineHeight  = ImGui::GetFontSize() + framePad * 2.0f;
         const ImVec2 btnSize    = { lineHeight + 2.0f, lineHeight };
         const float avail       = ImGui::GetContentRegionAvail().x;
@@ -317,16 +317,14 @@ namespace se
         auto drawAxis = [&](const char* axisLabel, float& value,
                             const ImVec4& colN, const ImVec4& colH, const ImVec4& colP)
         {
-            StyleBinder btnPad(ImGuiStyleVar_FramePadding, ImVec2{ framePad, 0.0f });
+            StyleBinder btnPad(ImGuiStyleVar_FramePadding, ImVec2{ framePad, framePad });
             StyleBinder btnRound(ImGuiStyleVar_FrameRounding, 1.0f);
             ColorStack btnColors(ImGuiCol_Button,        colN,
                                  ImGuiCol_ButtonHovered, colH,
                                  ImGuiCol_ButtonActive,  colP);
-            shiftCursorY(2.0f);
             if (ImGui::Button(axisLabel, btnSize)) { value = resetValue; modified = true; }
             ImGui::SameLine(0.0f, 1.0f);
             ImGui::SetNextItemWidth(inputWidth);
-            shiftCursorY(-2.0f);
             const std::string dragId = std::string("##") + axisLabel;
             modified |= ImGui::DragFloat(dragId.c_str(), &value, 0.1f, 0.0f, 0.0f, "%.2f");
         };

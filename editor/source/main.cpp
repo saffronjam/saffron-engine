@@ -1,5 +1,6 @@
 // imgui.h is a heavy C++ header, so this TU uses classic includes (no `import
 // std`) — consistent with the engine's rendering/ui/scene modules.
+#include <entt/entt.hpp>
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
@@ -48,7 +49,18 @@ namespace
         Thumbnail meshIcon;
         Thumbnail textureIcon;
         Thumbnail fileIcon;
+        // Editor-only billboard icons for lights + cameras (drawn in the viewport).
+        Thumbnail pointLightIcon;
+        Thumbnail spotLightIcon;
+        Thumbnail cameraIcon;
         std::unordered_map<se::u64, Thumbnail> thumbnails;
+        Thumbnail eyeIcon;
+        struct {
+            bool open = false;
+            std::string title;
+            ImTextureID previewId = 0;
+            se::Ref<se::GpuTexture> previewTexture;
+        } viewer;
     };
 }
 
@@ -80,6 +92,10 @@ int main()
         state->meshIcon = loadIcon("icons/box.svg");
         state->textureIcon = loadIcon("icons/image.svg");
         state->fileIcon = loadIcon("icons/file.svg");
+        state->eyeIcon = loadIcon("icons/eye.svg");
+        state->pointLightIcon = loadIcon("icons/lightbulb.svg");
+        state->spotLightIcon  = loadIcon("icons/flashlight.svg");
+        state->cameraIcon     = loadIcon("icons/camera.svg");
 
         // Best-effort thumbnail per asset: textures show their image, anything else the
         // type icon (mesh render lands in a later step). Cached so AddTexture runs once.
@@ -123,6 +139,40 @@ int main()
             return state->fileIcon.id;
         };
         se::registerBuiltinComponents(state->editor->registry, thumbnailFor);
+
+        std::function<void(const se::AssetEntry&)> onView =
+            [state, &app](const se::AssetEntry& entry)
+        {
+            if (state->viewer.previewId != 0)
+            {
+                se::uiUnregisterTexture(state->viewer.previewId);
+                state->viewer.previewId = 0;
+                state->viewer.previewTexture = nullptr;
+            }
+            if (entry.type == se::AssetType::Mesh)
+            {
+                se::Ref<se::GpuMesh> mesh = se::loadMeshAsset(state->assets, app.renderer, entry.id);
+                if (!mesh) { return; }
+                auto rendered = se::renderMeshThumbnail(app.renderer, mesh, 512);
+                if (!rendered) { se::logError(rendered.error()); return; }
+                state->viewer.previewTexture = *rendered;
+                state->viewer.previewId      = se::uiRegisterTexture(*rendered);
+            }
+            else if (entry.type == se::AssetType::Texture)
+            {
+                auto it = state->thumbnails.find(entry.id.value);
+                se::Ref<se::GpuTexture> tex =
+                    (it != state->thumbnails.end() && it->second.texture)
+                        ? it->second.texture
+                        : se::loadTextureAsset(state->assets, app.renderer, entry.id);
+                if (!tex) { return; }
+                state->viewer.previewTexture = tex;
+                state->viewer.previewId      = se::uiRegisterTexture(tex);
+            }
+            else { return; }
+            state->viewer.title = entry.name;
+            state->viewer.open  = true;
+        };
 
         // Import a file into the asset catalog (no spawn), routed by extension. Used by
         // File > Import, the asset panel, and drag-and-drop.
@@ -179,6 +229,13 @@ int main()
                 se::uiUnregisterTexture(thumb.id);
             }
             state->thumbnails.clear();
+            if (state->viewer.previewId != 0)
+            {
+                se::uiUnregisterTexture(state->viewer.previewId);
+                state->viewer.previewId      = 0;
+                state->viewer.previewTexture = nullptr;
+                state->viewer.open           = false;
+            }
         };
         app.window.onFileDropped.subscribe([importToCatalog](std::string path)
         {
@@ -220,7 +277,7 @@ int main()
         // The scene renders through the editor (viewport) camera, which is driven by
         // ImGui input — valid only during onUi — so the scene draw + gizmo live here.
         // renderScene records closures the renderer replays in endFrame.
-        layer.onUi = [state, &app, thumbnailFor]()
+        layer.onUi = [state, &app, thumbnailFor, onView]()
         {
             // The inspector pickers + asset panel read the catalog through the scene
             // (a borrowed pointer, valid only for this frame).
@@ -245,9 +302,23 @@ int main()
                               se::viewportContentPos(app.ui), se::viewportContentSize(app.ui),
                               se::viewportHovered(app.ui));
 
+                // Billboard icons for lights + cameras (drawn in the Viewport window).
+                const float aspect = static_cast<float>(vw) / static_cast<float>(vh);
+                ImGui::Begin("Viewport");
+                const se::Entity billboardHit = se::drawEditorBillboards(
+                    *state->editor, cam, aspect,
+                    se::viewportContentPos(app.ui), se::viewportContentSize(app.ui),
+                    state->pointLightIcon.id, state->spotLightIcon.id, state->cameraIcon.id);
+                ImGui::End();
+                if (billboardHit.handle != entt::null)
+                {
+                    se::setSelection(*state->editor, billboardHit);
+                }
+
                 // Left-click in empty viewport space ray-picks an entity (or clears the
-                // selection). Skipped when the click is on/using the gizmo.
-                if (se::viewportHovered(app.ui) && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                // selection). Skipped when gizmo is active or a billboard was clicked.
+                if (billboardHit.handle == entt::null &&
+                    se::viewportHovered(app.ui) && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                     !ImGuizmo::IsOver() && !ImGuizmo::IsUsing())
                 {
                     const ImVec2 origin = se::viewportContentPos(app.ui);
@@ -261,7 +332,32 @@ int main()
             }
 
             se::hierarchyPanel(*state->editor);
-            se::assetCatalogPanel(*state->editor, &state->assets.catalog, thumbnailFor);
+            se::assetCatalogPanel(*state->editor, &state->assets.catalog, thumbnailFor,
+                                  onView, state->eyeIcon.id);
+            {
+                const bool wasOpen = state->viewer.open;
+                se::viewerPanel(state->viewer.open, state->viewer.title.c_str(),
+                                state->viewer.previewId);
+                if (wasOpen && !state->viewer.open)
+                {
+                    se::uiUnregisterTexture(state->viewer.previewId);
+                    state->viewer.previewId      = 0;
+                    state->viewer.previewTexture = nullptr;
+                }
+            }
+
+            // Render stats overlay — dockable panel.
+            if (ImGui::Begin("Render Stats"))
+            {
+                const se::RenderStats stats = se::renderStats(app.renderer);
+                const ImGuiIO& io = ImGui::GetIO();
+                ImGui::Text("%.1f fps   %.2f ms", io.Framerate, 1000.0f / io.Framerate);
+                ImGui::Separator();
+                ImGui::Text("Draw calls  %u", stats.drawCalls);
+                ImGui::Text("Batches     %u", stats.batches);
+                ImGui::Text("Instances   %u", stats.instances);
+            }
+            ImGui::End();
 
             // Numeric/data fields read better in a monospace font.
             ImGui::PushFont(se::uiMonoFont(app.ui));
@@ -318,6 +414,16 @@ int main()
         freeThumbnail(state->meshIcon);
         freeThumbnail(state->textureIcon);
         freeThumbnail(state->fileIcon);
+        freeThumbnail(state->eyeIcon);
+        freeThumbnail(state->pointLightIcon);
+        freeThumbnail(state->spotLightIcon);
+        freeThumbnail(state->cameraIcon);
+        if (state->viewer.previewId != 0)
+        {
+            se::uiUnregisterTexture(state->viewer.previewId);
+            state->viewer.previewId      = 0;
+            state->viewer.previewTexture = nullptr;
+        }
 
         state->assets.meshRefByUuid.clear();
         state->assets.textureRefByUuid.clear();

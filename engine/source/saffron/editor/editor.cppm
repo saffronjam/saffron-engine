@@ -100,7 +100,10 @@ export namespace se
                 current = entry->name;
             }
         }
-        if (ImGui::BeginCombo(label, current.c_str()))
+        ImGui::TextUnformatted(label);
+        const std::string comboId = std::string("##") + label;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo(comboId.c_str(), current.c_str()))
         {
             if (ImGui::Selectable("(none)", target.value == 0))
             {
@@ -367,12 +370,49 @@ export namespace se
     {
         ImGui::Begin("Hierarchy");
 
-        if (ImGui::Button("Add Entity"))
+        if (ImGui::Button("Add +")) { ImGui::OpenPopup("AddEntityPreset"); }
+        if (ImGui::BeginPopup("AddEntityPreset"))
         {
-            setSelection(ctx, createEntity(ctx.scene, "Entity"));
+            if (ImGui::MenuItem("Empty"))
+            {
+                setSelection(ctx, createEntity(ctx.scene, "Entity"));
+            }
+            if (ImGui::MenuItem("Model") && ctx.onCreateCube)
+            {
+                ctx.onCreateCube();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Point Light"))
+            {
+                Entity e = createEntity(ctx.scene, "Point Light");
+                addComponent<PointLightComponent>(ctx.scene, e);
+                getComponent<TransformComponent>(ctx.scene, e).translation = glm::vec3(0.0f, 2.0f, 0.0f);
+                setSelection(ctx, e);
+            }
+            if (ImGui::MenuItem("Spot Light"))
+            {
+                Entity e = createEntity(ctx.scene, "Spot Light");
+                addComponent<SpotLightComponent>(ctx.scene, e);
+                getComponent<TransformComponent>(ctx.scene, e).translation = glm::vec3(0.0f, 4.0f, 0.0f);
+                setSelection(ctx, e);
+            }
+            if (ImGui::MenuItem("Directional Light"))
+            {
+                Entity e = createEntity(ctx.scene, "Directional Light");
+                addComponent<DirectionalLightComponent>(ctx.scene, e);
+                setSelection(ctx, e);
+            }
+            if (ImGui::MenuItem("Camera"))
+            {
+                Entity e = createEntity(ctx.scene, "Camera");
+                addComponent<CameraComponent>(ctx.scene, e);
+                setSelection(ctx, e);
+            }
+            ImGui::EndPopup();
         }
 
         Entity toDelete{ entt::null };
+        Entity toCopy{ entt::null };
         forEach<IdComponent, NameComponent>(ctx.scene,
             [&](Entity entity, IdComponent& id, NameComponent& name)
         {
@@ -384,16 +424,28 @@ export namespace se
                 }
                 if (ImGui::BeginPopupContextItem())
                 {
-                    if (ImGui::MenuItem("Delete"))
-                    {
-                        toDelete = entity;
-                    }
+                    if (ImGui::MenuItem("Copy"))  { toCopy  = entity; }
+                    if (ImGui::MenuItem("Delete")) { toDelete = entity; }
                     ImGui::EndPopup();
                 }
                 ImGui::PopID();
             });
 
-        // Structural change deferred until after the iteration above.
+        // Structural changes deferred until after the iteration above.
+        if (toCopy.handle != entt::null)
+        {
+            const std::string copyName = getComponent<NameComponent>(ctx.scene, toCopy).name + " (copy)";
+            Entity fresh = createEntity(ctx.scene, copyName);
+            for (const ComponentTraits& t : ctx.registry.rows)
+            {
+                if (t.has(ctx.scene, toCopy))
+                {
+                    t.addDefault(ctx.scene, fresh);
+                    static_cast<void>(t.deserialize(ctx.scene, fresh, t.serialize(ctx.scene, toCopy)));
+                }
+            }
+            setSelection(ctx, fresh);
+        }
         if (toDelete.handle != entt::null)
         {
             if (ctx.selected.handle == toDelete.handle)
@@ -493,7 +545,9 @@ export namespace se
     // name). Import via the button/modal or drag-and-drop; drag a tile onto a component
     // picker to assign it. `catalog` is mutable so names can be edited in place.
     void assetCatalogPanel(EditorContext& ctx, AssetCatalog* catalog,
-                           const std::function<ImTextureID(const AssetEntry&)>& thumbnailFor)
+                           const std::function<ImTextureID(const AssetEntry&)>& thumbnailFor,
+                           const std::function<void(const AssetEntry&)>& onView = nullptr,
+                           ImTextureID eyeIcon = 0)
     {
         ImGui::Begin("Assets");
         if (ImGui::Button("Import..."))
@@ -546,6 +600,23 @@ export namespace se
                 }
                 ImGui::Button(glyph, ImVec2{ tileSize, tileSize });  // placeholder until thumbnails land
             }
+            if (onView && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            {
+                onView(entry);
+            }
+            if (onView && ImGui::BeginPopupContextItem("tile_ctx"))
+            {
+                if (eyeIcon != 0)
+                {
+                    ImGui::Image(eyeIcon, ImVec2{ 14.0f, 14.0f });
+                    ImGui::SameLine();
+                }
+                if (ImGui::MenuItem("View"))
+                {
+                    onView(entry);
+                }
+                ImGui::EndPopup();
+            }
             // The tile's last item is an Image (no ImGui ID) when it has a thumbnail;
             // SourceAllowNullID lets such an item be a drag source (id from its position).
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
@@ -569,6 +640,34 @@ export namespace se
             else
             {
                 column = 0;
+            }
+        }
+        ImGui::End();
+    }
+
+    /// Floating preview window for a single catalog asset. Caller owns `previewId`
+    /// and must unregister it when `open` transitions from true to false.
+    void viewerPanel(bool& open, const char* title, ImTextureID previewId)
+    {
+        if (!open)
+        {
+            return;
+        }
+        ImGui::SetNextWindowSize(ImVec2{ 480.0f, 520.0f }, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin(title && *title ? title : "Asset Viewer", &open))
+        {
+            if (previewId != 0)
+            {
+                const ImVec2 avail = ImGui::GetContentRegionAvail();
+                const float side = avail.x < avail.y ? avail.x : avail.y;
+                if (side > 0.0f)
+                {
+                    ImGui::Image(previewId, ImVec2{ side, side });
+                }
+            }
+            else
+            {
+                ImGui::TextUnformatted("No preview available.");
             }
         }
         ImGui::End();
@@ -757,5 +856,56 @@ export namespace se
             }
         }
         ImGui::End();
+    }
+
+    // Draws 2D billboard icons for PointLight, SpotLight, and Camera entities in the
+    // "Viewport" draw list. Returns the entity whose icon was clicked (entt::null = none).
+    auto drawEditorBillboards(EditorContext& ctx, const CameraView& cam, float aspect,
+                              ImVec2 vpPos, ImVec2 vpSize,
+                              ImTextureID pointLightIcon, ImTextureID spotLightIcon,
+                              ImTextureID cameraIcon) -> Entity
+    {
+        if (vpSize.x <= 0.0f || vpSize.y <= 0.0f) { return Entity{ entt::null }; }
+
+        const glm::mat4 view = cam.view;
+        glm::mat4 proj = cameraProjection(cam, aspect);
+        const glm::vec4 vp{ 0.0f, 0.0f, vpSize.x, vpSize.y };
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float half = 12.0f;  // icon half-size in pixels
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        Entity hit{ entt::null };
+
+        auto drawIcon = [&](Entity entity, ImTextureID icon)
+        {
+            if (icon == 0) { return; }
+            if (!hasComponent<TransformComponent>(ctx.scene, entity)) { return; }
+            const glm::vec3 worldPos = getComponent<TransformComponent>(ctx.scene, entity).translation;
+            const glm::vec3 screen = glm::project(worldPos, view, proj, vp);
+            if (screen.z < 0.0f || screen.z > 1.0f) { return; }
+            const ImVec2 center{ vpPos.x + screen.x, vpPos.y + (vpSize.y - screen.y) };
+            if (center.x < vpPos.x || center.x > vpPos.x + vpSize.x) { return; }
+            if (center.y < vpPos.y || center.y > vpPos.y + vpSize.y) { return; }
+            const ImVec2 mn{ center.x - half, center.y - half };
+            const ImVec2 mx{ center.x + half, center.y + half };
+            const bool sel = (ctx.selected.handle == entity.handle);
+            dl->AddImage(icon, mn, mx, ImVec2{0,0}, ImVec2{1,1},
+                         sel ? IM_COL32(255,200,80,255) : IM_COL32(200,200,200,200));
+            if (clicked && mouse.x >= mn.x && mouse.x <= mx.x &&
+                           mouse.y >= mn.y && mouse.y <= mx.y)
+            {
+                hit = entity;
+            }
+        };
+
+        forEach<PointLightComponent>(ctx.scene, [&](Entity e, PointLightComponent&)
+            { drawIcon(e, pointLightIcon); });
+        forEach<SpotLightComponent>(ctx.scene, [&](Entity e, SpotLightComponent&)
+            { drawIcon(e, spotLightIcon); });
+        forEach<CameraComponent>(ctx.scene, [&](Entity e, CameraComponent&)
+            { drawIcon(e, cameraIcon); });
+
+        return hit;
     }
 }
