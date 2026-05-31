@@ -56,10 +56,11 @@ are not our source.)
 - One namespace, `se`. Modules provide the real boundaries.
 
 ## Return types
-- **Trailing return type, always:** `auto functionName(ParamType param) -> ReturnType`.
-  The name lands right after `auto`, so names align in a column and signatures read
-  left-to-right. Applies to every function (declaration + definition); `main`, lambdas
-  (already `-> T`/deduced), and constructors/destructors are the only exceptions.
+- **Trailing return type for value-returning functions:** `auto functionName(ParamType param) -> ReturnType`.
+  The name lands right after `auto`, so names align in a column and signatures read left-to-right.
+  **Void functions stay `void functionName(...)`** — `auto` and `void` are both 4 chars, so the names
+  still align, and `auto f() -> void` is needless. Lambdas keep deduced/explicit returns as written;
+  `main` and constructors/destructors are unchanged.
 - **Fallible returns are `Result<T>`**, never the spelled-out `std::expected<T, std::string>`;
   return failure with `Err("message")`, success as the value itself (`return x;`) or `{}`
   for `Result<void>`. (`Result`/`Err` live in `Saffron.Core`.)

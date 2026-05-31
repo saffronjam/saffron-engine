@@ -67,7 +67,7 @@ export namespace se
         reg.rows.push_back(CommandTraits{ std::move(name), std::move(help), std::move(run) });
     }
 
-    const CommandTraits* findCommand(const CommandRegistry& reg, const std::string& name)
+    auto findCommand(const CommandRegistry& reg, const std::string& name) -> const CommandTraits*
     {
         auto it = reg.byName.find(name);
         if (it == reg.byName.end())
@@ -79,7 +79,7 @@ export namespace se
 
     // params[name] if present, else the index-th element of params["args"], else null.
     // Lets every command accept either `--name value` or a bare positional.
-    json positionalOr(const json& params, const std::string& name, std::size_t index)
+    auto positionalOr(const json& params, const std::string& name, std::size_t index) -> json
     {
         if (params.contains(name))
         {
@@ -92,7 +92,7 @@ export namespace se
         return json{};
     }
 
-    std::string asString(const json& value, std::string fallback)
+    auto asString(const json& value, std::string fallback) -> std::string
     {
         if (value.is_string())
         {
@@ -101,7 +101,7 @@ export namespace se
         return fallback;
     }
 
-    Result<Entity> resolveEntity(EngineContext& ctx, const json& params)
+    auto resolveEntity(EngineContext& ctx, const json& params) -> Result<Entity>
     {
         const json selector = positionalOr(params, "entity", 0);
         if (selector.is_null())
@@ -134,7 +134,7 @@ export namespace se
         if (haveUuid)
         {
             forEach<IdComponent>(scene, [&](Entity entity, IdComponent& id)
-            {
+        {
                 if (id.id.value == wanted)
                 {
                     found = entity;
@@ -149,7 +149,7 @@ export namespace se
         {
             const std::string name = selector.get<std::string>();
             forEach<NameComponent>(scene, [&](Entity entity, NameComponent& component)
-            {
+        {
                 if (found.handle == entt::null && component.name == name)
                 {
                     found = entity;
@@ -163,7 +163,7 @@ export namespace se
         return found;
     }
 
-    json entityRef(Scene& scene, Entity entity)
+    auto entityRef(Scene& scene, Entity entity) -> json
     {
         return json{ { "id", getComponent<IdComponent>(scene, entity).id.value },
                      { "name", getComponent<NameComponent>(scene, entity).name } };
@@ -300,7 +300,7 @@ export namespace se
                 json entities = json::array();
                 forEach<IdComponent, NameComponent>(ctx.editor.scene,
                     [&](Entity, IdComponent& id, NameComponent& name)
-                    {
+        {
                         entities.push_back(json{ { "id", id.id.value }, { "name", name.name } });
                     });
                 return json{ { "entities", std::move(entities) } };
@@ -573,7 +573,7 @@ export namespace se
                 else
                 {
                     forEach<DirectionalLightComponent>(ctx.editor.scene, [&](Entity entity, DirectionalLightComponent&)
-                    {
+        {
                         if (target.handle == entt::null)
                         {
                             target = entity;
@@ -850,7 +850,7 @@ export namespace se
             });
     }
 
-    std::string controlSocketPath()
+    auto controlSocketPath() -> std::string
     {
         if (const char* override = std::getenv("SAFFRON_CONTROL_SOCK"))
         {
@@ -876,7 +876,7 @@ export namespace se
         std::vector<ControlClient> clients;
     };
 
-    Result<ControlServer> startControlServer(std::string path)
+    auto startControlServer(std::string path) -> Result<ControlServer>
     {
         const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (fd < 0)
@@ -929,7 +929,7 @@ export namespace se
         }
     }
 
-    json dispatch(CommandRegistry& reg, EngineContext& ctx, const json& request)
+    auto dispatch(CommandRegistry& reg, EngineContext& ctx, const json& request) -> json
     {
         json reply;
         reply["id"] = request.value("id", json{});
@@ -1011,7 +1011,7 @@ export namespace se
             }
         }
 
-        std::erase_if(server.clients, [](const ControlClient& client) { return client.fd < 0; });
+        std::erase_if(server.clients, [](const ControlClient& client) -> bool { return client.fd < 0; });
     }
 
     /// Owns the command registry + socket. Heap-owned so the client holds only a
@@ -1025,7 +1025,7 @@ export namespace se
 
     /// Registers the built-in commands and starts the control socket. A bind
     /// failure is logged and the context returns inactive — the app still runs.
-    ControlContext* newControlContext()
+    auto newControlContext() -> ControlContext*
     {
         ControlContext* ctx = new ControlContext();
         registerBuiltinCommands(ctx->registry);

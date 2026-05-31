@@ -97,7 +97,7 @@ export namespace se
         f32 outerAngle = 30.0f;  // zero past this half-angle
     };
 
-    glm::mat4 transformMatrix(const TransformComponent& transform)
+    auto transformMatrix(const TransformComponent& transform) -> glm::mat4
     {
         glm::mat4 translation = glm::translate(glm::mat4(1.0f), transform.translation);
         glm::mat4 rotation = glm::mat4_cast(glm::quat(transform.rotation));
@@ -124,7 +124,7 @@ export namespace se
         std::unordered_map<u64, std::size_t> byId;  // id -> index into entries
     };
 
-    const AssetEntry* findAsset(const AssetCatalog& catalog, Uuid id)
+    auto findAsset(const AssetCatalog& catalog, Uuid id) -> const AssetEntry*
     {
         auto it = catalog.byId.find(id.value);
         if (it == catalog.byId.end())
@@ -146,7 +146,7 @@ export namespace se
         catalog.entries.push_back(std::move(entry));
     }
 
-    bool renameAsset(AssetCatalog& catalog, Uuid id, std::string name)
+    auto renameAsset(AssetCatalog& catalog, Uuid id, std::string name) -> bool
     {
         auto it = catalog.byId.find(id.value);
         if (it == catalog.byId.end())
@@ -158,7 +158,7 @@ export namespace se
     }
 
     // A name not already used by another entry (appends " (2)", " (3)", … on collision).
-    std::string uniqueName(const AssetCatalog& catalog, const std::string& base)
+    auto uniqueName(const AssetCatalog& catalog, const std::string& base) -> std::string
     {
         bool taken = false;
         for (const AssetEntry& entry : catalog.entries)
@@ -204,7 +204,7 @@ export namespace se
         entt::entity handle = entt::null;
     };
 
-    bool valid(const Scene& scene, Entity entity)
+    auto valid(const Scene& scene, Entity entity) -> bool
     {
         return scene.registry.valid(entity.handle);
     }
@@ -212,19 +212,19 @@ export namespace se
     // Component access expressed as free generic functions (Go-style: generic
     // functions over the world + handle, not member templates on a class).
     template <typename C, typename... Args>
-    C& addComponent(Scene& scene, Entity entity, Args&&... args)
+    auto addComponent(Scene& scene, Entity entity, Args&&... args) -> C&
     {
         return scene.registry.emplace<C>(entity.handle, std::forward<Args>(args)...);
     }
 
     template <typename C>
-    C& getComponent(Scene& scene, Entity entity)
+    auto getComponent(Scene& scene, Entity entity) -> C&
     {
         return scene.registry.get<C>(entity.handle);
     }
 
     template <typename C>
-    bool hasComponent(const Scene& scene, Entity entity)
+    auto hasComponent(const Scene& scene, Entity entity) -> bool
     {
         return scene.registry.all_of<C>(entity.handle);
     }
@@ -235,7 +235,7 @@ export namespace se
         scene.registry.remove<C>(entity.handle);
     }
 
-    Entity createEntity(Scene& scene, std::string name)
+    auto createEntity(Scene& scene, std::string name) -> Entity
     {
         Entity entity{ scene.registry.create() };
         addComponent<IdComponent>(scene, entity, newUuid());
@@ -274,12 +274,12 @@ export namespace se
         bool valid = false;
     };
 
-    CameraView primaryCamera(Scene& scene)
+    auto primaryCamera(Scene& scene) -> CameraView
     {
         CameraView result;
         forEach<TransformComponent, CameraComponent>(scene,
             [&](Entity, TransformComponent& transform, CameraComponent& camera)
-            {
+        {
                 if (result.valid || !camera.primary)
                 {
                     return;
@@ -296,30 +296,30 @@ export namespace se
     }
 
     // Un-flipped perspective projection for the resolved camera (GL clip convention).
-    glm::mat4 cameraProjection(const CameraView& camera, f32 aspect)
+    auto cameraProjection(const CameraView& camera, f32 aspect) -> glm::mat4
     {
         return glm::perspective(glm::radians(camera.fov), aspect, camera.nearPlane, camera.farPlane);
     }
 
     // glm <-> json use named fields; quat storage order is config-dependent, so
     // never serialize positionally.
-    nlohmann::json vec3ToJson(const glm::vec3& v)
+    auto vec3ToJson(const glm::vec3& v) -> nlohmann::json
     {
         return nlohmann::json{ { "x", v.x }, { "y", v.y }, { "z", v.z } };
     }
 
-    glm::vec3 vec3FromJson(const nlohmann::json& j)
+    auto vec3FromJson(const nlohmann::json& j) -> glm::vec3
     {
         return glm::vec3{ jsonF32Or(j, "x", 0.0f), jsonF32Or(j, "y", 0.0f), jsonF32Or(j, "z", 0.0f) };
     }
 
 
-    nlohmann::json vec4ToJson(const glm::vec4& v)
+    auto vec4ToJson(const glm::vec4& v) -> nlohmann::json
     {
         return nlohmann::json{ { "x", v.x }, { "y", v.y }, { "z", v.z }, { "w", v.w } };
     }
 
-    glm::vec4 vec4FromJson(const nlohmann::json& j)
+    auto vec4FromJson(const nlohmann::json& j) -> glm::vec4
     {
         return glm::vec4{ jsonF32Or(j, "x", 1.0f), jsonF32Or(j, "y", 1.0f),
                           jsonF32Or(j, "z", 1.0f), jsonF32Or(j, "w", 1.0f) };
@@ -364,11 +364,11 @@ export namespace se
         traits.id = entt::type_hash<C>::value();
         traits.name = name;
         traits.removable = removable;
-        traits.has = [](Scene& s, Entity e) { return hasComponent<C>(s, e); };
-        traits.addDefault = [](Scene& s, Entity e) { addComponent<C>(s, e); };
-        traits.remove = [](Scene& s, Entity e) { removeComponent<C>(s, e); };
+        traits.has = [](Scene& s, Entity e) -> auto { return hasComponent<C>(s, e); };
+        traits.addDefault = [](Scene& s, Entity e) -> auto { addComponent<C>(s, e); };
+        traits.remove = [](Scene& s, Entity e) -> auto { removeComponent<C>(s, e); };
         traits.copyTo = [](Scene& src, Entity from, Scene& dst, Entity to)
-        {
+        -> auto {
             if (hasComponent<C>(src, from))
             {
                 addComponent<C>(dst, to, getComponent<C>(src, from));
@@ -394,7 +394,7 @@ export namespace se
         reg.rows.push_back(std::move(traits));
     }
 
-    const ComponentTraits* findById(const ComponentRegistry& reg, entt::id_type id)
+    auto findById(const ComponentRegistry& reg, entt::id_type id) -> const ComponentTraits*
     {
         auto it = reg.byId.find(id);
         if (it == reg.byId.end())
@@ -404,7 +404,7 @@ export namespace se
         return &reg.rows[it->second];
     }
 
-    const ComponentTraits* findByName(const ComponentRegistry& reg, const std::string& name)
+    auto findByName(const ComponentRegistry& reg, const std::string& name) -> const ComponentTraits*
     {
         auto it = reg.byName.find(name);
         if (it == reg.byName.end())
@@ -416,7 +416,7 @@ export namespace se
 
     // Scene& is non-const because entt views/storage iteration require it; these
     // functions do not logically mutate the scene.
-    nlohmann::json serializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity)
+    auto serializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity) -> nlohmann::json
     {
         nlohmann::json components = nlohmann::json::object();
         for (auto&& [id, set] : scene.registry.storage())
@@ -435,8 +435,8 @@ export namespace se
         return components;
     }
 
-    Result<void> deserializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity,
-                                                       const nlohmann::json& components)
+    auto deserializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity,
+                                                       const nlohmann::json& components) -> Result<void>
     {
         for (auto it = components.begin(); it != components.end(); ++it)
         {
@@ -457,7 +457,7 @@ export namespace se
 
     // Serializes the scene to a `{version, entities:[{id,components}]}` document (no file
     // IO), so it can be embedded in a larger project document.
-    nlohmann::json sceneToJson(ComponentRegistry& reg, Scene& scene)
+    auto sceneToJson(ComponentRegistry& reg, Scene& scene) -> nlohmann::json
     {
         nlohmann::json doc;
         doc["version"] = SceneVersion;
@@ -473,7 +473,7 @@ export namespace se
     }
 
     // Replaces the scene's entities from a `sceneToJson` document.
-    Result<void> sceneFromJson(ComponentRegistry& reg, Scene& scene, const nlohmann::json& doc)
+    auto sceneFromJson(ComponentRegistry& reg, Scene& scene, const nlohmann::json& doc) -> Result<void>
     {
         if (!doc.is_object())
         {
@@ -526,7 +526,7 @@ export namespace se
         return {};
     }
 
-    Result<void> writeScene(ComponentRegistry& reg, Scene& scene, const std::string& path)
+    auto writeScene(ComponentRegistry& reg, Scene& scene, const std::string& path) -> Result<void>
     {
         std::ofstream out(path);
         if (!out)
@@ -542,7 +542,7 @@ export namespace se
         return {};
     }
 
-    Result<void> readScene(ComponentRegistry& reg, Scene& scene, const std::string& path)
+    auto readScene(ComponentRegistry& reg, Scene& scene, const std::string& path) -> Result<void>
     {
         std::ifstream in(path);
         if (!in)
@@ -566,7 +566,7 @@ export namespace se
         ComponentRegistry reg;
         registerComponent<NameComponent>(reg, "Name",
             [](Scene&, Entity) {},
-            [](const NameComponent& c) { return nlohmann::json{ { "name", c.name } }; },
+            [](const NameComponent& c) -> nlohmann::json { return nlohmann::json{ { "name", c.name } }; },
             [](NameComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.name = jsonStringOr(j, "name", std::string{});
@@ -576,7 +576,7 @@ export namespace se
         registerComponent<TransformComponent>(reg, "Transform",
             [](Scene&, Entity) {},
             [](const TransformComponent& t)
-            {
+            -> nlohmann::json {
                 return nlohmann::json{ { "translation", vec3ToJson(t.translation) },
                                        { "scale", vec3ToJson(t.scale) },
                                        { "rotation", vec3ToJson(t.rotation) } };
@@ -615,7 +615,7 @@ export namespace se
         glm::vec3 cubePos{ 0.0f };
         forEach<NameComponent, TransformComponent>(loaded,
             [&](Entity, NameComponent& name, TransformComponent& transform)
-            {
+        {
                 count = count + 1;
                 if (name.name == "Cube")
                 {

@@ -75,16 +75,16 @@ export namespace se
         u32 height = 0;
     };
 
-    Result<Mesh> importGltf(const std::string& path);
-    Result<Mesh> importObj(const std::string& path);
-    Result<Mesh> importModelFile(const std::string& path);  // dispatch by extension
+    auto importGltf(const std::string& path) -> Result<Mesh>;
+    auto importObj(const std::string& path) -> Result<Mesh>;
+    auto importModelFile(const std::string& path) -> Result<Mesh>;  // dispatch by extension
 
-    Result<ImportedModel> importModelWithMaterial(const std::string& path);
-    Result<DecodedImage> decodeImage(const std::string& path);
-    Result<DecodedImage> decodeImageFromMemory(const std::vector<u8>& encoded);
+    auto importModelWithMaterial(const std::string& path) -> Result<ImportedModel>;
+    auto decodeImage(const std::string& path) -> Result<DecodedImage>;
+    auto decodeImageFromMemory(const std::vector<u8>& encoded) -> Result<DecodedImage>;
 
-    Result<void> saveMesh(const Mesh& mesh, const std::string& path);  // baked .smesh
-    Result<Mesh> loadMesh(const std::string& path);
+    auto saveMesh(const Mesh& mesh, const std::string& path) -> Result<void>;  // baked .smesh
+    auto loadMesh(const std::string& path) -> Result<Mesh>;
 
     // Recomputes smooth vertex normals from the triangles. Used when a source omits them.
     void generateNormals(Mesh& mesh);
@@ -119,7 +119,7 @@ namespace se
         };
         static_assert(sizeof(SMeshHeader) == 64, "SMeshHeader must be exactly 64 bytes");
 
-        bool endsWithIgnoreCase(const std::string& text, const std::string& suffix)
+        auto endsWithIgnoreCase(const std::string& text, const std::string& suffix) -> bool
         {
             if (text.size() < suffix.size())
             {
@@ -138,7 +138,7 @@ namespace se
             return true;
         }
 
-        bool anyNormalsPresent(const Mesh& mesh)
+        auto anyNormalsPresent(const Mesh& mesh) -> bool
         {
             for (const Vertex& vertex : mesh.vertices)
             {
@@ -150,7 +150,7 @@ namespace se
             return false;
         }
 
-        std::string directoryOf(const std::string& path)
+        auto directoryOf(const std::string& path) -> std::string
         {
             const std::size_t slash = path.find_last_of("/\\");
             if (slash == std::string::npos)
@@ -160,7 +160,7 @@ namespace se
             return path.substr(0, slash);
         }
 
-        std::string extensionOf(const std::string& path)
+        auto extensionOf(const std::string& path) -> std::string
         {
             const std::size_t dot = path.find_last_of('.');
             if (dot == std::string::npos)
@@ -170,7 +170,7 @@ namespace se
             return path.substr(dot + 1);
         }
 
-        std::string extensionFromMime(const std::string& mime)
+        auto extensionFromMime(const std::string& mime) -> std::string
         {
             if (mime == "image/png")
             {
@@ -183,7 +183,7 @@ namespace se
             return std::string{ "png" };
         }
 
-        Result<std::vector<u8>> readBinaryFile(const std::string& path)
+        auto readBinaryFile(const std::string& path) -> Result<std::vector<u8>>
         {
             std::ifstream in(path, std::ios::binary | std::ios::ate);
             if (!in)
@@ -237,7 +237,7 @@ namespace se
         }
     }
 
-    Result<ImportedModel> importGltfModel(const std::string& path)
+    auto importGltfModel(const std::string& path) -> Result<ImportedModel>
     {
         cgltf_options options{};
         cgltf_data* data = nullptr;
@@ -398,7 +398,7 @@ namespace se
         return ImportedModel{ std::move(mesh), std::move(material) };
     }
 
-    Result<Mesh> importGltf(const std::string& path)
+    auto importGltf(const std::string& path) -> Result<Mesh>
     {
         auto model = importGltfModel(path);
         if (!model)
@@ -408,7 +408,7 @@ namespace se
         return std::move(model->mesh);
     }
 
-    Result<ImportedModel> importObjModel(const std::string& path)
+    auto importObjModel(const std::string& path) -> Result<ImportedModel>
     {
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
@@ -529,7 +529,7 @@ namespace se
         return ImportedModel{ std::move(mesh), std::move(material) };
     }
 
-    Result<Mesh> importObj(const std::string& path)
+    auto importObj(const std::string& path) -> Result<Mesh>
     {
         auto model = importObjModel(path);
         if (!model)
@@ -539,7 +539,7 @@ namespace se
         return std::move(model->mesh);
     }
 
-    Result<Mesh> importModelFile(const std::string& path)
+    auto importModelFile(const std::string& path) -> Result<Mesh>
     {
         if (endsWithIgnoreCase(path, ".gltf") || endsWithIgnoreCase(path, ".glb"))
         {
@@ -552,7 +552,7 @@ namespace se
         return Err(std::format("unsupported model format: '{}' (expected .gltf/.glb/.obj)", path));
     }
 
-    Result<ImportedModel> importModelWithMaterial(const std::string& path)
+    auto importModelWithMaterial(const std::string& path) -> Result<ImportedModel>
     {
         if (endsWithIgnoreCase(path, ".gltf") || endsWithIgnoreCase(path, ".glb"))
         {
@@ -565,7 +565,7 @@ namespace se
         return Err(std::format("unsupported model format: '{}' (expected .gltf/.glb/.obj)", path));
     }
 
-    Result<DecodedImage> decodeImage(const std::string& path)
+    auto decodeImage(const std::string& path) -> Result<DecodedImage>
     {
         int width = 0;
         int height = 0;
@@ -583,7 +583,7 @@ namespace se
         return image;
     }
 
-    Result<DecodedImage> decodeImageFromMemory(const std::vector<u8>& encoded)
+    auto decodeImageFromMemory(const std::vector<u8>& encoded) -> Result<DecodedImage>
     {
         int width = 0;
         int height = 0;
@@ -602,7 +602,7 @@ namespace se
         return image;
     }
 
-    Result<void> saveMesh(const Mesh& mesh, const std::string& path)
+    auto saveMesh(const Mesh& mesh, const std::string& path) -> Result<void>
     {
         SMeshHeader header{};
         std::memcpy(header.magic, "SMSH", 4);
@@ -636,7 +636,7 @@ namespace se
         return {};
     }
 
-    Result<Mesh> loadMesh(const std::string& path)
+    auto loadMesh(const std::string& path) -> Result<Mesh>
     {
         std::ifstream in(path, std::ios::binary | std::ios::ate);
         if (!in)

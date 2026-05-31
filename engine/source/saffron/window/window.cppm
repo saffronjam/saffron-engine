@@ -36,7 +36,7 @@ export namespace se
         std::vector<std::function<void(const SDL_Event&)>> eventSinks;
     };
 
-    Result<Window> newWindow(const WindowConfig& config)
+    auto newWindow(const WindowConfig& config) -> Result<Window>
     {
         if (!SDL_Init(SDL_INIT_VIDEO))
         {

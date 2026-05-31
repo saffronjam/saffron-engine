@@ -37,7 +37,7 @@ export namespace se
         bool layoutBuilt = false;          // seeded the default dock layout once
     };
 
-    Result<Ui> newUi(Renderer& renderer, Window& window);
+    auto newUi(Renderer& renderer, Window& window) -> Result<Ui>;
     void destroyUi(Renderer& renderer, Ui& ui);
 
     void uiBeginFrame(Ui& ui);                  // NewFrame + dockspace host
@@ -47,22 +47,22 @@ export namespace se
 
     // The viewport image's screen rect + hover state, valid after viewportPanel ran
     // this frame — used to place the ImGuizmo overlay.
-    ImVec2 viewportContentPos(const Ui& ui);
-    ImVec2 viewportContentSize(const Ui& ui);
-    bool viewportHovered(const Ui& ui);
+    auto viewportContentPos(const Ui& ui) -> ImVec2;
+    auto viewportContentSize(const Ui& ui) -> ImVec2;
+    auto viewportHovered(const Ui& ui) -> bool;
 
     // The Roboto Mono font for numeric/data fields, or null if it failed to load.
-    ImFont* uiMonoFont(const Ui& ui);
+    auto uiMonoFont(const Ui& ui) -> ImFont*;
 
     // Registers a GPU texture with the ImGui Vulkan backend for display (ImGui::Image).
     // Returns an ImTextureID (0 if the texture is null); free it with uiUnregisterTexture.
-    ImTextureID uiRegisterTexture(const Ref<GpuTexture>& texture);
+    auto uiRegisterTexture(const Ref<GpuTexture>& texture) -> ImTextureID;
     void uiUnregisterTexture(ImTextureID texture);
 }
 
 namespace se
 {
-    Result<Ui> newUi(Renderer& renderer, Window& window)
+    auto newUi(Renderer& renderer, Window& window) -> Result<Ui>
     {
         Ui ui;
 
@@ -242,27 +242,27 @@ namespace se
         ImGui::End();
     }
 
-    ImVec2 viewportContentPos(const Ui& ui)
+    auto viewportContentPos(const Ui& ui) -> ImVec2
     {
         return ui.viewportPos;
     }
 
-    ImVec2 viewportContentSize(const Ui& ui)
+    auto viewportContentSize(const Ui& ui) -> ImVec2
     {
         return ui.viewportSize;
     }
 
-    bool viewportHovered(const Ui& ui)
+    auto viewportHovered(const Ui& ui) -> bool
     {
         return ui.viewportHovered;
     }
 
-    ImFont* uiMonoFont(const Ui& ui)
+    auto uiMonoFont(const Ui& ui) -> ImFont*
     {
         return ui.monoFont;
     }
 
-    ImTextureID uiRegisterTexture(const Ref<GpuTexture>& texture)
+    auto uiRegisterTexture(const Ref<GpuTexture>& texture) -> ImTextureID
     {
         if (!texture)
         {

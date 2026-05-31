@@ -117,7 +117,7 @@ export namespace se
             {
                 const nlohmann::json& doc = *parsedDoc;
                 auto migrate = [&](const char* key, AssetType type)
-                -> void {
+        {
                     if (!doc.contains(key) || !doc[key].is_object())
                     {
                         return;
@@ -421,7 +421,7 @@ export namespace se
         f32 lightAmbient = 0.15f;
         bool haveLight = false;
         forEach<DirectionalLightComponent>(scene, [&](Entity, DirectionalLightComponent& light)
-        -> void {
+        {
             if (haveLight)
             {
                 return;
@@ -437,7 +437,7 @@ export namespace se
         std::vector<GpuLight> lights;
         forEach<TransformComponent, PointLightComponent>(scene,
             [&](Entity, TransformComponent& transform, PointLightComponent& light)
-            -> void {
+        {
                 GpuLight gpu;
                 gpu.positionRange = glm::vec4(transform.translation, light.range);
                 gpu.colorIntensity = glm::vec4(light.color, light.intensity);
@@ -447,7 +447,7 @@ export namespace se
             });
         forEach<TransformComponent, SpotLightComponent>(scene,
             [&](Entity, TransformComponent& transform, SpotLightComponent& light)
-            -> void {
+        {
                 const glm::vec3 dir = glm::normalize(light.direction);
                 GpuLight gpu;
                 gpu.positionRange = glm::vec4(transform.translation, light.range);
@@ -465,7 +465,7 @@ export namespace se
         std::vector<DrawItem> items;
         forEach<TransformComponent, MeshComponent>(scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
-            -> void {
+        {
                 auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
                 {
@@ -528,7 +528,7 @@ export namespace se
         f32 nearest = std::numeric_limits<f32>::max();
         forEach<TransformComponent, MeshComponent>(scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
-            -> void {
+        {
                 auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
                 {

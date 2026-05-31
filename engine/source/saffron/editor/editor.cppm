@@ -156,10 +156,10 @@ export namespace se
     {
         registerComponent<NameComponent>(reg, "Name",
             [](Scene& s, Entity e)
-            {
+        {
                 ImGui::InputText("##name", &getComponent<NameComponent>(s, e).name);
             },
-            [](const NameComponent& c) { return nlohmann::json{ { "name", c.name } }; },
+            [](const NameComponent& c) -> nlohmann::json { return nlohmann::json{ { "name", c.name } }; },
             [](NameComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.name = jsonStringOr(j, "name", std::string{});
@@ -169,7 +169,7 @@ export namespace se
 
         registerComponent<TransformComponent>(reg, "Transform",
             [](Scene& s, Entity e)
-            {
+        {
                 TransformComponent& t = getComponent<TransformComponent>(s, e);
                 ImGui::DragFloat3("Translation", &t.translation.x, 0.1f);
                 glm::vec3 degrees = glm::degrees(t.rotation);
@@ -180,7 +180,7 @@ export namespace se
                 ImGui::DragFloat3("Scale", &t.scale.x, 0.1f);
             },
             [](const TransformComponent& t)
-            {
+            -> nlohmann::json {
                 return nlohmann::json{ { "translation", vec3ToJson(t.translation) },
                                        { "scale", vec3ToJson(t.scale) },
                                        { "rotation", vec3ToJson(t.rotation) } };
@@ -196,11 +196,11 @@ export namespace se
 
         registerComponent<MeshComponent>(reg, "Mesh",
             [thumbnailFor](Scene& s, Entity e)
-            {
+        {
                 MeshComponent& mesh = getComponent<MeshComponent>(s, e);
                 drawAssetPicker(s, AssetType::Mesh, "Mesh", mesh.mesh, thumbnailFor);
             },
-            [](const MeshComponent& c) { return nlohmann::json{ { "mesh", c.mesh.value } }; },
+            [](const MeshComponent& c) -> nlohmann::json { return nlohmann::json{ { "mesh", c.mesh.value } }; },
             [](MeshComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.mesh = Uuid{ jsonU64Or(j, "mesh", 0) };
@@ -210,7 +210,7 @@ export namespace se
 
         registerComponent<CameraComponent>(reg, "Camera",
             [](Scene& s, Entity e)
-            {
+        {
                 CameraComponent& camera = getComponent<CameraComponent>(s, e);
                 ImGui::DragFloat("FOV", &camera.fov, 0.5f, 1.0f, 179.0f);
                 ImGui::DragFloat("Near", &camera.nearPlane, 0.01f, 0.001f, camera.farPlane);
@@ -218,7 +218,7 @@ export namespace se
                 ImGui::Checkbox("Primary", &camera.primary);
             },
             [](const CameraComponent& c)
-            {
+            -> nlohmann::json {
                 return nlohmann::json{ { "fov", c.fov }, { "near", c.nearPlane },
                                        { "far", c.farPlane }, { "primary", c.primary } };
             },
@@ -234,14 +234,14 @@ export namespace se
 
         registerComponent<MaterialComponent>(reg, "Material",
             [thumbnailFor](Scene& s, Entity e)
-            {
+        {
                 MaterialComponent& material = getComponent<MaterialComponent>(s, e);
                 ImGui::ColorEdit4("Base Color", &material.baseColor.x);
                 drawAssetPicker(s, AssetType::Texture, "Albedo", material.albedoTexture, thumbnailFor);
                 ImGui::Checkbox("Unlit", &material.unlit);
             },
             [](const MaterialComponent& c)
-            {
+            -> nlohmann::json {
                 return nlohmann::json{ { "baseColor", vec4ToJson(c.baseColor) },
                                        { "albedoTexture", c.albedoTexture.value },
                                        { "unlit", c.unlit } };
@@ -257,7 +257,7 @@ export namespace se
 
         registerComponent<DirectionalLightComponent>(reg, "DirectionalLight",
             [](Scene& s, Entity e)
-            {
+        {
                 DirectionalLightComponent& light = getComponent<DirectionalLightComponent>(s, e);
                 ImGui::DragFloat3("Direction", &light.direction.x, 0.01f);
                 ImGui::ColorEdit3("Color", &light.color.x);
@@ -265,7 +265,7 @@ export namespace se
                 ImGui::DragFloat("Ambient", &light.ambient, 0.01f, 0.0f, 1.0f);
             },
             [](const DirectionalLightComponent& c)
-            {
+            -> nlohmann::json {
                 return nlohmann::json{ { "direction", vec3ToJson(c.direction) },
                                        { "color", vec3ToJson(c.color) },
                                        { "intensity", c.intensity }, { "ambient", c.ambient } };
@@ -282,14 +282,14 @@ export namespace se
 
         registerComponent<PointLightComponent>(reg, "PointLight",
             [](Scene& s, Entity e)
-            {
+        {
                 PointLightComponent& light = getComponent<PointLightComponent>(s, e);
                 ImGui::ColorEdit3("Color", &light.color.x);
                 ImGui::DragFloat("Intensity", &light.intensity, 0.05f, 0.0f, 100.0f);
                 ImGui::DragFloat("Range", &light.range, 0.05f, 0.0f, 200.0f);
             },
             [](const PointLightComponent& c)
-            {
+            -> nlohmann::json {
                 return nlohmann::json{ { "color", vec3ToJson(c.color) },
                                        { "intensity", c.intensity }, { "range", c.range } };
             },
@@ -304,7 +304,7 @@ export namespace se
 
         registerComponent<SpotLightComponent>(reg, "SpotLight",
             [](Scene& s, Entity e)
-            {
+        {
                 SpotLightComponent& light = getComponent<SpotLightComponent>(s, e);
                 ImGui::DragFloat3("Direction", &light.direction.x, 0.01f);
                 ImGui::ColorEdit3("Color", &light.color.x);
@@ -314,7 +314,7 @@ export namespace se
                 ImGui::DragFloat("Outer Angle", &light.outerAngle, 0.1f, 0.0f, 89.0f);
             },
             [](const SpotLightComponent& c)
-            {
+            -> nlohmann::json {
                 return nlohmann::json{ { "direction", vec3ToJson(c.direction) },
                                        { "color", vec3ToJson(c.color) }, { "intensity", c.intensity },
                                        { "range", c.range }, { "innerAngle", c.innerAngle },
@@ -335,7 +335,7 @@ export namespace se
 
     // Heap-owned so EditorContext's heavy destructor (entt/json) is instantiated
     // here, not in the client TU. The editor holds only the pointer.
-    EditorContext* newEditorContext()
+    auto newEditorContext() -> EditorContext*
     {
         EditorContext* ctx = new EditorContext();
         // Components are registered by the client via registerBuiltinComponents(reg,
@@ -374,7 +374,7 @@ export namespace se
         Entity toDelete{ entt::null };
         forEach<IdComponent, NameComponent>(ctx.scene,
             [&](Entity entity, IdComponent& id, NameComponent& name)
-            {
+        {
                 ImGui::PushID(static_cast<int>(id.id.value));
                 const bool isSelected = entity.handle == ctx.selected.handle;
                 if (ImGui::Selectable(name.name.c_str(), isSelected))
@@ -649,7 +649,7 @@ export namespace se
     }
 
     // The editor camera's forward (world space) from its yaw/pitch.
-    glm::vec3 editorCameraForward(const EditorCamera& camera)
+    auto editorCameraForward(const EditorCamera& camera) -> glm::vec3
     {
         const f32 yaw = glm::radians(camera.yaw);
         const f32 pitch = glm::radians(camera.pitch);
@@ -660,7 +660,7 @@ export namespace se
 
     // The editor camera as a Scene CameraView (view + projection params), so renderScene
     // and the gizmo draw from the same eye.
-    CameraView editorCameraView(const EditorCamera& camera)
+    auto editorCameraView(const EditorCamera& camera) -> CameraView
     {
         CameraView result;
         const glm::vec3 forward = editorCameraForward(camera);

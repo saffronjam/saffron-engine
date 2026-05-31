@@ -26,7 +26,7 @@ export namespace se
         std::vector<Entry> entries;
         u64 nextId = 1;
 
-        SubscriptionId subscribe(std::function<bool(Args...)> handler)
+        auto subscribe(std::function<bool(Args...)> handler) -> SubscriptionId
         {
             SubscriptionId id{ nextId };
             nextId = nextId + 1;
@@ -36,7 +36,7 @@ export namespace se
 
         void unsubscribe(SubscriptionId id)
         {
-            std::erase_if(entries, [&](const Entry& entry) { return entry.id == id.value; });
+            std::erase_if(entries, [&](const Entry& entry) -> auto { return entry.id == id.value; });
         }
 
         void publish(Args... args) const

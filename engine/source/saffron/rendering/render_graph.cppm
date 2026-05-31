@@ -102,17 +102,17 @@ export namespace se
         std::vector<RgPass> passes;
     };
 
-    RenderGraph newRenderGraph();
+    auto newRenderGraph() -> RenderGraph;
 
     /// Import an external image (offscreen/swapchain target). When externalLayout is
     /// set it seeds the entry layout and receives the resolved layout after execute,
     /// so an image's layout carries across frames.
-    RgResource importImage(RenderGraph& graph, vk::Image image, vk::ImageView view,
+    auto importImage(RenderGraph& graph, vk::Image image, vk::ImageView view,
                            vk::ImageAspectFlags aspect, vk::ImageLayout initialLayout,
-                           vk::ImageLayout* externalLayout);
+                           vk::ImageLayout* externalLayout) -> RgResource;
 
     /// Import an external buffer produced and/or consumed within the frame.
-    RgResource importBuffer(RenderGraph& graph, vk::Buffer buffer);
+    auto importBuffer(RenderGraph& graph, vk::Buffer buffer) -> RgResource;
 
     void addPass(RenderGraph& graph, RgPass pass);
 
@@ -131,7 +131,7 @@ namespace se
         bool isWrite;
     };
 
-    RgUsageInfo usageInfo(RgUsage usage)
+    auto usageInfo(RgUsage usage) -> RgUsageInfo
     {
         switch (usage)
         {
@@ -239,14 +239,14 @@ namespace se
         r.touched = true;
     }
 
-    RenderGraph newRenderGraph()
+    auto newRenderGraph() -> RenderGraph
     {
         return RenderGraph{};
     }
 
-    RgResource importImage(RenderGraph& graph, vk::Image image, vk::ImageView view,
+    auto importImage(RenderGraph& graph, vk::Image image, vk::ImageView view,
                            vk::ImageAspectFlags aspect, vk::ImageLayout initialLayout,
-                           vk::ImageLayout* externalLayout)
+                           vk::ImageLayout* externalLayout) -> RgResource
     {
         RgResourceState r;
         r.isImage = true;
@@ -264,7 +264,7 @@ namespace se
         return RgResource{ static_cast<u32>(graph.resources.size() - 1) };
     }
 
-    RgResource importBuffer(RenderGraph& graph, vk::Buffer buffer)
+    auto importBuffer(RenderGraph& graph, vk::Buffer buffer) -> RgResource
     {
         RgResourceState r;
         r.isImage = false;

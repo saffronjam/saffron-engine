@@ -24,31 +24,31 @@ export namespace se
     using Json = nlohmann::json;
 
     /// Parse text into a Json value, or an error (never aborts).
-    Result<Json> parseJson(std::string_view text);
+    auto parseJson(std::string_view text) -> Result<Json>;
 
     /// Serialize to a string; invalid UTF-8 is replaced rather than aborting. indent < 0
     /// is compact, >= 0 pretty-prints with that many spaces.
-    std::string dumpJson(const Json& value, int indent = -1);
+    auto dumpJson(const Json& value, int indent = -1) -> std::string;
 
     /// Typed object-field reads. Each checks the value's type before extracting, so a
     /// missing key or a wrong type yields an error instead of aborting. jsonU64 also
     /// accepts a numeric string (the se CLI passes bare numbers as strings).
-    Result<u64> jsonU64(const Json& object, std::string_view key);
-    Result<std::string> jsonString(const Json& object, std::string_view key);
-    Result<f64> jsonF64(const Json& object, std::string_view key);
-    Result<bool> jsonBool(const Json& object, std::string_view key);
+    auto jsonU64(const Json& object, std::string_view key) -> Result<u64>;
+    auto jsonString(const Json& object, std::string_view key) -> Result<std::string>;
+    auto jsonF64(const Json& object, std::string_view key) -> Result<f64>;
+    auto jsonBool(const Json& object, std::string_view key) -> Result<bool>;
 
     /// The same reads, returning a fallback instead of an error when the key is absent or
     /// mistyped (the "value-or-default" pattern for optional fields).
-    u64 jsonU64Or(const Json& object, std::string_view key, u64 fallback);
-    std::string jsonStringOr(const Json& object, std::string_view key, std::string fallback);
-    f32 jsonF32Or(const Json& object, std::string_view key, f32 fallback);
-    bool jsonBoolOr(const Json& object, std::string_view key, bool fallback);
+    auto jsonU64Or(const Json& object, std::string_view key, u64 fallback) -> u64;
+    auto jsonStringOr(const Json& object, std::string_view key, std::string fallback) -> std::string;
+    auto jsonF32Or(const Json& object, std::string_view key, f32 fallback) -> f32;
+    auto jsonBoolOr(const Json& object, std::string_view key, bool fallback) -> bool;
 }
 
 namespace se
 {
-    Result<Json> parseJson(std::string_view text)
+    auto parseJson(std::string_view text) -> Result<Json>
     {
         Json value = Json::parse(text, nullptr, false);  // allow_exceptions = false
         if (value.is_discarded())
@@ -58,7 +58,7 @@ namespace se
         return value;
     }
 
-    std::string dumpJson(const Json& value, int indent)
+    auto dumpJson(const Json& value, int indent) -> std::string
     {
         return value.dump(indent, ' ', false, Json::error_handler_t::replace);
     }
@@ -66,7 +66,7 @@ namespace se
     // Locate object[key]; null iterator semantics via end().
     namespace
     {
-        Json::const_iterator findField(const Json& object, std::string_view key)
+        auto findField(const Json& object, std::string_view key) -> Json::const_iterator
         {
             if (!object.is_object())
             {
@@ -76,7 +76,7 @@ namespace se
         }
     }
 
-    Result<u64> jsonU64(const Json& object, std::string_view key)
+    auto jsonU64(const Json& object, std::string_view key) -> Result<u64>
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
@@ -108,7 +108,7 @@ namespace se
         return Err(std::format("key '{}' is not an unsigned integer", key));
     }
 
-    Result<std::string> jsonString(const Json& object, std::string_view key)
+    auto jsonString(const Json& object, std::string_view key) -> Result<std::string>
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
@@ -122,7 +122,7 @@ namespace se
         return Err(std::format("key '{}' is not a string", key));
     }
 
-    Result<f64> jsonF64(const Json& object, std::string_view key)
+    auto jsonF64(const Json& object, std::string_view key) -> Result<f64>
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
@@ -136,7 +136,7 @@ namespace se
         return Err(std::format("key '{}' is not a number", key));
     }
 
-    Result<bool> jsonBool(const Json& object, std::string_view key)
+    auto jsonBool(const Json& object, std::string_view key) -> Result<bool>
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
@@ -150,7 +150,7 @@ namespace se
         return Err(std::format("key '{}' is not a boolean", key));
     }
 
-    u64 jsonU64Or(const Json& object, std::string_view key, u64 fallback)
+    auto jsonU64Or(const Json& object, std::string_view key, u64 fallback) -> u64
     {
         auto value = jsonU64(object, key);
         if (value)
@@ -160,7 +160,7 @@ namespace se
         return fallback;
     }
 
-    std::string jsonStringOr(const Json& object, std::string_view key, std::string fallback)
+    auto jsonStringOr(const Json& object, std::string_view key, std::string fallback) -> std::string
     {
         auto value = jsonString(object, key);
         if (value)
@@ -170,7 +170,7 @@ namespace se
         return fallback;
     }
 
-    f32 jsonF32Or(const Json& object, std::string_view key, f32 fallback)
+    auto jsonF32Or(const Json& object, std::string_view key, f32 fallback) -> f32
     {
         auto value = jsonF64(object, key);
         if (value)
@@ -180,7 +180,7 @@ namespace se
         return fallback;
     }
 
-    bool jsonBoolOr(const Json& object, std::string_view key, bool fallback)
+    auto jsonBoolOr(const Json& object, std::string_view key, bool fallback) -> bool
     {
         auto value = jsonBool(object, key);
         if (value)

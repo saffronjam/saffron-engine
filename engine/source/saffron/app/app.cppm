@@ -47,7 +47,7 @@ export namespace se
 
     namespace detail
     {
-        u64 frameLimitFromEnv()
+        auto frameLimitFromEnv() -> u64
         {
             const char* raw = std::getenv("SAFFRON_EXIT_AFTER_FRAMES");
             if (raw == nullptr)
@@ -67,7 +67,7 @@ export namespace se
     }
 
     // Owns the main loop. Returns a process exit code.
-    int run(AppConfig config)
+    auto run(AppConfig config) -> int
     {
         auto windowResult = newWindow(config.window);
         if (!windowResult)
@@ -78,7 +78,7 @@ export namespace se
 
         App app;
         app.window = std::move(*windowResult);
-        app.window.onClose.subscribe([&app](){ app.running = false; return false; });
+        app.window.onClose.subscribe([&app]() { app.running = false; return false; });
 
         auto rendererResult = newRenderer(app.window);
         if (!rendererResult)

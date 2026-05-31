@@ -76,7 +76,7 @@ export namespace se
 
         Pipeline() = default;
         Pipeline(const Pipeline&) = delete;
-        Pipeline& operator=(const Pipeline&) = delete;
+        auto operator=(const Pipeline&) -> Pipeline& = delete;
 
         Pipeline(Pipeline&& other) noexcept
             : device(other.device), pipeline(other.pipeline), layout(other.layout)
@@ -86,7 +86,7 @@ export namespace se
             other.layout = nullptr;
         }
 
-        Pipeline& operator=(Pipeline&& other) noexcept
+        auto operator=(Pipeline&& other) noexcept -> Pipeline&
         {
             if (this != &other)
             {
@@ -139,7 +139,7 @@ export namespace se
 
         Image() = default;
         Image(const Image&) = delete;
-        Image& operator=(const Image&) = delete;
+        auto operator=(const Image&) -> Image& = delete;
 
         Image(Image&& other) noexcept
             : device(other.device), allocator(other.allocator), image(other.image),
@@ -154,7 +154,7 @@ export namespace se
             other.layout = vk::ImageLayout::eUndefined;
         }
 
-        Image& operator=(Image&& other) noexcept
+        auto operator=(Image&& other) noexcept -> Image&
         {
             if (this != &other)
             {
@@ -214,7 +214,7 @@ export namespace se
 
         GpuMesh() = default;
         GpuMesh(const GpuMesh&) = delete;
-        GpuMesh& operator=(const GpuMesh&) = delete;
+        auto operator=(const GpuMesh&) -> GpuMesh& = delete;
 
         GpuMesh(GpuMesh&& other) noexcept
             : allocator(other.allocator), vertexBuffer(other.vertexBuffer), vertexAlloc(other.vertexAlloc),
@@ -228,7 +228,7 @@ export namespace se
             other.indexAlloc = nullptr;
         }
 
-        GpuMesh& operator=(GpuMesh&& other) noexcept
+        auto operator=(GpuMesh&& other) noexcept -> GpuMesh&
         {
             if (this != &other)
             {
@@ -292,7 +292,7 @@ export namespace se
 
         GpuTexture() = default;
         GpuTexture(const GpuTexture&) = delete;
-        GpuTexture& operator=(const GpuTexture&) = delete;
+        auto operator=(const GpuTexture&) -> GpuTexture& = delete;
 
         GpuTexture(GpuTexture&& other) noexcept
             : device(other.device), allocator(other.allocator), image(other.image),
@@ -306,7 +306,7 @@ export namespace se
             other.alloc = nullptr;
         }
 
-        GpuTexture& operator=(GpuTexture&& other) noexcept
+        auto operator=(GpuTexture&& other) noexcept -> GpuTexture&
         {
             if (this != &other)
             {
@@ -363,7 +363,7 @@ export namespace se
 
         Buffer() = default;
         Buffer(const Buffer&) = delete;
-        Buffer& operator=(const Buffer&) = delete;
+        auto operator=(const Buffer&) -> Buffer& = delete;
 
         Buffer(Buffer&& other) noexcept
             : allocator(other.allocator), buffer(other.buffer), alloc(other.alloc),
@@ -376,7 +376,7 @@ export namespace se
             other.size = 0;
         }
 
-        Buffer& operator=(Buffer&& other) noexcept
+        auto operator=(Buffer&& other) noexcept -> Buffer&
         {
             if (this != &other)
             {
@@ -592,19 +592,19 @@ export namespace se
         Window* window = nullptr;  // borrowed
     };
 
-    Result<Renderer> newRenderer(Window& window);
+    auto newRenderer(Window& window) -> Result<Renderer>;
     void destroyRenderer(Renderer& renderer);
 
-    bool beginFrame(Renderer& renderer);
+    auto beginFrame(Renderer& renderer) -> bool;
     void submit(Renderer& renderer, RenderFn fn);    // scene pass (offscreen target)
     void submitUi(Renderer& renderer, RenderFn fn);  // ui pass (swapchain)
     // Build the frame's graph (cull + scene). The run loop then lets layers add passes
     // (onRenderGraph) before endFrame finishes it with the ui pass + executes it.
     void beginFrameGraph(Renderer& renderer);
-    RenderGraph& frameGraph(Renderer& renderer);
+    auto frameGraph(Renderer& renderer) -> RenderGraph&;
     // The offscreen color resource in the current frame graph — an app-authored pass
     // (e.g. post-process) declares its reads/writes against this handle.
-    RgResource viewportColorResource(const Renderer& renderer);
+    auto viewportColorResource(const Renderer& renderer) -> RgResource;
     // Add an in-place post-process tonemap pass on the offscreen color (app-authored;
     // called from a layer's onRenderGraph when post-process is enabled).
     void addTonemapPass(Renderer& renderer, RenderGraph& graph);
@@ -612,12 +612,12 @@ export namespace se
 
     // The offscreen Viewport target the editor samples + displays in a panel.
     void setViewportDesiredSize(Renderer& renderer, u32 width, u32 height);
-    vk::ImageView viewportImageView(const Renderer& renderer);
-    u32 viewportGeneration(const Renderer& renderer);
-    u32 viewportWidth(const Renderer& renderer);
-    u32 viewportHeight(const Renderer& renderer);
+    auto viewportImageView(const Renderer& renderer) -> vk::ImageView;
+    auto viewportGeneration(const Renderer& renderer) -> u32;
+    auto viewportWidth(const Renderer& renderer) -> u32;
+    auto viewportHeight(const Renderer& renderer) -> u32;
 
-    std::string assetPath(std::string_view relative);
+    auto assetPath(std::string_view relative) -> std::string;
 
     // One entry per drawn entity in the per-frame instance storage buffer (set 2).
     // The vertex shader indexes it by InstanceIndex (firstInstance + gl_InstanceID).
@@ -633,23 +633,23 @@ export namespace se
     // Mesh rendering: a depth-tested instanced pipeline (set 0 = material albedo,
     // set 1 = directional light, set 2 = per-instance data; push constant = viewProj),
     // device-local mesh + texture uploads, and a batched instanced draw via submit().
-    Result<Ref<Pipeline>> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit = false);
+    auto newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit = false) -> Result<Ref<Pipeline>>;
     // The PSO cache front door: returns the mesh pipeline for a material variant, building
     // + caching it on first request. The renderer owns it; the client never creates PSOs.
-    Ref<Pipeline> requestMeshPipeline(Renderer& renderer, const Material& material);
+    auto requestMeshPipeline(Renderer& renderer, const Material& material) -> Ref<Pipeline>;
     // Number of distinct mesh PSOs the cache holds (inspectable to verify übershader reuse).
-    u32 pipelineCount(const Renderer& renderer);
-    Result<Ref<GpuMesh>> uploadMesh(Renderer& renderer, const Mesh& mesh);
-    Result<Ref<GpuTexture>> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb);
+    auto pipelineCount(const Renderer& renderer) -> u32;
+    auto uploadMesh(Renderer& renderer, const Mesh& mesh) -> Result<Ref<GpuMesh>>;
+    auto uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb) -> Result<Ref<GpuTexture>>;
 
     // Rasterizes an SVG to a square RGBA icon (tint multiplied in) and uploads it as a
     // GPU texture — used for asset-browser type icons. "currentColor" maps to white.
-    Result<Ref<GpuTexture>> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
-                                                              u32 pixelSize, glm::vec4 tint);
+    auto uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
+                                                              u32 pixelSize, glm::vec4 tint) -> Result<Ref<GpuTexture>>;
 
     // Renders a mesh to a square GPU texture (a 3/4 view framed by the mesh AABB, lit by
     // a fixed light) for an asset thumbnail. Synchronous one-off render; safe between frames.
-    Result<Ref<GpuTexture>> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size);
+    auto renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size) -> Result<Ref<GpuTexture>>;
 
     // Resolves each item's material to a cached PSO, batches by (pipeline, mesh, texture),
     // uploads the frame's instance buffer, and stores the structured draw list on the
@@ -689,21 +689,21 @@ export namespace se
     // Toggles clustered light culling. When off, the fragment shader loops every light
     // (the reference path) — useful for A/B verification.
     void setClustered(Renderer& renderer, bool enabled);
-    bool clusteredEnabled(const Renderer& renderer);
+    auto clusteredEnabled(const Renderer& renderer) -> bool;
     void setPostProcess(Renderer& renderer, bool enabled);
-    bool postProcessEnabled(const Renderer& renderer);
+    auto postProcessEnabled(const Renderer& renderer) -> bool;
     void setDepthPrepass(Renderer& renderer, bool enabled);
-    bool depthPrepassEnabled(const Renderer& renderer);
+    auto depthPrepassEnabled(const Renderer& renderer) -> bool;
     // Anti-aliasing: msaaSamples is 1 (off) / 2 / 4 / 8 (clamped to the device cap); fxaa
     // toggles the post-process pass. Recreates the MSAA targets + rebuilds scene PSOs.
     void setAa(Renderer& renderer, u32 msaaSamples, bool fxaa);
-    std::string aaMode(const Renderer& renderer);  // "off" | "fxaa" | "msaa2|4|8"
+    auto aaMode(const Renderer& renderer) -> std::string;  // "off" | "fxaa" | "msaa2|4|8"
 
     // A 1x1 white texture; bind it when a material has no albedo.
-    const Ref<GpuTexture>& defaultTexture(const Renderer& renderer);
+    auto defaultTexture(const Renderer& renderer) -> const Ref<GpuTexture>&;
 
     // The most recent frame's scene draw counters (draw calls, batches, instances).
-    RenderStats renderStats(const Renderer& renderer);
+    auto renderStats(const Renderer& renderer) -> RenderStats;
 
     // Blocks until the GPU has finished all submitted work. Call before dropping
     // resource Refs at shutdown so no in-flight command buffer still references them.
@@ -711,11 +711,11 @@ export namespace se
 
     // Copies the offscreen viewport image to a PNG. Synchronous (own submit +
     // waitIdle), safe to call between frames.
-    Result<void> captureViewport(Renderer& renderer, const std::string& path);
+    auto captureViewport(Renderer& renderer, const std::string& path) -> Result<void>;
 
     // Requests a PNG of the next presented frame (written in endFrame). Fails here
     // if the surface lacks TRANSFER_SRC; otherwise returns immediately.
-    Result<void> requestWindowCapture(Renderer& renderer, std::string path);
+    auto requestWindowCapture(Renderer& renderer, std::string path) -> Result<void>;
 }
 
 namespace se
@@ -724,7 +724,7 @@ namespace se
     {
         // Converts a Vulkan-Hpp ResultValue to Result, checked at the call site.
         template <typename T>
-        Result<T> checked(vk::ResultValue<T> rv, std::string_view what)
+        auto checked(vk::ResultValue<T> rv, std::string_view what) -> Result<T>
         {
             if (rv.result != vk::Result::eSuccess)
             {
@@ -733,7 +733,7 @@ namespace se
             return std::move(rv.value);
         }
 
-        Result<void> checked(vk::Result result, std::string_view what)
+        auto checked(vk::Result result, std::string_view what) -> Result<void>
         {
             if (result != vk::Result::eSuccess)
             {
@@ -789,7 +789,7 @@ namespace se
             }
         }
 
-        Result<void> buildSwapchain(Renderer& renderer, u32 width, u32 height)
+        auto buildSwapchain(Renderer& renderer, u32 width, u32 height) -> Result<void>
         {
             // TRANSFER_SRC on swapchain images is not spec-guaranteed (only
             // COLOR_ATTACHMENT is). Query support and only request it when present
@@ -889,7 +889,7 @@ namespace se
             }
         }
 
-        Result<vk::ShaderModule> loadShaderModule(vk::Device device, const std::string& path)
+        auto loadShaderModule(vk::Device device, const std::string& path) -> Result<vk::ShaderModule>
         {
             std::ifstream file(path, std::ios::binary | std::ios::ate);
             if (!file)
@@ -911,9 +911,9 @@ namespace se
             return checked(device.createShaderModule(info), std::format("createShaderModule '{}'", path));
         }
 
-        Result<Image> newColorImage(Renderer& renderer, u32 width, u32 height,
+        auto newColorImage(Renderer& renderer, u32 width, u32 height,
                                                         vk::Format format, bool storage = false,
-                                                        vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1)
+                                                        vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1) -> Result<Image>
         {
             vk::FormatProperties props = renderer.physicalDevice.getFormatProperties(format);
             vk::FormatFeatureFlags needed =
@@ -984,8 +984,8 @@ namespace se
             return result;
         }
 
-        Result<Image> newDepthImage(Renderer& renderer, u32 width, u32 height,
-                                                        vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1)
+        auto newDepthImage(Renderer& renderer, u32 width, u32 height,
+                                                        vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1) -> Result<Image>
         {
             VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
             imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -1101,9 +1101,9 @@ namespace se
         }
 
         // Host-visible, mapped buffer the caller owns (vmaDestroyBuffer when done).
-        Result<void> newHostCaptureBuffer(
+        auto newHostCaptureBuffer(
             Renderer& renderer, vk::DeviceSize bytes,
-            VkBuffer& outBuffer, VmaAllocation& outAlloc, VmaAllocationInfo& outInfo)
+            VkBuffer& outBuffer, VmaAllocation& outAlloc, VmaAllocationInfo& outInfo) -> Result<void>
         {
             VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             bufferInfo.size = bytes;
@@ -1143,8 +1143,8 @@ namespace se
         }
 
         // Writes a PNG, reordering BGRA source pixels to RGB.
-        Result<void> writeBufferToPng(
-            const unsigned char* pixels, u32 width, u32 height, vk::Format format, const std::string& path)
+        auto writeBufferToPng(
+            const unsigned char* pixels, u32 width, u32 height, vk::Format format, const std::string& path) -> Result<void>
         {
             const bool bgr = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
             std::vector<unsigned char> rgb(static_cast<std::size_t>(width) * height * 3);
@@ -1203,7 +1203,7 @@ namespace se
         inline constexpr u32 LightListInitial = 16;
 
         // A host-visible, persistently mapped storage buffer for per-frame uploads.
-        Result<Ref<Buffer>> makeMappedStorageBuffer(Renderer& renderer, vk::DeviceSize bytes)
+        auto makeMappedStorageBuffer(Renderer& renderer, vk::DeviceSize bytes) -> Result<Ref<Buffer>>
         {
             VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             info.size = bytes;
@@ -1229,7 +1229,7 @@ namespace se
 
         // A device-local storage buffer (no host access) — for GPU-only scratch like
         // the compute-written cluster light lists.
-        Result<Ref<Buffer>> makeDeviceStorageBuffer(Renderer& renderer, vk::DeviceSize bytes)
+        auto makeDeviceStorageBuffer(Renderer& renderer, vk::DeviceSize bytes) -> Result<Ref<Buffer>>
         {
             VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             info.size = bytes;
@@ -1252,8 +1252,8 @@ namespace se
 
         // Builds a compute pipeline from a SPIR-V module (entry "computeMain") + a single
         // descriptor set layout. Returned as a Ref<Pipeline> (move-only RAII).
-        Result<Ref<Pipeline>> newComputePipeline(
-            Renderer& renderer, std::string_view shaderName, vk::DescriptorSetLayout setLayout)
+        auto newComputePipeline(
+            Renderer& renderer, std::string_view shaderName, vk::DescriptorSetLayout setLayout) -> Result<Ref<Pipeline>>
         {
             auto moduleResult = loadShaderModule(renderer.device, assetPath(shaderName));
             if (!moduleResult)
@@ -1298,7 +1298,7 @@ namespace se
         // vertex shader (instance set 2 + viewProj push constant) but has no fragment
         // shader and no color attachment, so it only lays down depth (test+write LESS).
         // Its pipeline layout matches the mesh layout (so the same set 2 + push bind).
-        Result<Ref<Pipeline>> makeDepthPrepassPipeline(Renderer& renderer, std::string_view shaderName)
+        auto makeDepthPrepassPipeline(Renderer& renderer, std::string_view shaderName) -> Result<Ref<Pipeline>>
         {
             auto moduleResult = loadShaderModule(renderer.device, assetPath(shaderName));
             if (!moduleResult)
@@ -1452,7 +1452,7 @@ namespace se
 
         // The shared sampler, material/light set layouts, descriptor pool, and the
         // per-frame light UBO + its set. Called once in newRenderer.
-        Result<void> initDescriptorResources(Renderer& renderer)
+        auto initDescriptorResources(Renderer& renderer) -> Result<void>
         {
             vk::SamplerCreateInfo samplerInfo{};
             samplerInfo.magFilter = vk::Filter::eLinear;
@@ -1813,7 +1813,7 @@ namespace se
         }
     }
 
-    Result<Renderer> newRenderer(Window& window)
+    auto newRenderer(Window& window) -> Result<Renderer>
     {
         Renderer renderer;
         renderer.window = &window;
@@ -2113,7 +2113,7 @@ namespace se
         vkb::destroy_instance(renderer.vkbInstance);
     }
 
-    bool beginFrame(Renderer& renderer)
+    auto beginFrame(Renderer& renderer) -> bool
     {
         FrameData& frame = renderer.frames[renderer.frameIndex];
 
@@ -2204,22 +2204,22 @@ namespace se
         renderer.viewportDesiredHeight = height;
     }
 
-    vk::ImageView viewportImageView(const Renderer& renderer)
+    auto viewportImageView(const Renderer& renderer) -> vk::ImageView
     {
         return renderer.offscreenViewport.view;
     }
 
-    u32 viewportGeneration(const Renderer& renderer)
+    auto viewportGeneration(const Renderer& renderer) -> u32
     {
         return renderer.viewportGeneration;
     }
 
-    u32 viewportWidth(const Renderer& renderer)
+    auto viewportWidth(const Renderer& renderer) -> u32
     {
         return renderer.offscreenViewport.extent.width;
     }
 
-    u32 viewportHeight(const Renderer& renderer)
+    auto viewportHeight(const Renderer& renderer) -> u32
     {
         return renderer.offscreenViewport.extent.height;
     }
@@ -2281,7 +2281,7 @@ namespace se
             cull.kind = RgPassKind::Compute;
             cull.accesses = { RgAccess{ clusterBuffer, RgUsage::StorageWriteCompute } };
             cull.execute = [&renderer, f](vk::CommandBuffer cmd)
-            {
+        {
                 cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.cullPipeline->pipeline);
                 cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
                     renderer.cullPipeline->layout, 0, renderer.clusterSets[f], {});
@@ -2304,7 +2304,7 @@ namespace se
                 vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
             depthPass.renderArea = offscreen.extent;
             depthPass.execute = [&renderer](vk::CommandBuffer cmd)
-            {
+        {
                 recordDepthPrepass(renderer, cmd);
             };
             addPass(graph, std::move(depthPass));
@@ -2356,7 +2356,7 @@ namespace se
                                   RgAccess{ renderer.frameSceneColor, RgUsage::StorageImageRWCompute } };
             const vk::Extent2D extent = offscreen.extent;
             fxaaPass.execute = [&renderer, extent](vk::CommandBuffer cmd)
-            {
+        {
                 cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.fxaaPipeline->pipeline);
                 cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
                     renderer.fxaaPipeline->layout, 0, renderer.fxaaSet, {});
@@ -2366,12 +2366,12 @@ namespace se
         }
     }
 
-    RenderGraph& frameGraph(Renderer& renderer)
+    auto frameGraph(Renderer& renderer) -> RenderGraph&
     {
         return renderer.renderGraph;
     }
 
-    RgResource viewportColorResource(const Renderer& renderer)
+    auto viewportColorResource(const Renderer& renderer) -> RgResource
     {
         return renderer.frameSceneColor;
     }
@@ -2516,7 +2516,7 @@ namespace se
         renderer.frameIndex = (renderer.frameIndex + 1) % MaxFramesInFlight;
     }
 
-    std::string assetPath(std::string_view relative)
+    auto assetPath(std::string_view relative) -> std::string
     {
         const char* base = SDL_GetBasePath();  // SDL3: owned by SDL, do not free
         std::string result;
@@ -2528,7 +2528,7 @@ namespace se
         return result;
     }
 
-    Result<Ref<Pipeline>> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit)
+    auto newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit) -> Result<Ref<Pipeline>>
     {
         std::string path = assetPath(shaderName);
         auto moduleResult = loadShaderModule(renderer.device, path);
@@ -2654,7 +2654,7 @@ namespace se
         return std::make_shared<Pipeline>(std::move(pipeline));
     }
 
-    Ref<Pipeline> requestMeshPipeline(Renderer& renderer, const Material& material)
+    auto requestMeshPipeline(Renderer& renderer, const Material& material) -> Ref<Pipeline>
     {
         std::string key = material.shader;
         if (material.unlit)
@@ -2676,12 +2676,12 @@ namespace se
         return *built;
     }
 
-    u32 pipelineCount(const Renderer& renderer)
+    auto pipelineCount(const Renderer& renderer) -> u32
     {
         return static_cast<u32>(renderer.pipelineCache.size());
     }
 
-    Result<Ref<GpuMesh>> uploadMesh(Renderer& renderer, const Mesh& mesh)
+    auto uploadMesh(Renderer& renderer, const Mesh& mesh) -> Result<Ref<GpuMesh>>
     {
         if (mesh.vertices.empty() || mesh.indices.empty())
         {
@@ -2785,7 +2785,7 @@ namespace se
 
     // Ensures the current frame's instance buffer holds at least `count` elements,
     // growing to the next power of two (never shrinking) and rewriting its set.
-    Result<void> ensureInstanceCapacity(Renderer& renderer, u32 frame, u32 count)
+    auto ensureInstanceCapacity(Renderer& renderer, u32 frame, u32 count) -> Result<void>
     {
         if (renderer.instanceBuffers[frame] && renderer.instanceCapacity[frame] >= count)
         {
@@ -2824,7 +2824,7 @@ namespace se
 
     // Ensures the current frame's punctual-light buffer holds at least `count` lights,
     // growing to the next power of two (never shrinking) and rewriting its set.
-    Result<void> ensureLightCapacity(Renderer& renderer, u32 frame, u32 count)
+    auto ensureLightCapacity(Renderer& renderer, u32 frame, u32 count) -> Result<void>
     {
         if (renderer.lightListBuffers[frame] && renderer.lightListCapacity[frame] >= count)
         {
@@ -3030,12 +3030,12 @@ namespace se
         }
     }
 
-    const Ref<GpuTexture>& defaultTexture(const Renderer& renderer)
+    auto defaultTexture(const Renderer& renderer) -> const Ref<GpuTexture>&
     {
         return renderer.defaultWhiteTexture;
     }
 
-    RenderStats renderStats(const Renderer& renderer)
+    auto renderStats(const Renderer& renderer) -> RenderStats
     {
         return renderer.stats;
     }
@@ -3110,7 +3110,7 @@ namespace se
         renderer.useClustered = enabled;
     }
 
-    bool clusteredEnabled(const Renderer& renderer)
+    auto clusteredEnabled(const Renderer& renderer) -> bool
     {
         return renderer.useClustered;
     }
@@ -3120,7 +3120,7 @@ namespace se
         renderer.usePostProcess = enabled;
     }
 
-    bool postProcessEnabled(const Renderer& renderer)
+    auto postProcessEnabled(const Renderer& renderer) -> bool
     {
         return renderer.usePostProcess;
     }
@@ -3130,7 +3130,7 @@ namespace se
         renderer.useDepthPrepass = enabled;
     }
 
-    bool depthPrepassEnabled(const Renderer& renderer)
+    auto depthPrepassEnabled(const Renderer& renderer) -> bool
     {
         return renderer.useDepthPrepass;
     }
@@ -3166,7 +3166,7 @@ namespace se
         }
     }
 
-    std::string aaMode(const Renderer& renderer)
+    auto aaMode(const Renderer& renderer) -> std::string
     {
         if (renderer.fxaaEnabled)
         {
@@ -3180,8 +3180,8 @@ namespace se
         return std::format("msaa{}", n);
     }
 
-    Result<Ref<GpuTexture>> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
-                                                              u32 pixelSize, glm::vec4 tint)
+    auto uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
+                                                              u32 pixelSize, glm::vec4 tint) -> Result<Ref<GpuTexture>>
     {
         std::ifstream in(svgPath);
         if (!in)
@@ -3230,7 +3230,7 @@ namespace se
 
     // The minimal mesh-thumbnail pipeline (vertex input + a 2x mat4 push constant, no
     // descriptor sets). Color format matches the offscreen thumbnail image.
-    Result<Ref<Pipeline>> newThumbnailPipeline(Renderer& renderer)
+    auto newThumbnailPipeline(Renderer& renderer) -> Result<Ref<Pipeline>>
     {
         auto moduleResult = loadShaderModule(renderer.device, assetPath("shaders/thumbnail.spv"));
         if (!moduleResult)
@@ -3329,7 +3329,7 @@ namespace se
         return std::make_shared<Pipeline>(std::move(pipeline));
     }
 
-    Result<Ref<GpuTexture>> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size)
+    auto renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size) -> Result<Ref<GpuTexture>>
     {
         if (!mesh)
         {
@@ -3462,7 +3462,7 @@ namespace se
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 
-    Result<Ref<GpuTexture>> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb)
+    auto uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb) -> Result<Ref<GpuTexture>>
     {
         if (width == 0 || height == 0)
         {
@@ -3574,7 +3574,7 @@ namespace se
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 
-    Result<void> captureViewport(Renderer& renderer, const std::string& path)
+    auto captureViewport(Renderer& renderer, const std::string& path) -> Result<void>
     {
         Image& img = renderer.offscreenViewport;
         const u32 width = img.extent.width;
@@ -3647,7 +3647,7 @@ namespace se
         return {};
     }
 
-    Result<void> requestWindowCapture(Renderer& renderer, std::string path)
+    auto requestWindowCapture(Renderer& renderer, std::string path) -> Result<void>
     {
         if (!renderer.swapchainCaptureSupported)
         {
