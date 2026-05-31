@@ -237,16 +237,19 @@ export namespace se
                 MaterialComponent& material = getComponent<MaterialComponent>(s, e);
                 ImGui::ColorEdit4("Base Color", &material.baseColor.x);
                 drawAssetPicker(s, AssetType::Texture, "Albedo", material.albedoTexture, thumbnailFor);
+                ImGui::Checkbox("Unlit", &material.unlit);
             },
             [](const MaterialComponent& c)
             {
                 return nlohmann::json{ { "baseColor", vec4ToJson(c.baseColor) },
-                                       { "albedoTexture", c.albedoTexture.value } };
+                                       { "albedoTexture", c.albedoTexture.value },
+                                       { "unlit", c.unlit } };
             },
             [](MaterialComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
             {
                 c.baseColor = vec4FromJson(j.value("baseColor", nlohmann::json::object()));
                 c.albedoTexture = Uuid{ j.value("albedoTexture", u64{ 0 }) };
+                c.unlit = j.value("unlit", false);
                 return {};
             },
             true);

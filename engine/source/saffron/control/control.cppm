@@ -460,7 +460,7 @@ export namespace se
 
         // Adds/updates the entity's Material, merging the provided fields over its
         // current value (baseColor as {x,y,z,w}).
-        registerCommand(reg, "set-material", "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid}",
+        registerCommand(reg, "set-material", "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid, unlit?:0|1}",
             [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
             {
                 std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
@@ -480,6 +480,25 @@ export namespace se
                 json body = row->serialize(ctx.editor.scene, *entity);
                 if (params.contains("baseColor")) { body["baseColor"] = params["baseColor"]; }
                 if (params.contains("albedoTexture")) { body["albedoTexture"] = params["albedoTexture"]; }
+                if (params.contains("unlit"))
+                {
+                    const json& u = params["unlit"];
+                    bool unlit = false;
+                    if (u.is_number())
+                    {
+                        unlit = u.get<double>() != 0.0;
+                    }
+                    else if (u.is_boolean())
+                    {
+                        unlit = u.get<bool>();
+                    }
+                    else if (u.is_string())
+                    {
+                        const std::string s = u.get<std::string>();
+                        unlit = !(s == "0" || s == "false" || s == "off");
+                    }
+                    body["unlit"] = unlit;
+                }
                 std::expected<void, std::string> result = row->deserialize(ctx.editor.scene, *entity, body);
                 if (!result)
                 {

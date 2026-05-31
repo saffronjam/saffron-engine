@@ -201,7 +201,11 @@ namespace se
                 barrier.dstStageMask = target.stage;
                 barrier.dstAccessMask = target.access;
                 barrier.oldLayout = r.layout;
-                barrier.newLayout = layoutChange ? target.layout : r.layout;
+                barrier.newLayout = r.layout;
+                if (layoutChange)
+                {
+                    barrier.newLayout = target.layout;
+                }
                 barrier.image = r.image;
                 barrier.subresourceRange = vk::ImageSubresourceRange{ r.aspect, 0, 1, 0, 1 };
                 imageBarriers.push_back(barrier);
@@ -241,7 +245,11 @@ namespace se
         r.image = image;
         r.view = view;
         r.aspect = aspect;
-        r.layout = externalLayout != nullptr ? *externalLayout : initialLayout;
+        r.layout = initialLayout;
+        if (externalLayout != nullptr)
+        {
+            r.layout = *externalLayout;
+        }
         r.externalLayout = externalLayout;
         seedImageState(r);
         graph.resources.push_back(r);

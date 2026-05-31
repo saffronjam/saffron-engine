@@ -136,11 +136,21 @@ uint clusterIndexFor(float2 pixel, float viewZ)
     return tileX + tileY * clusterParams.gridSize.x + zSlice * clusterParams.gridSize.x * clusterParams.gridSize.y;
 }
 
+// Übershader permutation: a Vulkan specialization constant baked per PSO. The PSO cache
+// builds one variant per value (lit vs unlit), so a material picks a pipeline by flag.
+[[vk::constant_id(0)]] const bool kUnlit = false;
+
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target
 {
     float3 n = normalize(input.worldNormal);
     float4 tex = albedo.Sample(input.uv0);
+
+    // Unlit: albedo * base color, no lighting (a different cached PSO via kUnlit).
+    if (kUnlit)
+    {
+        return float4(tex.rgb * input.baseColor.rgb, tex.a * input.baseColor.a);
+    }
 
     // Directional light + ambient.
     float3 lightDir = normalize(globals.directionAmbient.xyz);

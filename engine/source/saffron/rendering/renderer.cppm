@@ -424,6 +424,7 @@ export namespace se
     struct Material
     {
         std::string shader = "shaders/mesh.spv";
+        bool unlit = false;  // selects the unlit übershader permutation (a distinct PSO)
     };
 
     /// One renderable for the scene draw list: a mesh + its albedo texture (null =>
@@ -618,7 +619,7 @@ export namespace se
     // Mesh rendering: a depth-tested instanced pipeline (set 0 = material albedo,
     // set 1 = directional light, set 2 = per-instance data; push constant = viewProj),
     // device-local mesh + texture uploads, and a batched instanced draw via submit().
-    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName);
+    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit = false);
     // The PSO cache front door: returns the mesh pipeline for a material variant, building
     // + caching it on first request. The renderer owns it; the client never creates PSOs.
     Ref<Pipeline> requestMeshPipeline(Renderer& renderer, const Material& material);
@@ -2049,8 +2050,11 @@ namespace se
         scene.color = RgAttachment{ renderer.frameSceneColor, vk::AttachmentLoadOp::eClear,
             vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearColorValue{ renderer.clearColor } } };
         // Load the pre-pass depth when present; otherwise clear it here as before.
-        const vk::AttachmentLoadOp depthLoad =
-            doDepthPrepass ? vk::AttachmentLoadOp::eLoad : vk::AttachmentLoadOp::eClear;
+        vk::AttachmentLoadOp depthLoad = vk::AttachmentLoadOp::eClear;
+        if (doDepthPrepass)
+        {
+            depthLoad = vk::AttachmentLoadOp::eLoad;
+        }
         scene.depth = RgAttachment{ sceneDepth, depthLoad, vk::AttachmentStoreOp::eDontCare,
             vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
         scene.renderArea = offscreen.extent;
@@ -2227,7 +2231,7 @@ namespace se
         return result;
     }
 
-    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName)
+    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit)
     {
         std::string path = assetPath(shaderName);
         auto moduleResult = loadShaderModule(renderer.device, path);
@@ -2237,6 +2241,18 @@ namespace se
         }
         vk::ShaderModule shaderModule = *moduleResult;
 
+        // The übershader's unlit branch is a specialization constant (id 0) baked into the
+        // fragment stage, so this PSO is the lit or the unlit variant.
+        const vk::Bool32 unlitValue = static_cast<vk::Bool32>(unlit);
+        vk::SpecializationMapEntry specEntry{};
+        specEntry.constantID = 0;
+        specEntry.offset = 0;
+        specEntry.size = sizeof(vk::Bool32);
+        vk::SpecializationInfo specInfo{};
+        specInfo.setMapEntries(specEntry);
+        specInfo.dataSize = sizeof(vk::Bool32);
+        specInfo.pData = &unlitValue;
+
         std::array<vk::PipelineShaderStageCreateInfo, 2> stages{};
         stages[0].stage = vk::ShaderStageFlagBits::eVertex;
         stages[0].module = shaderModule;
@@ -2244,6 +2260,7 @@ namespace se
         stages[1].stage = vk::ShaderStageFlagBits::eFragment;
         stages[1].module = shaderModule;
         stages[1].pName = "fragmentMain";
+        stages[1].pSpecializationInfo = &specInfo;
 
         vk::VertexInputBindingDescription binding{};
         binding.binding = 0;
@@ -2342,13 +2359,17 @@ namespace se
 
     Ref<Pipeline> requestMeshPipeline(Renderer& renderer, const Material& material)
     {
-        const std::string& key = material.shader;
+        std::string key = material.shader;
+        if (material.unlit)
+        {
+            key = key + "|unlit";
+        }
         auto found = renderer.pipelineCache.find(key);
         if (found != renderer.pipelineCache.end())
         {
             return found->second;
         }
-        std::expected<Ref<Pipeline>, std::string> built = newMeshPipeline(renderer, material.shader);
+        std::expected<Ref<Pipeline>, std::string> built = newMeshPipeline(renderer, material.shader, material.unlit);
         if (!built)
         {
             logError(built.error());
@@ -2602,7 +2623,12 @@ namespace se
         std::vector<DrawBatch> batches;
         for (Bucket& bucket : buckets)
         {
-            const Ref<GpuTexture>& tex = bucket.texture ? bucket.texture : renderer.defaultWhiteTexture;
+            const Ref<GpuTexture>* texPtr = &renderer.defaultWhiteTexture;
+            if (bucket.texture)
+            {
+                texPtr = &bucket.texture;
+            }
+            const Ref<GpuTexture>& tex = *texPtr;
             if (!tex || !tex->materialSet)
             {
                 continue;

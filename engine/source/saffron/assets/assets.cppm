@@ -470,10 +470,12 @@ export namespace se
                 }
                 glm::vec4 baseColor{ 1.0f };
                 Ref<GpuTexture> textureRef;
+                bool unlit = false;
                 if (hasComponent<MaterialComponent>(scene, entity))
                 {
                     const MaterialComponent& material = getComponent<MaterialComponent>(scene, entity);
                     baseColor = material.baseColor;
+                    unlit = material.unlit;
                     if (material.albedoTexture.value != 0)
                     {
                         textureRef = loadTextureAsset(assets, renderer, material.albedoTexture);
@@ -486,6 +488,7 @@ export namespace se
                 item.model = model;
                 item.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(model))));
                 item.baseColor = baseColor;
+                item.material.unlit = unlit;
                 items.push_back(std::move(item));
             });
 

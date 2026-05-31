@@ -53,6 +53,7 @@ export namespace se
     {
         glm::vec4 baseColor{ 1.0f };
         Uuid albedoTexture;
+        bool unlit = false;  // skip lighting (albedo * base color only) — a distinct PSO
     };
 
     // A perspective camera; its view comes from the entity's TransformComponent.
