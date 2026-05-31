@@ -1,7 +1,7 @@
 module;
 
 // Vulkan-Hpp in no-exceptions mode: every call returns a result we convert to
-// std::expected. We never use vk::raii (it throws). Classic includes (no import std).
+// Result. We never use vk::raii (it throws). Classic includes (no import std).
 #define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_NO_SMART_HANDLE
 #include <vulkan/vulkan.hpp>
@@ -592,7 +592,7 @@ export namespace se
         Window* window = nullptr;  // borrowed
     };
 
-    std::expected<Renderer, std::string> newRenderer(Window& window);
+    Result<Renderer> newRenderer(Window& window);
     void destroyRenderer(Renderer& renderer);
 
     bool beginFrame(Renderer& renderer);
@@ -633,23 +633,23 @@ export namespace se
     // Mesh rendering: a depth-tested instanced pipeline (set 0 = material albedo,
     // set 1 = directional light, set 2 = per-instance data; push constant = viewProj),
     // device-local mesh + texture uploads, and a batched instanced draw via submit().
-    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit = false);
+    Result<Ref<Pipeline>> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit = false);
     // The PSO cache front door: returns the mesh pipeline for a material variant, building
     // + caching it on first request. The renderer owns it; the client never creates PSOs.
     Ref<Pipeline> requestMeshPipeline(Renderer& renderer, const Material& material);
     // Number of distinct mesh PSOs the cache holds (inspectable to verify übershader reuse).
     u32 pipelineCount(const Renderer& renderer);
-    std::expected<Ref<GpuMesh>, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh);
-    std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb);
+    Result<Ref<GpuMesh>> uploadMesh(Renderer& renderer, const Mesh& mesh);
+    Result<Ref<GpuTexture>> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb);
 
     // Rasterizes an SVG to a square RGBA icon (tint multiplied in) and uploads it as a
     // GPU texture — used for asset-browser type icons. "currentColor" maps to white.
-    std::expected<Ref<GpuTexture>, std::string> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
+    Result<Ref<GpuTexture>> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
                                                               u32 pixelSize, glm::vec4 tint);
 
     // Renders a mesh to a square GPU texture (a 3/4 view framed by the mesh AABB, lit by
     // a fixed light) for an asset thumbnail. Synchronous one-off render; safe between frames.
-    std::expected<Ref<GpuTexture>, std::string> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size);
+    Result<Ref<GpuTexture>> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size);
 
     // Resolves each item's material to a cached PSO, batches by (pipeline, mesh, texture),
     // uploads the frame's instance buffer, and stores the structured draw list on the
@@ -711,33 +711,33 @@ export namespace se
 
     // Copies the offscreen viewport image to a PNG. Synchronous (own submit +
     // waitIdle), safe to call between frames.
-    std::expected<void, std::string> captureViewport(Renderer& renderer, const std::string& path);
+    Result<void> captureViewport(Renderer& renderer, const std::string& path);
 
     // Requests a PNG of the next presented frame (written in endFrame). Fails here
     // if the surface lacks TRANSFER_SRC; otherwise returns immediately.
-    std::expected<void, std::string> requestWindowCapture(Renderer& renderer, std::string path);
+    Result<void> requestWindowCapture(Renderer& renderer, std::string path);
 }
 
 namespace se
 {
     namespace
     {
-        // Converts a Vulkan-Hpp ResultValue to std::expected, checked at the call site.
+        // Converts a Vulkan-Hpp ResultValue to Result, checked at the call site.
         template <typename T>
-        std::expected<T, std::string> checked(vk::ResultValue<T> rv, std::string_view what)
+        Result<T> checked(vk::ResultValue<T> rv, std::string_view what)
         {
             if (rv.result != vk::Result::eSuccess)
             {
-                return std::unexpected(std::format("{}: {}", what, vk::to_string(rv.result)));
+                return Err(std::format("{}: {}", what, vk::to_string(rv.result)));
             }
             return std::move(rv.value);
         }
 
-        std::expected<void, std::string> checked(vk::Result result, std::string_view what)
+        Result<void> checked(vk::Result result, std::string_view what)
         {
             if (result != vk::Result::eSuccess)
             {
-                return std::unexpected(std::format("{}: {}", what, vk::to_string(result)));
+                return Err(std::format("{}: {}", what, vk::to_string(result)));
             }
             return {};
         }
@@ -789,7 +789,7 @@ namespace se
             }
         }
 
-        std::expected<void, std::string> buildSwapchain(Renderer& renderer, u32 width, u32 height)
+        Result<void> buildSwapchain(Renderer& renderer, u32 width, u32 height)
         {
             // TRANSFER_SRC on swapchain images is not spec-guaranteed (only
             // COLOR_ATTACHMENT is). Query support and only request it when present
@@ -826,7 +826,7 @@ namespace se
             auto result = builder.build();
             if (!result)
             {
-                return std::unexpected(std::format("swapchain build failed: {}", result.error().message()));
+                return Err(std::format("swapchain build failed: {}", result.error().message()));
             }
 
             destroySwapchainResources(renderer);
@@ -853,7 +853,7 @@ namespace se
                 auto view = checked(renderer.device.createImageView(viewInfo), "createImageView");
                 if (!view)
                 {
-                    return std::unexpected(view.error());
+                    return Err(view.error());
                 }
                 renderer.swapchainImageViews.push_back(*view);
             }
@@ -864,7 +864,7 @@ namespace se
                 auto semaphore = checked(renderer.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
                 if (!semaphore)
                 {
-                    return std::unexpected(semaphore.error());
+                    return Err(semaphore.error());
                 }
                 renderer.renderFinished.push_back(*semaphore);
             }
@@ -889,17 +889,17 @@ namespace se
             }
         }
 
-        std::expected<vk::ShaderModule, std::string> loadShaderModule(vk::Device device, const std::string& path)
+        Result<vk::ShaderModule> loadShaderModule(vk::Device device, const std::string& path)
         {
             std::ifstream file(path, std::ios::binary | std::ios::ate);
             if (!file)
             {
-                return std::unexpected(std::format("cannot open shader '{}'", path));
+                return Err(std::format("cannot open shader '{}'", path));
             }
             std::streamsize size = file.tellg();
             if (size <= 0 || (size % 4) != 0)
             {
-                return std::unexpected(std::format("invalid spir-v size for '{}'", path));
+                return Err(std::format("invalid spir-v size for '{}'", path));
             }
             std::vector<u32> code(static_cast<std::size_t>(size) / 4);
             file.seekg(0);
@@ -911,7 +911,7 @@ namespace se
             return checked(device.createShaderModule(info), std::format("createShaderModule '{}'", path));
         }
 
-        std::expected<Image, std::string> newColorImage(Renderer& renderer, u32 width, u32 height,
+        Result<Image> newColorImage(Renderer& renderer, u32 width, u32 height,
                                                         vk::Format format, bool storage = false,
                                                         vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1)
         {
@@ -924,7 +924,7 @@ namespace se
             }
             if ((props.optimalTilingFeatures & needed) != needed)
             {
-                return std::unexpected(std::format("format {} cannot be a sampled color attachment", vk::to_string(format)));
+                return Err(std::format("format {} cannot be a sampled color attachment", vk::to_string(format)));
             }
 
             // A multisampled image is a transient resolve source: color attachment only
@@ -957,7 +957,7 @@ namespace se
             VmaAllocation allocation = nullptr;
             if (vmaCreateImage(renderer.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
             {
-                return std::unexpected(std::string{ "vmaCreateImage failed for offscreen target" });
+                return Err(std::string{ "vmaCreateImage failed for offscreen target" });
             }
 
             vk::ImageViewCreateInfo viewInfo{};
@@ -969,7 +969,7 @@ namespace se
             if (view.result != vk::Result::eSuccess)
             {
                 vmaDestroyImage(renderer.allocator, rawImage, allocation);
-                return std::unexpected(std::format("createImageView (offscreen): {}", vk::to_string(view.result)));
+                return Err(std::format("createImageView (offscreen): {}", vk::to_string(view.result)));
             }
 
             Image result;
@@ -984,7 +984,7 @@ namespace se
             return result;
         }
 
-        std::expected<Image, std::string> newDepthImage(Renderer& renderer, u32 width, u32 height,
+        Result<Image> newDepthImage(Renderer& renderer, u32 width, u32 height,
                                                         vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1)
         {
             VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -1006,7 +1006,7 @@ namespace se
             VmaAllocation allocation = nullptr;
             if (vmaCreateImage(renderer.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
             {
-                return std::unexpected(std::string{ "vmaCreateImage failed for depth target" });
+                return Err(std::string{ "vmaCreateImage failed for depth target" });
             }
 
             vk::ImageViewCreateInfo viewInfo{};
@@ -1018,7 +1018,7 @@ namespace se
             if (view.result != vk::Result::eSuccess)
             {
                 vmaDestroyImage(renderer.allocator, rawImage, allocation);
-                return std::unexpected(std::format("createImageView (depth): {}", vk::to_string(view.result)));
+                return Err(std::format("createImageView (depth): {}", vk::to_string(view.result)));
             }
 
             Image result;
@@ -1050,7 +1050,7 @@ namespace se
             {
                 return;
             }
-            std::expected<Image, std::string> color =
+            Result<Image> color =
                 newColorImage(renderer, w, h, OffscreenColorFormat, false, renderer.sampleCount);
             if (color)
             {
@@ -1060,7 +1060,7 @@ namespace se
             {
                 logError(color.error());
             }
-            std::expected<Image, std::string> depth = newDepthImage(renderer, w, h, renderer.sampleCount);
+            auto depth = newDepthImage(renderer, w, h, renderer.sampleCount);
             if (depth)
             {
                 renderer.msaaDepth = std::move(*depth);
@@ -1088,7 +1088,7 @@ namespace se
             {
                 return;
             }
-            std::expected<Image, std::string> scratch = newColorImage(renderer, w, h, OffscreenColorFormat, false);
+            auto scratch = newColorImage(renderer, w, h, OffscreenColorFormat, false);
             if (scratch)
             {
                 renderer.offscreenScratch = std::move(*scratch);
@@ -1101,7 +1101,7 @@ namespace se
         }
 
         // Host-visible, mapped buffer the caller owns (vmaDestroyBuffer when done).
-        std::expected<void, std::string> newHostCaptureBuffer(
+        Result<void> newHostCaptureBuffer(
             Renderer& renderer, vk::DeviceSize bytes,
             VkBuffer& outBuffer, VmaAllocation& outAlloc, VmaAllocationInfo& outInfo)
         {
@@ -1113,7 +1113,7 @@ namespace se
             allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
             if (vmaCreateBuffer(renderer.allocator, &bufferInfo, &allocInfo, &outBuffer, &outAlloc, &outInfo) != VK_SUCCESS)
             {
-                return std::unexpected(std::string{ "capture: vmaCreateBuffer failed" });
+                return Err(std::string{ "capture: vmaCreateBuffer failed" });
             }
             return {};
         }
@@ -1143,7 +1143,7 @@ namespace se
         }
 
         // Writes a PNG, reordering BGRA source pixels to RGB.
-        std::expected<void, std::string> writeBufferToPng(
+        Result<void> writeBufferToPng(
             const unsigned char* pixels, u32 width, u32 height, vk::Format format, const std::string& path)
         {
             const bool bgr = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
@@ -1165,7 +1165,7 @@ namespace se
                                           3, rgb.data(), static_cast<int>(width) * 3);
             if (ok == 0)
             {
-                return std::unexpected(std::format("stbi_write_png failed for '{}'", path));
+                return Err(std::format("stbi_write_png failed for '{}'", path));
             }
             return {};
         }
@@ -1203,7 +1203,7 @@ namespace se
         inline constexpr u32 LightListInitial = 16;
 
         // A host-visible, persistently mapped storage buffer for per-frame uploads.
-        std::expected<Ref<Buffer>, std::string> makeMappedStorageBuffer(Renderer& renderer, vk::DeviceSize bytes)
+        Result<Ref<Buffer>> makeMappedStorageBuffer(Renderer& renderer, vk::DeviceSize bytes)
         {
             VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             info.size = bytes;
@@ -1216,7 +1216,7 @@ namespace se
             VmaAllocationInfo mapped{};
             if (vmaCreateBuffer(renderer.allocator, &info, &alloc, &raw, &allocation, &mapped) != VK_SUCCESS)
             {
-                return std::unexpected(std::string{ "makeMappedStorageBuffer: vmaCreateBuffer failed" });
+                return Err(std::string{ "makeMappedStorageBuffer: vmaCreateBuffer failed" });
             }
             Buffer buffer;
             buffer.allocator = renderer.allocator;
@@ -1229,7 +1229,7 @@ namespace se
 
         // A device-local storage buffer (no host access) — for GPU-only scratch like
         // the compute-written cluster light lists.
-        std::expected<Ref<Buffer>, std::string> makeDeviceStorageBuffer(Renderer& renderer, vk::DeviceSize bytes)
+        Result<Ref<Buffer>> makeDeviceStorageBuffer(Renderer& renderer, vk::DeviceSize bytes)
         {
             VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             info.size = bytes;
@@ -1240,7 +1240,7 @@ namespace se
             VmaAllocation allocation = nullptr;
             if (vmaCreateBuffer(renderer.allocator, &info, &alloc, &raw, &allocation, nullptr) != VK_SUCCESS)
             {
-                return std::unexpected(std::string{ "makeDeviceStorageBuffer: vmaCreateBuffer failed" });
+                return Err(std::string{ "makeDeviceStorageBuffer: vmaCreateBuffer failed" });
             }
             Buffer buffer;
             buffer.allocator = renderer.allocator;
@@ -1252,13 +1252,13 @@ namespace se
 
         // Builds a compute pipeline from a SPIR-V module (entry "computeMain") + a single
         // descriptor set layout. Returned as a Ref<Pipeline> (move-only RAII).
-        std::expected<Ref<Pipeline>, std::string> newComputePipeline(
+        Result<Ref<Pipeline>> newComputePipeline(
             Renderer& renderer, std::string_view shaderName, vk::DescriptorSetLayout setLayout)
         {
             auto moduleResult = loadShaderModule(renderer.device, assetPath(shaderName));
             if (!moduleResult)
             {
-                return std::unexpected(moduleResult.error());
+                return Err(moduleResult.error());
             }
             vk::ShaderModule shaderModule = *moduleResult;
 
@@ -1268,7 +1268,7 @@ namespace se
             if (!layoutResult)
             {
                 renderer.device.destroyShaderModule(shaderModule);
-                return std::unexpected(layoutResult.error());
+                return Err(layoutResult.error());
             }
 
             vk::PipelineShaderStageCreateInfo stage{};
@@ -1284,7 +1284,7 @@ namespace se
             if (created.result != vk::Result::eSuccess)
             {
                 renderer.device.destroyPipelineLayout(*layoutResult);
-                return std::unexpected(std::format("createComputePipeline: {}", vk::to_string(created.result)));
+                return Err(std::format("createComputePipeline: {}", vk::to_string(created.result)));
             }
 
             Pipeline pipeline;
@@ -1298,12 +1298,12 @@ namespace se
         // vertex shader (instance set 2 + viewProj push constant) but has no fragment
         // shader and no color attachment, so it only lays down depth (test+write LESS).
         // Its pipeline layout matches the mesh layout (so the same set 2 + push bind).
-        std::expected<Ref<Pipeline>, std::string> makeDepthPrepassPipeline(Renderer& renderer, std::string_view shaderName)
+        Result<Ref<Pipeline>> makeDepthPrepassPipeline(Renderer& renderer, std::string_view shaderName)
         {
             auto moduleResult = loadShaderModule(renderer.device, assetPath(shaderName));
             if (!moduleResult)
             {
-                return std::unexpected(moduleResult.error());
+                return Err(moduleResult.error());
             }
             vk::ShaderModule shaderModule = *moduleResult;
 
@@ -1361,7 +1361,7 @@ namespace se
             if (!layoutResult)
             {
                 renderer.device.destroyShaderModule(shaderModule);
-                return std::unexpected(layoutResult.error());
+                return Err(layoutResult.error());
             }
 
             vk::GraphicsPipelineCreateInfo pipelineInfo{};
@@ -1382,7 +1382,7 @@ namespace se
             if (created.result != vk::Result::eSuccess)
             {
                 renderer.device.destroyPipelineLayout(*layoutResult);
-                return std::unexpected(std::format("createGraphicsPipeline (depth-prepass): {}", vk::to_string(created.result)));
+                return Err(std::format("createGraphicsPipeline (depth-prepass): {}", vk::to_string(created.result)));
             }
 
             Pipeline pipeline;
@@ -1452,7 +1452,7 @@ namespace se
 
         // The shared sampler, material/light set layouts, descriptor pool, and the
         // per-frame light UBO + its set. Called once in newRenderer.
-        std::expected<void, std::string> initDescriptorResources(Renderer& renderer)
+        Result<void> initDescriptorResources(Renderer& renderer)
         {
             vk::SamplerCreateInfo samplerInfo{};
             samplerInfo.magFilter = vk::Filter::eLinear;
@@ -1465,7 +1465,7 @@ namespace se
             auto sampler = checked(renderer.device.createSampler(samplerInfo), "createSampler");
             if (!sampler)
             {
-                return std::unexpected(sampler.error());
+                return Err(sampler.error());
             }
             renderer.linearSampler = *sampler;
 
@@ -1488,7 +1488,7 @@ namespace se
             auto materialLayout = checked(renderer.device.createDescriptorSetLayout(materialLayoutInfo), "bindlessSetLayout");
             if (!materialLayout)
             {
-                return std::unexpected(materialLayout.error());
+                return Err(materialLayout.error());
             }
             renderer.bindlessSetLayout = *materialLayout;
 
@@ -1514,7 +1514,7 @@ namespace se
             auto lightLayout = checked(renderer.device.createDescriptorSetLayout(lightLayoutInfo), "lightSetLayout");
             if (!lightLayout)
             {
-                return std::unexpected(lightLayout.error());
+                return Err(lightLayout.error());
             }
             renderer.lightSetLayout = *lightLayout;
 
@@ -1536,7 +1536,7 @@ namespace se
             auto clusterLayout = checked(renderer.device.createDescriptorSetLayout(clusterLayoutInfo), "clusterSetLayout");
             if (!clusterLayout)
             {
-                return std::unexpected(clusterLayout.error());
+                return Err(clusterLayout.error());
             }
             renderer.clusterSetLayout = *clusterLayout;
 
@@ -1550,7 +1550,7 @@ namespace se
             auto instanceLayout = checked(renderer.device.createDescriptorSetLayout(instanceLayoutInfo), "instanceSetLayout");
             if (!instanceLayout)
             {
-                return std::unexpected(instanceLayout.error());
+                return Err(instanceLayout.error());
             }
             renderer.instanceSetLayout = *instanceLayout;
 
@@ -1564,7 +1564,7 @@ namespace se
             auto tonemapLayout = checked(renderer.device.createDescriptorSetLayout(tonemapLayoutInfo), "tonemapSetLayout");
             if (!tonemapLayout)
             {
-                return std::unexpected(tonemapLayout.error());
+                return Err(tonemapLayout.error());
             }
             renderer.tonemapSetLayout = *tonemapLayout;
 
@@ -1582,7 +1582,7 @@ namespace se
             auto fxaaLayout = checked(renderer.device.createDescriptorSetLayout(fxaaLayoutInfo), "fxaaSetLayout");
             if (!fxaaLayout)
             {
-                return std::unexpected(fxaaLayout.error());
+                return Err(fxaaLayout.error());
             }
             renderer.fxaaSetLayout = *fxaaLayout;
 
@@ -1598,7 +1598,7 @@ namespace se
             auto pool = checked(renderer.device.createDescriptorPool(poolInfo), "descriptorPool");
             if (!pool)
             {
-                return std::unexpected(pool.error());
+                return Err(pool.error());
             }
             renderer.descriptorPool = *pool;
 
@@ -1611,7 +1611,7 @@ namespace se
             auto bindlessPoolResult = checked(renderer.device.createDescriptorPool(bindlessPoolInfo), "bindlessPool");
             if (!bindlessPoolResult)
             {
-                return std::unexpected(bindlessPoolResult.error());
+                return Err(bindlessPoolResult.error());
             }
             renderer.bindlessPool = *bindlessPoolResult;
 
@@ -1621,7 +1621,7 @@ namespace se
             auto bindlessAllocated = checked(renderer.device.allocateDescriptorSets(bindlessAlloc), "allocate bindlessSet");
             if (!bindlessAllocated)
             {
-                return std::unexpected(bindlessAllocated.error());
+                return Err(bindlessAllocated.error());
             }
             renderer.bindlessSet = (*bindlessAllocated)[0];
 
@@ -1636,7 +1636,7 @@ namespace se
                 VmaAllocationInfo mapped{};
                 if (vmaCreateBuffer(renderer.allocator, &bufferInfo, &allocInfo, &renderer.lightBuffers[i], &renderer.lightAllocs[i], &mapped) != VK_SUCCESS)
                 {
-                    return std::unexpected(std::string{ "light UBO vmaCreateBuffer failed" });
+                    return Err(std::string{ "light UBO vmaCreateBuffer failed" });
                 }
                 renderer.lightMapped[i] = mapped.pMappedData;
 
@@ -1646,7 +1646,7 @@ namespace se
                 auto allocated = checked(renderer.device.allocateDescriptorSets(setAlloc), "allocate lightSet");
                 if (!allocated)
                 {
-                    return std::unexpected(allocated.error());
+                    return Err(allocated.error());
                 }
                 renderer.lightSets[i] = (*allocated)[0];
 
@@ -1660,11 +1660,11 @@ namespace se
 
                 // The punctual-light buffer starts at LightListInitial capacity and is
                 // grown by ensureLightCapacity; bind it now so the set is complete.
-                std::expected<Ref<Buffer>, std::string> lightList =
+                Result<Ref<Buffer>> lightList =
                     makeMappedStorageBuffer(renderer, static_cast<vk::DeviceSize>(LightListInitial) * sizeof(GpuLight));
                 if (!lightList)
                 {
-                    return std::unexpected(lightList.error());
+                    return Err(lightList.error());
                 }
                 renderer.lightListBuffers[i] = *lightList;
                 renderer.lightListCapacity[i] = LightListInitial;
@@ -1684,17 +1684,17 @@ namespace se
                 auto instanceAllocated = checked(renderer.device.allocateDescriptorSets(instanceAlloc), "allocate instanceSet");
                 if (!instanceAllocated)
                 {
-                    return std::unexpected(instanceAllocated.error());
+                    return Err(instanceAllocated.error());
                 }
                 renderer.instanceSets[i] = (*instanceAllocated)[0];
 
                 // Cluster light-list buffer (device-local, compute-written) + the
                 // cluster params UBO (host-mapped, written each frame).
-                std::expected<Ref<Buffer>, std::string> clusterBuffer =
+                Result<Ref<Buffer>> clusterBuffer =
                     makeDeviceStorageBuffer(renderer, ClusterCount * ClusterStride);
                 if (!clusterBuffer)
                 {
-                    return std::unexpected(clusterBuffer.error());
+                    return Err(clusterBuffer.error());
                 }
                 renderer.clusterBuffers[i] = *clusterBuffer;
 
@@ -1708,7 +1708,7 @@ namespace se
                 if (vmaCreateBuffer(renderer.allocator, &paramInfo, &paramAlloc, &renderer.clusterParamBuffers[i],
                                     &renderer.clusterParamAllocs[i], &paramMapped) != VK_SUCCESS)
                 {
-                    return std::unexpected(std::string{ "cluster params vmaCreateBuffer failed" });
+                    return Err(std::string{ "cluster params vmaCreateBuffer failed" });
                 }
                 renderer.clusterParamMapped[i] = paramMapped.pMappedData;
 
@@ -1733,7 +1733,7 @@ namespace se
                 auto clusterAllocated = checked(renderer.device.allocateDescriptorSets(clusterAlloc), "allocate clusterSet");
                 if (!clusterAllocated)
                 {
-                    return std::unexpected(clusterAllocated.error());
+                    return Err(clusterAllocated.error());
                 }
                 renderer.clusterSets[i] = (*clusterAllocated)[0];
                 std::array<vk::WriteDescriptorSet, 3> clusterWrites{};
@@ -1753,21 +1753,21 @@ namespace se
             }
 
             // The cull compute pipeline reads/writes the cluster set layout.
-            std::expected<Ref<Pipeline>, std::string> cull =
+            Result<Ref<Pipeline>> cull =
                 newComputePipeline(renderer, "shaders/light_cull.spv", renderer.clusterSetLayout);
             if (!cull)
             {
-                return std::unexpected(cull.error());
+                return Err(cull.error());
             }
             renderer.cullPipeline = *cull;
 
             // Post-process tonemap: a compute pipeline + a set binding the offscreen
             // color as a storage image (read+written in place). A layer adds the pass.
-            std::expected<Ref<Pipeline>, std::string> tonemap =
+            Result<Ref<Pipeline>> tonemap =
                 newComputePipeline(renderer, "shaders/tonemap.spv", renderer.tonemapSetLayout);
             if (!tonemap)
             {
-                return std::unexpected(tonemap.error());
+                return Err(tonemap.error());
             }
             renderer.tonemapPipeline = *tonemap;
 
@@ -1777,18 +1777,18 @@ namespace se
             auto tonemapAllocated = checked(renderer.device.allocateDescriptorSets(tonemapAlloc), "allocate tonemapSet");
             if (!tonemapAllocated)
             {
-                return std::unexpected(tonemapAllocated.error());
+                return Err(tonemapAllocated.error());
             }
             renderer.tonemapSet = (*tonemapAllocated)[0];
             updateTonemapSet(renderer);
 
             // FXAA: a compute pipeline + a set (source sampler + offscreen storage). The
             // scratch source is created on demand when FXAA is enabled (recreateFxaaTarget).
-            std::expected<Ref<Pipeline>, std::string> fxaa =
+            Result<Ref<Pipeline>> fxaa =
                 newComputePipeline(renderer, "shaders/fxaa.spv", renderer.fxaaSetLayout);
             if (!fxaa)
             {
-                return std::unexpected(fxaa.error());
+                return Err(fxaa.error());
             }
             renderer.fxaaPipeline = *fxaa;
             vk::DescriptorSetAllocateInfo fxaaAlloc{};
@@ -1797,23 +1797,23 @@ namespace se
             auto fxaaAllocated = checked(renderer.device.allocateDescriptorSets(fxaaAlloc), "allocate fxaaSet");
             if (!fxaaAllocated)
             {
-                return std::unexpected(fxaaAllocated.error());
+                return Err(fxaaAllocated.error());
             }
             renderer.fxaaSet = (*fxaaAllocated)[0];
 
             // Depth pre-pass: a vertex-only pipeline that reuses the mesh vertex shader.
-            std::expected<Ref<Pipeline>, std::string> depthPrepass =
+            Result<Ref<Pipeline>> depthPrepass =
                 makeDepthPrepassPipeline(renderer, "shaders/mesh.spv");
             if (!depthPrepass)
             {
-                return std::unexpected(depthPrepass.error());
+                return Err(depthPrepass.error());
             }
             renderer.depthPrepassPipeline = *depthPrepass;
             return {};
         }
     }
 
-    std::expected<Renderer, std::string> newRenderer(Window& window)
+    Result<Renderer> newRenderer(Window& window)
     {
         Renderer renderer;
         renderer.window = &window;
@@ -1835,7 +1835,7 @@ namespace se
         auto instanceResult = instanceBuilder.build();
         if (!instanceResult)
         {
-            return std::unexpected(std::format("instance creation failed: {}", instanceResult.error().message()));
+            return Err(std::format("instance creation failed: {}", instanceResult.error().message()));
         }
         renderer.vkbInstance = instanceResult.value();
         renderer.instance = vk::Instance{ renderer.vkbInstance.instance };
@@ -1843,7 +1843,7 @@ namespace se
         VkSurfaceKHR rawSurface = VK_NULL_HANDLE;
         if (!SDL_Vulkan_CreateSurface(window.handle, renderer.vkbInstance.instance, nullptr, &rawSurface))
         {
-            return std::unexpected(std::format("SDL_Vulkan_CreateSurface failed: {}", SDL_GetError()));
+            return Err(std::format("SDL_Vulkan_CreateSurface failed: {}", SDL_GetError()));
         }
         renderer.surface = vk::SurfaceKHR{ rawSurface };
 
@@ -1872,14 +1872,14 @@ namespace se
                                   .select();
         if (!physicalResult)
         {
-            return std::unexpected(std::format("no suitable GPU: {}", physicalResult.error().message()));
+            return Err(std::format("no suitable GPU: {}", physicalResult.error().message()));
         }
 
         vkb::DeviceBuilder deviceBuilder{ physicalResult.value() };
         auto deviceResult = deviceBuilder.build();
         if (!deviceResult)
         {
-            return std::unexpected(std::format("device creation failed: {}", deviceResult.error().message()));
+            return Err(std::format("device creation failed: {}", deviceResult.error().message()));
         }
         renderer.vkbDevice = deviceResult.value();
         renderer.physicalDevice = vk::PhysicalDevice{ physicalResult.value().physical_device };
@@ -1888,7 +1888,7 @@ namespace se
         auto queueResult = renderer.vkbDevice.get_queue(vkb::QueueType::graphics);
         if (!queueResult)
         {
-            return std::unexpected(std::format("no graphics queue: {}", queueResult.error().message()));
+            return Err(std::format("no graphics queue: {}", queueResult.error().message()));
         }
         renderer.graphicsQueue = vk::Queue{ queueResult.value() };
         renderer.graphicsQueueFamily = renderer.vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
@@ -1907,13 +1907,13 @@ namespace se
         allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
         if (vmaCreateAllocator(&allocatorInfo, &renderer.allocator) != VK_SUCCESS)
         {
-            return std::unexpected(std::string{ "vmaCreateAllocator failed" });
+            return Err(std::string{ "vmaCreateAllocator failed" });
         }
 
         auto swapchainBuilt = buildSwapchain(renderer, window.width, window.height);
         if (!swapchainBuilt)
         {
-            return std::unexpected(swapchainBuilt.error());
+            return Err(swapchainBuilt.error());
         }
 
         // Offscreen scene target shown in the editor Viewport panel. Same format
@@ -1921,7 +1921,7 @@ namespace se
         auto offscreen = newColorImage(renderer, window.width, window.height, OffscreenColorFormat, true);
         if (!offscreen)
         {
-            return std::unexpected(offscreen.error());
+            return Err(offscreen.error());
         }
         renderer.offscreenViewport = std::move(*offscreen);
         renderer.viewportDesiredWidth = window.width;
@@ -1931,7 +1931,7 @@ namespace se
         auto depth = newDepthImage(renderer, window.width, window.height);
         if (!depth)
         {
-            return std::unexpected(depth.error());
+            return Err(depth.error());
         }
         renderer.offscreenDepth = std::move(*depth);
 
@@ -1943,7 +1943,7 @@ namespace se
             auto pool = checked(renderer.device.createCommandPool(poolInfo), "createCommandPool");
             if (!pool)
             {
-                return std::unexpected(pool.error());
+                return Err(pool.error());
             }
             frame.commandPool = *pool;
 
@@ -1954,14 +1954,14 @@ namespace se
             auto buffers = checked(renderer.device.allocateCommandBuffers(allocInfo), "allocateCommandBuffers");
             if (!buffers)
             {
-                return std::unexpected(buffers.error());
+                return Err(buffers.error());
             }
             frame.commandBuffer = (*buffers)[0];
 
             auto imageAvailable = checked(renderer.device.createSemaphore(vk::SemaphoreCreateInfo{}), "createSemaphore");
             if (!imageAvailable)
             {
-                return std::unexpected(imageAvailable.error());
+                return Err(imageAvailable.error());
             }
             frame.imageAvailable = *imageAvailable;
 
@@ -1970,22 +1970,22 @@ namespace se
             auto fence = checked(renderer.device.createFence(fenceInfo), "createFence");
             if (!fence)
             {
-                return std::unexpected(fence.error());
+                return Err(fence.error());
             }
             frame.inFlight = *fence;
         }
 
-        if (std::expected<void, std::string> descriptors = initDescriptorResources(renderer); !descriptors)
+        if (Result<void> descriptors = initDescriptorResources(renderer); !descriptors)
         {
-            return std::unexpected(descriptors.error());
+            return Err(descriptors.error());
         }
         setDirectionalLight(renderer, glm::vec3(-0.5f, -1.0f, -0.3f), glm::vec3(1.0f), 1.0f, 0.15f);
 
         const std::array<u8, 4> white{ 255, 255, 255, 255 };
-        std::expected<Ref<GpuTexture>, std::string> whiteTexture = uploadTexture(renderer, white.data(), 1, 1, false);
+        auto whiteTexture = uploadTexture(renderer, white.data(), 1, 1, false);
         if (!whiteTexture)
         {
-            return std::unexpected(whiteTexture.error());
+            return Err(whiteTexture.error());
         }
         renderer.defaultWhiteTexture = *whiteTexture;
 
@@ -2431,7 +2431,7 @@ namespace se
             captureExtent = renderer.swapchainExtent;
             const vk::DeviceSize bytes =
                 static_cast<vk::DeviceSize>(captureExtent.width) * captureExtent.height * 4;
-            std::expected<void, std::string> created =
+            Result<void> created =
                 newHostCaptureBuffer(renderer, bytes, captureBuffer, captureAlloc, captureInfo);
             if (!created)
             {
@@ -2495,7 +2495,7 @@ namespace se
         {
             static_cast<void>(renderer.device.waitIdle());
             vmaInvalidateAllocation(renderer.allocator, captureAlloc, 0, VK_WHOLE_SIZE);
-            std::expected<void, std::string> wrote = writeBufferToPng(
+            auto wrote = writeBufferToPng(
                 static_cast<const unsigned char*>(captureInfo.pMappedData),
                 captureExtent.width, captureExtent.height,
                 renderer.swapchainFormat, *renderer.captureNextSwapchainPath);
@@ -2528,13 +2528,13 @@ namespace se
         return result;
     }
 
-    std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit)
+    Result<Ref<Pipeline>> newMeshPipeline(Renderer& renderer, std::string_view shaderName, bool unlit)
     {
         std::string path = assetPath(shaderName);
         auto moduleResult = loadShaderModule(renderer.device, path);
         if (!moduleResult)
         {
-            return std::unexpected(moduleResult.error());
+            return Err(moduleResult.error());
         }
         vk::ShaderModule shaderModule = *moduleResult;
 
@@ -2623,7 +2623,7 @@ namespace se
         if (!layoutResult)
         {
             renderer.device.destroyShaderModule(shaderModule);
-            return std::unexpected(layoutResult.error());
+            return Err(layoutResult.error());
         }
 
         vk::GraphicsPipelineCreateInfo pipelineInfo{};
@@ -2644,7 +2644,7 @@ namespace se
         if (created.result != vk::Result::eSuccess)
         {
             renderer.device.destroyPipelineLayout(*layoutResult);
-            return std::unexpected(std::format("createGraphicsPipeline (mesh): {}", vk::to_string(created.result)));
+            return Err(std::format("createGraphicsPipeline (mesh): {}", vk::to_string(created.result)));
         }
 
         Pipeline pipeline;
@@ -2666,7 +2666,7 @@ namespace se
         {
             return found->second;
         }
-        std::expected<Ref<Pipeline>, std::string> built = newMeshPipeline(renderer, material.shader, material.unlit);
+        auto built = newMeshPipeline(renderer, material.shader, material.unlit);
         if (!built)
         {
             logError(built.error());
@@ -2681,11 +2681,11 @@ namespace se
         return static_cast<u32>(renderer.pipelineCache.size());
     }
 
-    std::expected<Ref<GpuMesh>, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh)
+    Result<Ref<GpuMesh>> uploadMesh(Renderer& renderer, const Mesh& mesh)
     {
         if (mesh.vertices.empty() || mesh.indices.empty())
         {
-            return std::unexpected(std::string{ "uploadMesh: empty mesh" });
+            return Err(std::string{ "uploadMesh: empty mesh" });
         }
         const vk::DeviceSize vertexBytes = mesh.vertices.size() * sizeof(Vertex);
         const vk::DeviceSize indexBytes = mesh.indices.size() * sizeof(u32);
@@ -2703,7 +2703,7 @@ namespace se
         VmaAllocationInfo stagingMapped{};
         if (vmaCreateBuffer(renderer.allocator, &stagingInfo, &stagingAlloc, &staging, &stagingAllocation, &stagingMapped) != VK_SUCCESS)
         {
-            return std::unexpected(std::string{ "uploadMesh: staging vmaCreateBuffer failed" });
+            return Err(std::string{ "uploadMesh: staging vmaCreateBuffer failed" });
         }
         std::memcpy(stagingMapped.pMappedData, mesh.vertices.data(), vertexBytes);
         std::memcpy(static_cast<char*>(stagingMapped.pMappedData) + vertexBytes, mesh.indices.data(), indexBytes);
@@ -2743,7 +2743,7 @@ namespace se
                 vmaDestroyBuffer(renderer.allocator, vertexBuffer, vertexAlloc);
             }
             vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
-            return std::unexpected(std::string{ "uploadMesh: device vmaCreateBuffer failed" });
+            return Err(std::string{ "uploadMesh: device vmaCreateBuffer failed" });
         }
         gpu.vertexBuffer = vk::Buffer{ vertexBuffer };
         gpu.vertexAlloc = vertexAlloc;
@@ -2758,7 +2758,7 @@ namespace se
         if (!cmds)
         {
             vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
-            return std::unexpected(cmds.error());
+            return Err(cmds.error());
         }
         vk::CommandBuffer cmd = (*cmds)[0];
 
@@ -2785,7 +2785,7 @@ namespace se
 
     // Ensures the current frame's instance buffer holds at least `count` elements,
     // growing to the next power of two (never shrinking) and rewriting its set.
-    std::expected<void, std::string> ensureInstanceCapacity(Renderer& renderer, u32 frame, u32 count)
+    Result<void> ensureInstanceCapacity(Renderer& renderer, u32 frame, u32 count)
     {
         if (renderer.instanceBuffers[frame] && renderer.instanceCapacity[frame] >= count)
         {
@@ -2803,11 +2803,11 @@ namespace se
 
         // beginFrame already waited on this frame's fence, so the old buffer (used by
         // the same frame) is no longer in flight — safe to drop and recreate.
-        std::expected<Ref<Buffer>, std::string> buffer =
+        Result<Ref<Buffer>> buffer =
             makeMappedStorageBuffer(renderer, static_cast<vk::DeviceSize>(capacity) * sizeof(InstanceData));
         if (!buffer)
         {
-            return std::unexpected(buffer.error());
+            return Err(buffer.error());
         }
         renderer.instanceBuffers[frame] = *buffer;
         renderer.instanceCapacity[frame] = capacity;
@@ -2824,7 +2824,7 @@ namespace se
 
     // Ensures the current frame's punctual-light buffer holds at least `count` lights,
     // growing to the next power of two (never shrinking) and rewriting its set.
-    std::expected<void, std::string> ensureLightCapacity(Renderer& renderer, u32 frame, u32 count)
+    Result<void> ensureLightCapacity(Renderer& renderer, u32 frame, u32 count)
     {
         if (renderer.lightListBuffers[frame] && renderer.lightListCapacity[frame] >= count)
         {
@@ -2839,11 +2839,11 @@ namespace se
         {
             capacity = capacity * 2;
         }
-        std::expected<Ref<Buffer>, std::string> buffer =
+        Result<Ref<Buffer>> buffer =
             makeMappedStorageBuffer(renderer, static_cast<vk::DeviceSize>(capacity) * sizeof(GpuLight));
         if (!buffer)
         {
-            return std::unexpected(buffer.error());
+            return Err(buffer.error());
         }
         renderer.lightListBuffers[frame] = *buffer;
         renderer.lightListCapacity[frame] = capacity;
@@ -2890,7 +2890,7 @@ namespace se
             {
                 continue;
             }
-            Ref<Pipeline> pipeline = requestMeshPipeline(renderer, item.material);
+            auto pipeline = requestMeshPipeline(renderer, item.material);
             if (!pipeline)
             {
                 continue;
@@ -2944,7 +2944,7 @@ namespace se
             return;
         }
         const u32 frame = renderer.frameIndex;
-        if (std::expected<void, std::string> ok = ensureInstanceCapacity(renderer, frame, static_cast<u32>(instances.size())); !ok)
+        if (Result<void> ok = ensureInstanceCapacity(renderer, frame, static_cast<u32>(instances.size())); !ok)
         {
             logError(ok.error());
             return;
@@ -3066,7 +3066,7 @@ namespace se
         const u32 count = static_cast<u32>(lights.size());
         if (count > 0)
         {
-            if (std::expected<void, std::string> ok = ensureLightCapacity(renderer, frame, count); !ok)
+            if (Result<void> ok = ensureLightCapacity(renderer, frame, count); !ok)
             {
                 logError(ok.error());
                 return;
@@ -3154,7 +3154,7 @@ namespace se
 
         // The mesh + depth-prepass PSOs bake the sample count — rebuild them.
         renderer.pipelineCache.clear();
-        std::expected<Ref<Pipeline>, std::string> depthPrepass =
+        Result<Ref<Pipeline>> depthPrepass =
             makeDepthPrepassPipeline(renderer, "shaders/mesh.spv");
         if (depthPrepass)
         {
@@ -3180,13 +3180,13 @@ namespace se
         return std::format("msaa{}", n);
     }
 
-    std::expected<Ref<GpuTexture>, std::string> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
+    Result<Ref<GpuTexture>> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
                                                               u32 pixelSize, glm::vec4 tint)
     {
         std::ifstream in(svgPath);
         if (!in)
         {
-            return std::unexpected(std::format("cannot open '{}'", svgPath));
+            return Err(std::format("cannot open '{}'", svgPath));
         }
         std::string svg((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         // nanosvg does not resolve the "currentColor" keyword; map it to white so
@@ -3203,13 +3203,13 @@ namespace se
             {
                 nsvgDelete(image);
             }
-            return std::unexpected(std::format("nanosvg failed to parse '{}'", svgPath));
+            return Err(std::format("nanosvg failed to parse '{}'", svgPath));
         }
         NSVGrasterizer* rasterizer = nsvgCreateRasterizer();
         if (rasterizer == nullptr)
         {
             nsvgDelete(image);
-            return std::unexpected(std::string{ "nsvgCreateRasterizer failed" });
+            return Err(std::string{ "nsvgCreateRasterizer failed" });
         }
         const f32 scale = static_cast<f32>(pixelSize) / glm::max(image->width, image->height);
         std::vector<u8> rgba(static_cast<std::size_t>(pixelSize) * pixelSize * 4, 0);
@@ -3230,12 +3230,12 @@ namespace se
 
     // The minimal mesh-thumbnail pipeline (vertex input + a 2x mat4 push constant, no
     // descriptor sets). Color format matches the offscreen thumbnail image.
-    std::expected<Ref<Pipeline>, std::string> newThumbnailPipeline(Renderer& renderer)
+    Result<Ref<Pipeline>> newThumbnailPipeline(Renderer& renderer)
     {
         auto moduleResult = loadShaderModule(renderer.device, assetPath("shaders/thumbnail.spv"));
         if (!moduleResult)
         {
-            return std::unexpected(moduleResult.error());
+            return Err(moduleResult.error());
         }
         vk::ShaderModule shaderModule = *moduleResult;
 
@@ -3299,7 +3299,7 @@ namespace se
         if (!layoutResult)
         {
             renderer.device.destroyShaderModule(shaderModule);
-            return std::unexpected(layoutResult.error());
+            return Err(layoutResult.error());
         }
 
         vk::GraphicsPipelineCreateInfo pipelineInfo{};
@@ -3320,7 +3320,7 @@ namespace se
         if (created.result != vk::Result::eSuccess)
         {
             renderer.device.destroyPipelineLayout(*layoutResult);
-            return std::unexpected(std::format("createGraphicsPipeline (thumbnail): {}", vk::to_string(created.result)));
+            return Err(std::format("createGraphicsPipeline (thumbnail): {}", vk::to_string(created.result)));
         }
         Pipeline pipeline;
         pipeline.device = renderer.device;
@@ -3329,32 +3329,32 @@ namespace se
         return std::make_shared<Pipeline>(std::move(pipeline));
     }
 
-    std::expected<Ref<GpuTexture>, std::string> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size)
+    Result<Ref<GpuTexture>> renderMeshThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size)
     {
         if (!mesh)
         {
-            return std::unexpected(std::string{ "renderMeshThumbnail: null mesh" });
+            return Err(std::string{ "renderMeshThumbnail: null mesh" });
         }
         if (!renderer.thumbnailPipeline)
         {
-            std::expected<Ref<Pipeline>, std::string> pipeline = newThumbnailPipeline(renderer);
+            auto pipeline = newThumbnailPipeline(renderer);
             if (!pipeline)
             {
-                return std::unexpected(pipeline.error());
+                return Err(pipeline.error());
             }
             renderer.thumbnailPipeline = *pipeline;
         }
 
-        std::expected<Image, std::string> colorImage = newColorImage(renderer, size, size, renderer.swapchainFormat);
+        auto colorImage = newColorImage(renderer, size, size, renderer.swapchainFormat);
         if (!colorImage)
         {
-            return std::unexpected(colorImage.error());
+            return Err(colorImage.error());
         }
         Image color = std::move(*colorImage);
-        std::expected<Image, std::string> depthImage = newDepthImage(renderer, size, size);
+        auto depthImage = newDepthImage(renderer, size, size);
         if (!depthImage)
         {
-            return std::unexpected(depthImage.error());
+            return Err(depthImage.error());
         }
         Image depth = std::move(*depthImage);
 
@@ -3384,7 +3384,7 @@ namespace se
         auto cmds = checked(renderer.device.allocateCommandBuffers(cmdAlloc), "renderMeshThumbnail: allocateCommandBuffers");
         if (!cmds)
         {
-            return std::unexpected(cmds.error());
+            return Err(cmds.error());
         }
         vk::CommandBuffer cmd = (*cmds)[0];
         vk::CommandBufferBeginInfo begin{};
@@ -3462,11 +3462,11 @@ namespace se
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 
-    std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb)
+    Result<Ref<GpuTexture>> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb)
     {
         if (width == 0 || height == 0)
         {
-            return std::unexpected(std::string{ "uploadTexture: zero-sized image" });
+            return Err(std::string{ "uploadTexture: zero-sized image" });
         }
         const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(width) * height * 4;
 
@@ -3481,7 +3481,7 @@ namespace se
         VmaAllocationInfo stagingMapped{};
         if (vmaCreateBuffer(renderer.allocator, &stagingInfo, &stagingAlloc, &staging, &stagingAllocation, &stagingMapped) != VK_SUCCESS)
         {
-            return std::unexpected(std::string{ "uploadTexture: staging vmaCreateBuffer failed" });
+            return Err(std::string{ "uploadTexture: staging vmaCreateBuffer failed" });
         }
         std::memcpy(stagingMapped.pMappedData, rgba, bytes);
         vmaFlushAllocation(renderer.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
@@ -3505,7 +3505,7 @@ namespace se
         if (vmaCreateImage(renderer.allocator, &imageInfo, &imageAlloc, &rawImage, &imageAllocation, nullptr) != VK_SUCCESS)
         {
             vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
-            return std::unexpected(std::string{ "uploadTexture: vmaCreateImage failed" });
+            return Err(std::string{ "uploadTexture: vmaCreateImage failed" });
         }
 
         vk::CommandBufferAllocateInfo cmdAlloc{};
@@ -3517,7 +3517,7 @@ namespace se
         {
             vmaDestroyImage(renderer.allocator, rawImage, imageAllocation);
             vmaDestroyBuffer(renderer.allocator, staging, stagingAllocation);
-            return std::unexpected(cmds.error());
+            return Err(cmds.error());
         }
         vk::CommandBuffer cmd = (*cmds)[0];
         vk::CommandBufferBeginInfo begin{};
@@ -3554,7 +3554,7 @@ namespace se
         if (!view)
         {
             vmaDestroyImage(renderer.allocator, rawImage, imageAllocation);
-            return std::unexpected(view.error());
+            return Err(view.error());
         }
 
         // Claim a bindless slot and write the texture into the global array.
@@ -3574,7 +3574,7 @@ namespace se
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 
-    std::expected<void, std::string> captureViewport(Renderer& renderer, const std::string& path)
+    Result<void> captureViewport(Renderer& renderer, const std::string& path)
     {
         Image& img = renderer.offscreenViewport;
         const u32 width = img.extent.width;
@@ -3590,7 +3590,7 @@ namespace se
         VmaAllocationInfo bufferAllocInfo{};
         if (auto created = newHostCaptureBuffer(renderer, byteSize, rawBuffer, bufferAllocation, bufferAllocInfo); !created)
         {
-            return std::unexpected(created.error());
+            return Err(created.error());
         }
 
         vk::CommandBufferAllocateInfo allocInfo{};
@@ -3601,7 +3601,7 @@ namespace se
         if (!cmds)
         {
             vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
-            return std::unexpected(cmds.error());
+            return Err(cmds.error());
         }
         vk::CommandBuffer cmd = (*cmds)[0];
 
@@ -3636,22 +3636,22 @@ namespace se
         renderer.device.freeCommandBuffers(renderer.frames[0].commandPool, cmd);
         vmaInvalidateAllocation(renderer.allocator, bufferAllocation, 0, VK_WHOLE_SIZE);
 
-        std::expected<void, std::string> wrote = writeBufferToPng(
+        auto wrote = writeBufferToPng(
             static_cast<const unsigned char*>(bufferAllocInfo.pMappedData), width, height, img.format, path);
         vmaDestroyBuffer(renderer.allocator, rawBuffer, bufferAllocation);
         if (!wrote)
         {
-            return std::unexpected(wrote.error());
+            return Err(wrote.error());
         }
         logInfo(std::format("captured viewport ({}x{}) to {}", width, height, path));
         return {};
     }
 
-    std::expected<void, std::string> requestWindowCapture(Renderer& renderer, std::string path)
+    Result<void> requestWindowCapture(Renderer& renderer, std::string path)
     {
         if (!renderer.swapchainCaptureSupported)
         {
-            return std::unexpected(std::string{ "window capture unsupported: surface lacks TRANSFER_SRC usage" });
+            return Err(std::string{ "window capture unsupported: surface lacks TRANSFER_SRC usage" });
         }
         renderer.captureNextSwapchainPath = std::move(path);
         return {};

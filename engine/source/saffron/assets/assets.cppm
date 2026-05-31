@@ -46,21 +46,21 @@ export namespace se
         Uuid albedoTexture;  // 0 == none
     };
 
-    const char* assetTypeName(AssetType type)
+    auto assetTypeName(AssetType type) -> const char*
     {
         if (type == AssetType::Texture) { return "texture"; }
         if (type == AssetType::Other) { return "other"; }
         return "mesh";
     }
 
-    AssetType assetTypeFromName(const std::string& name)
+    auto assetTypeFromName(const std::string& name) -> AssetType
     {
         if (name == "texture") { return AssetType::Texture; }
         if (name == "other") { return AssetType::Other; }
         return AssetType::Mesh;
     }
 
-    nlohmann::json catalogToJson(const AssetCatalog& catalog)
+    auto catalogToJson(const AssetCatalog& catalog) -> nlohmann::json
     {
         nlohmann::json assets = nlohmann::json::array();
         for (const AssetEntry& entry : catalog.entries)
@@ -100,7 +100,7 @@ export namespace se
     // Creates the asset root (+ subdirs) and migrates any legacy asset_registry.json
     // into the catalog with synthesized names. The catalog is otherwise loaded from a
     // project file via loadProject.
-    AssetServer newAssetServer(std::string root)
+    auto newAssetServer(std::string root) -> AssetServer
     {
         AssetServer assets;
         assets.root = std::move(root);
@@ -112,12 +112,12 @@ export namespace se
         if (in)
         {
             std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            std::expected<nlohmann::json, std::string> parsedDoc = parseJson(text);
+            auto parsedDoc = parseJson(text);
             if (parsedDoc)
             {
                 const nlohmann::json& doc = *parsedDoc;
                 auto migrate = [&](const char* key, AssetType type)
-                {
+                -> void {
                     if (!doc.contains(key) || !doc[key].is_object())
                     {
                         return;
@@ -148,8 +148,8 @@ export namespace se
     inline constexpr int ProjectVersion = 1;
 
     // Saves the whole project (asset catalog + scene entities) to one JSON file.
-    std::expected<void, std::string> saveProject(AssetServer& assets, ComponentRegistry& reg, Scene& scene,
-                                                 const std::string& path)
+    auto saveProject(AssetServer& assets, ComponentRegistry& reg, Scene& scene,
+                                                 const std::string& path) -> Result<void>
     {
         nlohmann::json doc;
         doc["version"] = ProjectVersion;
@@ -159,38 +159,38 @@ export namespace se
         std::ofstream out(path);
         if (!out)
         {
-            return std::unexpected(std::format("cannot open '{}' for writing", path));
+            return Err(std::format("cannot open '{}' for writing", path));
         }
         out << dumpJson(doc, 2);
         out.flush();
         if (!out)
         {
-            return std::unexpected(std::format("write failed for '{}'", path));
+            return Err(std::format("write failed for '{}'", path));
         }
         return {};
     }
 
     // Loads a project file: replaces the catalog + scene. Clears the GPU caches (after a
     // device idle) so stale Refs are dropped and assets re-resolve from the new catalog.
-    std::expected<void, std::string> loadProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg,
-                                                 Scene& scene, const std::string& path)
+    auto loadProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg,
+                                                 Scene& scene, const std::string& path) -> Result<void>
     {
         std::ifstream in(path);
         if (!in)
         {
-            return std::unexpected(std::format("cannot open '{}'", path));
+            return Err(std::format("cannot open '{}'", path));
         }
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        std::expected<nlohmann::json, std::string> parsedDoc = parseJson(text);
+        auto parsedDoc = parseJson(text);
         if (!parsedDoc || !parsedDoc->is_object())
         {
-            return std::unexpected(std::format("'{}': JSON parse error", path));
+            return Err(std::format("'{}': JSON parse error", path));
         }
         const nlohmann::json& doc = *parsedDoc;
         const int version = static_cast<int>(jsonU64Or(doc, "version", 0));
         if (version != ProjectVersion)
         {
-            return std::unexpected(std::format("unsupported project version {}", version));
+            return Err(std::format("unsupported project version {}", version));
         }
 
         waitGpuIdle(renderer);
@@ -202,19 +202,19 @@ export namespace se
 
     // Writes encoded image bytes into assets/textures/<uuid>.<ext>, decodes + uploads
     // them, and adds a Texture entry to the catalog (named, deduped). Returns the id.
-    std::expected<Uuid, std::string> registerTextureBytes(AssetServer& assets, Renderer& renderer,
+    auto registerTextureBytes(AssetServer& assets, Renderer& renderer,
                                                           const std::vector<u8>& encoded, const std::string& ext,
-                                                          const std::string& name)
+                                                          const std::string& name) -> Result<Uuid>
     {
-        std::expected<DecodedImage, std::string> decoded = decodeImageFromMemory(encoded);
+        auto decoded = decodeImageFromMemory(encoded);
         if (!decoded)
         {
-            return std::unexpected(decoded.error());
+            return Err(decoded.error());
         }
-        std::expected<Ref<GpuTexture>, std::string> texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
+        auto texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
         if (!texture)
         {
-            return std::unexpected(texture.error());
+            return Err(texture.error());
         }
         const Uuid id = newUuid();
         std::string extension = ext;
@@ -226,12 +226,12 @@ export namespace se
         std::ofstream out(assets.root + "/" + relativePath, std::ios::binary);
         if (!out)
         {
-            return std::unexpected(std::format("cannot write texture '{}'", relativePath));
+            return Err(std::format("cannot write texture '{}'", relativePath));
         }
         out.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
         if (!out)
         {
-            return std::unexpected(std::format("write failed for texture '{}'", relativePath));
+            return Err(std::format("write failed for texture '{}'", relativePath));
         }
         putAsset(assets.catalog, AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath });
         assets.textureRefByUuid[id.value] = *texture;
@@ -239,12 +239,12 @@ export namespace se
     }
 
     // Imports an external image file into the asset dir + catalog (name = filename stem).
-    std::expected<Uuid, std::string> importTexture(AssetServer& assets, Renderer& renderer, const std::string& path)
+    auto importTexture(AssetServer& assets, Renderer& renderer, const std::string& path) -> Result<Uuid>
     {
         std::ifstream in(path, std::ios::binary | std::ios::ate);
         if (!in)
         {
-            return std::unexpected(std::format("cannot open '{}'", path));
+            return Err(std::format("cannot open '{}'", path));
         }
         const std::streamsize size = in.tellg();
         in.seekg(0);
@@ -252,7 +252,7 @@ export namespace se
         in.read(reinterpret_cast<char*>(encoded.data()), size);
         if (!in)
         {
-            return std::unexpected(std::format("read failed for '{}'", path));
+            return Err(std::format("read failed for '{}'", path));
         }
         const std::filesystem::path fsPath{ path };
         std::string ext = fsPath.extension().string();  // ".png" -> drop the dot
@@ -266,7 +266,7 @@ export namespace se
     // Resolves a texture id to a GPU texture, decoding + uploading the copied file on
     // a cache miss. Returns a null Ref (negative-cached) for an unregistered or
     // unreadable asset.
-    Ref<GpuTexture> loadTextureAsset(AssetServer& assets, Renderer& renderer, Uuid id)
+    auto loadTextureAsset(AssetServer& assets, Renderer& renderer, Uuid id) -> Ref<GpuTexture>
     {
         auto cached = assets.textureRefByUuid.find(id.value);
         if (cached != assets.textureRefByUuid.end())
@@ -278,10 +278,10 @@ export namespace se
         {
             return nullptr;
         }
-        std::expected<DecodedImage, std::string> decoded = decodeImage(assets.root + "/" + entry->path);
+        auto decoded = decodeImage(assets.root + "/" + entry->path);
         if (decoded)
         {
-            std::expected<Ref<GpuTexture>, std::string> texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
+            auto texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
             if (texture)
             {
                 assets.textureRefByUuid[id.value] = *texture;
@@ -300,24 +300,24 @@ export namespace se
     // Imports a source model: bakes its mesh to a .smesh, uploads it, imports its
     // primary material's albedo texture (if any), and adds catalog entries (named by
     // the source filename stem). Does not spawn an entity or save the project.
-    std::expected<ImportResult, std::string> importModel(AssetServer& assets, Renderer& renderer, const std::string& path)
+    auto importModel(AssetServer& assets, Renderer& renderer, const std::string& path) -> Result<ImportResult>
     {
-        std::expected<ImportedModel, std::string> model = importModelWithMaterial(path);
+        auto model = importModelWithMaterial(path);
         if (!model)
         {
-            return std::unexpected(model.error());
+            return Err(model.error());
         }
         const std::string baseName = std::filesystem::path(path).stem().string();
         const Uuid meshId = newUuid();
         const std::string relativePath = "meshes/" + std::to_string(meshId.value) + ".smesh";
-        if (std::expected<void, std::string> baked = saveMesh(model->mesh, assets.root + "/" + relativePath); !baked)
+        if (Result<void> baked = saveMesh(model->mesh, assets.root + "/" + relativePath); !baked)
         {
-            return std::unexpected(baked.error());
+            return Err(baked.error());
         }
-        std::expected<Ref<GpuMesh>, std::string> meshRef = uploadMesh(renderer, model->mesh);
+        auto meshRef = uploadMesh(renderer, model->mesh);
         if (!meshRef)
         {
-            return std::unexpected(meshRef.error());
+            return Err(meshRef.error());
         }
         putAsset(assets.catalog, AssetEntry{ meshId, uniqueName(assets.catalog, baseName), AssetType::Mesh, relativePath });
         assets.meshRefByUuid[meshId.value] = *meshRef;
@@ -327,7 +327,7 @@ export namespace se
         result.baseColor = model->material.baseColor;
         if (model->material.hasAlbedo)
         {
-            std::expected<Uuid, std::string> texture = registerTextureBytes(
+            auto texture = registerTextureBytes(
                 assets, renderer, model->material.albedoBytes, model->material.albedoExt, baseName + " albedo");
             if (texture)
             {
@@ -343,7 +343,7 @@ export namespace se
 
     // Resolves an id to a GPU mesh, loading + uploading the baked .smesh on a cache
     // miss. Returns a null Ref for an unregistered or unreadable asset.
-    Ref<GpuMesh> loadMeshAsset(AssetServer& assets, Renderer& renderer, Uuid id)
+    auto loadMeshAsset(AssetServer& assets, Renderer& renderer, Uuid id) -> Ref<GpuMesh>
     {
         auto cached = assets.meshRefByUuid.find(id.value);
         if (cached != assets.meshRefByUuid.end())
@@ -355,10 +355,10 @@ export namespace se
         {
             return nullptr;
         }
-        std::expected<Mesh, std::string> mesh = loadMesh(assets.root + "/" + entry->path);
+        auto mesh = loadMesh(assets.root + "/" + entry->path);
         if (mesh)
         {
-            std::expected<Ref<GpuMesh>, std::string> meshRef = uploadMesh(renderer, *mesh);
+            auto meshRef = uploadMesh(renderer, *mesh);
             if (meshRef)
             {
                 assets.meshRefByUuid[id.value] = *meshRef;
@@ -376,7 +376,7 @@ export namespace se
     }
 
     // Creates an entity carrying the given mesh asset.
-    Entity spawnMesh(Scene& scene, std::string name, Uuid mesh)
+    auto spawnMesh(Scene& scene, std::string name, Uuid mesh) -> Entity
     {
         Entity entity = createEntity(scene, std::move(name));
         addComponent<MeshComponent>(scene, entity).mesh = mesh;
@@ -384,7 +384,7 @@ export namespace se
     }
 
     // Creates an entity from an import: a mesh + a material (base color + albedo).
-    Entity spawnModel(Scene& scene, std::string name, const ImportResult& result)
+    auto spawnModel(Scene& scene, std::string name, const ImportResult& result) -> Entity
     {
         Entity entity = createEntity(scene, std::move(name));
         addComponent<MeshComponent>(scene, entity).mesh = result.mesh;
@@ -421,7 +421,7 @@ export namespace se
         f32 lightAmbient = 0.15f;
         bool haveLight = false;
         forEach<DirectionalLightComponent>(scene, [&](Entity, DirectionalLightComponent& light)
-        {
+        -> void {
             if (haveLight)
             {
                 return;
@@ -437,7 +437,7 @@ export namespace se
         std::vector<GpuLight> lights;
         forEach<TransformComponent, PointLightComponent>(scene,
             [&](Entity, TransformComponent& transform, PointLightComponent& light)
-            {
+            -> void {
                 GpuLight gpu;
                 gpu.positionRange = glm::vec4(transform.translation, light.range);
                 gpu.colorIntensity = glm::vec4(light.color, light.intensity);
@@ -447,7 +447,7 @@ export namespace se
             });
         forEach<TransformComponent, SpotLightComponent>(scene,
             [&](Entity, TransformComponent& transform, SpotLightComponent& light)
-            {
+            -> void {
                 const glm::vec3 dir = glm::normalize(light.direction);
                 GpuLight gpu;
                 gpu.positionRange = glm::vec4(transform.translation, light.range);
@@ -465,8 +465,8 @@ export namespace se
         std::vector<DrawItem> items;
         forEach<TransformComponent, MeshComponent>(scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
-            {
-                Ref<GpuMesh> meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
+            -> void {
+                auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
                 {
                     return;
@@ -501,8 +501,8 @@ export namespace se
     // Picks the nearest entity whose world-space mesh AABB the camera ray hits. `ndc` is
     // the click point in clip space [-1,1] matching the rendered image (Y-flipped proj).
     // Returns a null Entity on a miss (the caller clears the selection).
-    Entity pickEntity(Scene& scene, AssetServer& assets, Renderer& renderer,
-                      const CameraView& camera, glm::vec2 ndc)
+    auto pickEntity(Scene& scene, AssetServer& assets, Renderer& renderer,
+                      const CameraView& camera, glm::vec2 ndc) -> Entity
     {
         if (!camera.valid)
         {
@@ -528,8 +528,8 @@ export namespace se
         f32 nearest = std::numeric_limits<f32>::max();
         forEach<TransformComponent, MeshComponent>(scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
-            {
-                Ref<GpuMesh> meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
+            -> void {
+                auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
                 {
                     return;

@@ -75,16 +75,16 @@ export namespace se
         u32 height = 0;
     };
 
-    std::expected<Mesh, std::string> importGltf(const std::string& path);
-    std::expected<Mesh, std::string> importObj(const std::string& path);
-    std::expected<Mesh, std::string> importModelFile(const std::string& path);  // dispatch by extension
+    Result<Mesh> importGltf(const std::string& path);
+    Result<Mesh> importObj(const std::string& path);
+    Result<Mesh> importModelFile(const std::string& path);  // dispatch by extension
 
-    std::expected<ImportedModel, std::string> importModelWithMaterial(const std::string& path);
-    std::expected<DecodedImage, std::string> decodeImage(const std::string& path);
-    std::expected<DecodedImage, std::string> decodeImageFromMemory(const std::vector<u8>& encoded);
+    Result<ImportedModel> importModelWithMaterial(const std::string& path);
+    Result<DecodedImage> decodeImage(const std::string& path);
+    Result<DecodedImage> decodeImageFromMemory(const std::vector<u8>& encoded);
 
-    std::expected<void, std::string> saveMesh(const Mesh& mesh, const std::string& path);  // baked .smesh
-    std::expected<Mesh, std::string> loadMesh(const std::string& path);
+    Result<void> saveMesh(const Mesh& mesh, const std::string& path);  // baked .smesh
+    Result<Mesh> loadMesh(const std::string& path);
 
     // Recomputes smooth vertex normals from the triangles. Used when a source omits them.
     void generateNormals(Mesh& mesh);
@@ -183,12 +183,12 @@ namespace se
             return std::string{ "png" };
         }
 
-        std::expected<std::vector<u8>, std::string> readBinaryFile(const std::string& path)
+        Result<std::vector<u8>> readBinaryFile(const std::string& path)
         {
             std::ifstream in(path, std::ios::binary | std::ios::ate);
             if (!in)
             {
-                return std::unexpected(std::format("cannot open '{}'", path));
+                return Err(std::format("cannot open '{}'", path));
             }
             const std::streamsize size = in.tellg();
             in.seekg(0);
@@ -196,7 +196,7 @@ namespace se
             in.read(reinterpret_cast<char*>(bytes.data()), size);
             if (!in)
             {
-                return std::unexpected(std::format("read failed for '{}'", path));
+                return Err(std::format("read failed for '{}'", path));
             }
             return bytes;
         }
@@ -237,18 +237,18 @@ namespace se
         }
     }
 
-    std::expected<ImportedModel, std::string> importGltfModel(const std::string& path)
+    Result<ImportedModel> importGltfModel(const std::string& path)
     {
         cgltf_options options{};
         cgltf_data* data = nullptr;
         if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success)
         {
-            return std::unexpected(std::format("cgltf: cannot parse '{}'", path));
+            return Err(std::format("cgltf: cannot parse '{}'", path));
         }
         if (cgltf_load_buffers(&options, data, path.c_str()) != cgltf_result_success)
         {
             cgltf_free(data);
-            return std::unexpected(std::format("cgltf: cannot load buffers for '{}'", path));
+            return Err(std::format("cgltf: cannot load buffers for '{}'", path));
         }
 
         Mesh mesh;
@@ -323,7 +323,7 @@ namespace se
                         if (index >= vertexCount)
                         {
                             cgltf_free(data);
-                            return std::unexpected(std::format("cgltf: '{}' has an out-of-range index", path));
+                            return Err(std::format("cgltf: '{}' has an out-of-range index", path));
                         }
                         mesh.indices.push_back(static_cast<u32>(index));
                     }
@@ -372,7 +372,7 @@ namespace se
                     std::string uri = image->uri;
                     uri.resize(cgltf_decode_uri(uri.data()));  // percent-decode (e.g. %20) in place
                     const std::string full = directoryOf(path) + "/" + uri;
-                    if (std::expected<std::vector<u8>, std::string> bytes = readBinaryFile(full); bytes)
+                    if (Result<std::vector<u8>> bytes = readBinaryFile(full); bytes)
                     {
                         material.albedoBytes = std::move(*bytes);
                         material.albedoExt = extensionOf(uri);
@@ -389,7 +389,7 @@ namespace se
 
         if (mesh.vertices.empty())
         {
-            return std::unexpected(std::format("cgltf: '{}' has no triangle geometry", path));
+            return Err(std::format("cgltf: '{}' has no triangle geometry", path));
         }
         if (!anyNormalsPresent(mesh))
         {
@@ -398,17 +398,17 @@ namespace se
         return ImportedModel{ std::move(mesh), std::move(material) };
     }
 
-    std::expected<Mesh, std::string> importGltf(const std::string& path)
+    Result<Mesh> importGltf(const std::string& path)
     {
-        std::expected<ImportedModel, std::string> model = importGltfModel(path);
+        auto model = importGltfModel(path);
         if (!model)
         {
-            return std::unexpected(model.error());
+            return Err(model.error());
         }
         return std::move(model->mesh);
     }
 
-    std::expected<ImportedModel, std::string> importObjModel(const std::string& path)
+    Result<ImportedModel> importObjModel(const std::string& path)
     {
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
@@ -420,9 +420,9 @@ namespace se
         {
             if (err.empty())
             {
-                return std::unexpected(std::format("tinyobjloader: cannot load '{}'", path));
+                return Err(std::format("tinyobjloader: cannot load '{}'", path));
             }
-            return std::unexpected(err);
+            return Err(err);
         }
 
         Mesh mesh;
@@ -440,7 +440,7 @@ namespace se
                     if (index.vertex_index < 0 ||
                         static_cast<std::size_t>(3 * index.vertex_index + 2) >= attrib.vertices.size())
                     {
-                        return std::unexpected(std::format("tinyobjloader: '{}' has an out-of-range vertex index", path));
+                        return Err(std::format("tinyobjloader: '{}' has an out-of-range vertex index", path));
                     }
                     Vertex vertex;
                     vertex.position = glm::vec3(
@@ -487,7 +487,7 @@ namespace se
 
         if (mesh.vertices.empty())
         {
-            return std::unexpected(std::format("tinyobjloader: '{}' has no geometry", path));
+            return Err(std::format("tinyobjloader: '{}' has no geometry", path));
         }
         if (!anyNormalsPresent(mesh))
         {
@@ -518,7 +518,7 @@ namespace se
             if (!mat.diffuse_texname.empty())
             {
                 const std::string full = baseDir + "/" + mat.diffuse_texname;
-                if (std::expected<std::vector<u8>, std::string> bytes = readBinaryFile(full); bytes)
+                if (Result<std::vector<u8>> bytes = readBinaryFile(full); bytes)
                 {
                     material.albedoBytes = std::move(*bytes);
                     material.albedoExt = extensionOf(mat.diffuse_texname);
@@ -529,17 +529,17 @@ namespace se
         return ImportedModel{ std::move(mesh), std::move(material) };
     }
 
-    std::expected<Mesh, std::string> importObj(const std::string& path)
+    Result<Mesh> importObj(const std::string& path)
     {
-        std::expected<ImportedModel, std::string> model = importObjModel(path);
+        auto model = importObjModel(path);
         if (!model)
         {
-            return std::unexpected(model.error());
+            return Err(model.error());
         }
         return std::move(model->mesh);
     }
 
-    std::expected<Mesh, std::string> importModelFile(const std::string& path)
+    Result<Mesh> importModelFile(const std::string& path)
     {
         if (endsWithIgnoreCase(path, ".gltf") || endsWithIgnoreCase(path, ".glb"))
         {
@@ -549,10 +549,10 @@ namespace se
         {
             return importObj(path);
         }
-        return std::unexpected(std::format("unsupported model format: '{}' (expected .gltf/.glb/.obj)", path));
+        return Err(std::format("unsupported model format: '{}' (expected .gltf/.glb/.obj)", path));
     }
 
-    std::expected<ImportedModel, std::string> importModelWithMaterial(const std::string& path)
+    Result<ImportedModel> importModelWithMaterial(const std::string& path)
     {
         if (endsWithIgnoreCase(path, ".gltf") || endsWithIgnoreCase(path, ".glb"))
         {
@@ -562,10 +562,10 @@ namespace se
         {
             return importObjModel(path);
         }
-        return std::unexpected(std::format("unsupported model format: '{}' (expected .gltf/.glb/.obj)", path));
+        return Err(std::format("unsupported model format: '{}' (expected .gltf/.glb/.obj)", path));
     }
 
-    std::expected<DecodedImage, std::string> decodeImage(const std::string& path)
+    Result<DecodedImage> decodeImage(const std::string& path)
     {
         int width = 0;
         int height = 0;
@@ -573,7 +573,7 @@ namespace se
         stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
         if (pixels == nullptr)
         {
-            return std::unexpected(std::format("cannot decode image '{}'", path));
+            return Err(std::format("cannot decode image '{}'", path));
         }
         DecodedImage image;
         image.width = static_cast<u32>(width);
@@ -583,7 +583,7 @@ namespace se
         return image;
     }
 
-    std::expected<DecodedImage, std::string> decodeImageFromMemory(const std::vector<u8>& encoded)
+    Result<DecodedImage> decodeImageFromMemory(const std::vector<u8>& encoded)
     {
         int width = 0;
         int height = 0;
@@ -592,7 +592,7 @@ namespace se
                                                 &width, &height, &channels, STBI_rgb_alpha);
         if (pixels == nullptr)
         {
-            return std::unexpected(std::string{ "cannot decode image from memory" });
+            return Err(std::string{ "cannot decode image from memory" });
         }
         DecodedImage image;
         image.width = static_cast<u32>(width);
@@ -602,7 +602,7 @@ namespace se
         return image;
     }
 
-    std::expected<void, std::string> saveMesh(const Mesh& mesh, const std::string& path)
+    Result<void> saveMesh(const Mesh& mesh, const std::string& path)
     {
         SMeshHeader header{};
         std::memcpy(header.magic, "SMSH", 4);
@@ -620,7 +620,7 @@ namespace se
         std::ofstream out(path, std::ios::binary);
         if (!out)
         {
-            return std::unexpected(std::format("cannot open '{}' for writing", path));
+            return Err(std::format("cannot open '{}' for writing", path));
         }
         out.write(reinterpret_cast<const char*>(&header), sizeof(header));
         out.write(reinterpret_cast<const char*>(mesh.vertices.data()),
@@ -631,38 +631,38 @@ namespace se
                   static_cast<std::streamsize>(mesh.submeshes.size() * sizeof(Submesh)));
         if (!out)
         {
-            return std::unexpected(std::format("write failed for '{}'", path));
+            return Err(std::format("write failed for '{}'", path));
         }
         return {};
     }
 
-    std::expected<Mesh, std::string> loadMesh(const std::string& path)
+    Result<Mesh> loadMesh(const std::string& path)
     {
         std::ifstream in(path, std::ios::binary | std::ios::ate);
         if (!in)
         {
-            return std::unexpected(std::format("cannot open '{}'", path));
+            return Err(std::format("cannot open '{}'", path));
         }
         const std::streamsize fileSize = in.tellg();
         in.seekg(0);
         if (fileSize < static_cast<std::streamsize>(sizeof(SMeshHeader)))
         {
-            return std::unexpected(std::format("'{}' is too small to be a .smesh", path));
+            return Err(std::format("'{}' is too small to be a .smesh", path));
         }
 
         SMeshHeader header{};
         in.read(reinterpret_cast<char*>(&header), sizeof(header));
         if (std::memcmp(header.magic, "SMSH", 4) != 0)
         {
-            return std::unexpected(std::format("'{}' is not a .smesh (bad magic)", path));
+            return Err(std::format("'{}' is not a .smesh (bad magic)", path));
         }
         if (header.version != MeshFormatVersion)
         {
-            return std::unexpected(std::format("'{}' has unsupported mesh version {}", path, header.version));
+            return Err(std::format("'{}' has unsupported mesh version {}", path, header.version));
         }
         if (header.vertexStride != sizeof(Vertex) || header.indexWidth != sizeof(u32))
         {
-            return std::unexpected(std::format("'{}' has an incompatible vertex/index layout", path));
+            return Err(std::format("'{}' has an incompatible vertex/index layout", path));
         }
         // Recompute the layout from the counts and require the header offsets to match
         // and the file to be large enough. This rejects a malformed huge count before
@@ -675,7 +675,7 @@ namespace se
             header.submeshesOffset != indicesEnd ||
             static_cast<u64>(fileSize) < submeshesEnd)
         {
-            return std::unexpected(std::format("'{}' has an inconsistent or truncated layout", path));
+            return Err(std::format("'{}' has an inconsistent or truncated layout", path));
         }
 
         Mesh mesh;
@@ -691,14 +691,14 @@ namespace se
                 static_cast<std::streamsize>(header.submeshCount * sizeof(Submesh)));
         if (!in)
         {
-            return std::unexpected(std::format("read failed for '{}'", path));
+            return Err(std::format("read failed for '{}'", path));
         }
         return mesh;
     }
 
     void runGeometrySelfTest(const std::string& modelsDir)
     {
-        std::expected<Mesh, std::string> obj = importObj(modelsDir + "/cube.obj");
+        auto obj = importObj(modelsDir + "/cube.obj");
         if (!obj)
         {
             logError(std::format("geometry self-test: obj import failed: {}", obj.error()));
@@ -707,7 +707,7 @@ namespace se
         logInfo(std::format("geometry self-test: cube.obj -> {} verts, {} indices, {} submeshes",
                             obj->vertices.size(), obj->indices.size(), obj->submeshes.size()));
 
-        std::expected<Mesh, std::string> gltf = importGltf(modelsDir + "/cube.gltf");
+        auto gltf = importGltf(modelsDir + "/cube.gltf");
         if (!gltf)
         {
             logError(std::format("geometry self-test: gltf import failed: {}", gltf.error()));
@@ -717,12 +717,12 @@ namespace se
                             gltf->vertices.size(), gltf->indices.size(), gltf->submeshes.size()));
 
         const std::string bakedPath = "/tmp/saffron_cube.smesh";
-        if (std::expected<void, std::string> saved = saveMesh(*gltf, bakedPath); !saved)
+        if (Result<void> saved = saveMesh(*gltf, bakedPath); !saved)
         {
             logError(std::format("geometry self-test: save failed: {}", saved.error()));
             return;
         }
-        std::expected<Mesh, std::string> loaded = loadMesh(bakedPath);
+        auto loaded = loadMesh(bakedPath);
         if (!loaded)
         {
             logError(std::format("geometry self-test: load failed: {}", loaded.error()));

@@ -69,7 +69,7 @@ export namespace se
     // Owns the main loop. Returns a process exit code.
     int run(AppConfig config)
     {
-        std::expected<Window, std::string> windowResult = newWindow(config.window);
+        auto windowResult = newWindow(config.window);
         if (!windowResult)
         {
             logError(std::format("failed to create window: {}", windowResult.error()));
@@ -80,7 +80,7 @@ export namespace se
         app.window = std::move(*windowResult);
         app.window.onClose.subscribe([&app](){ app.running = false; return false; });
 
-        std::expected<Renderer, std::string> rendererResult = newRenderer(app.window);
+        auto rendererResult = newRenderer(app.window);
         if (!rendererResult)
         {
             logError(std::format("failed to create renderer: {}", rendererResult.error()));
@@ -89,7 +89,7 @@ export namespace se
         }
         app.renderer = std::move(*rendererResult);
 
-        std::expected<Ui, std::string> uiResult = newUi(app.renderer, app.window);
+        auto uiResult = newUi(app.renderer, app.window);
         if (!uiResult)
         {
             logError(std::format("failed to create ui: {}", uiResult.error()));
@@ -197,7 +197,7 @@ export namespace se
         // Optional verification: dump the offscreen viewport image to a PPM.
         if (const char* capturePath = std::getenv("SAFFRON_CAPTURE"))
         {
-            std::expected<void, std::string> captured = captureViewport(app.renderer, std::string{ capturePath });
+            auto captured = captureViewport(app.renderer, std::string{ capturePath });
             if (!captured)
             {
                 logError(captured.error());

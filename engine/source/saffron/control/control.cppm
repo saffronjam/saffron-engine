@@ -50,7 +50,7 @@ export namespace se
     {
         std::string name;
         std::string help;
-        std::function<std::expected<json, std::string>(EngineContext&, const json&)> run;
+        std::function<Result<json>(EngineContext&, const json&)> run;
     };
 
     struct CommandRegistry
@@ -60,7 +60,7 @@ export namespace se
     };
 
     void registerCommand(CommandRegistry& reg, std::string name, std::string help,
-                         std::function<std::expected<json, std::string>(EngineContext&, const json&)> run)
+                         std::function<Result<json>(EngineContext&, const json&)> run)
     {
         const std::size_t index = reg.rows.size();
         reg.byName[name] = index;
@@ -101,12 +101,12 @@ export namespace se
         return fallback;
     }
 
-    std::expected<Entity, std::string> resolveEntity(EngineContext& ctx, const json& params)
+    Result<Entity> resolveEntity(EngineContext& ctx, const json& params)
     {
         const json selector = positionalOr(params, "entity", 0);
         if (selector.is_null())
         {
-            return std::unexpected(std::string{ "missing 'entity' (uuid or name)" });
+            return Err(std::string{ "missing 'entity' (uuid or name)" });
         }
         Scene& scene = ctx.editor.scene;
 
@@ -158,7 +158,7 @@ export namespace se
         }
         if (found.handle == entt::null)
         {
-            return std::unexpected(std::format("entity not found: {}", dumpJson(selector)));
+            return Err(std::format("entity not found: {}", dumpJson(selector)));
         }
         return found;
     }
@@ -172,7 +172,7 @@ export namespace se
     void registerBuiltinCommands(CommandRegistry& reg)
     {
         registerCommand(reg, "ping", "liveness + engine info",
-            [](EngineContext&, const json&) -> std::expected<json, std::string>
+            [](EngineContext&, const json&) -> Result<json>
             {
                 return json{ { "pong", true },
                              { "engine", std::string{ EngineName } },
@@ -181,7 +181,7 @@ export namespace se
             });
 
         registerCommand(reg, "help", "list available commands",
-            [&reg](EngineContext&, const json&) -> std::expected<json, std::string>
+            [&reg](EngineContext&, const json&) -> Result<json>
             {
                 json commands = json::array();
                 for (const CommandTraits& command : reg.rows)
@@ -192,7 +192,7 @@ export namespace se
             });
 
         registerCommand(reg, "render-stats", "last frame's scene draw counters",
-            [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json&) -> Result<json>
             {
                 const RenderStats stats = renderStats(ctx.renderer);
                 return json{ { "drawCalls", stats.drawCalls },
@@ -206,7 +206,7 @@ export namespace se
             });
 
         registerCommand(reg, "set-aa", "set-aa {off|fxaa|msaa2|msaa4|msaa8} — anti-aliasing mode",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const json value = positionalOr(params, "mode", 0);
                 std::string mode = "off";
@@ -222,14 +222,14 @@ export namespace se
                 else if (mode == "msaa8") { samples = 8; }
                 else if (mode != "off")
                 {
-                    return std::unexpected(std::string{ "expected off|fxaa|msaa2|msaa4|msaa8" });
+                    return Err(std::string{ "expected off|fxaa|msaa2|msaa4|msaa8" });
                 }
                 setAa(ctx.renderer, samples, fxaa);
                 return json{ { "aa", aaMode(ctx.renderer) } };
             });
 
         registerCommand(reg, "set-clustered", "set-clustered {0|1} — toggle clustered light culling",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const json value = positionalOr(params, "enabled", 0);
                 bool enabled = true;
@@ -251,7 +251,7 @@ export namespace se
             });
 
         registerCommand(reg, "set-postprocess", "set-postprocess {0|1} — toggle the post-process tonemap pass",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const json value = positionalOr(params, "enabled", 0);
                 bool enabled = true;
@@ -273,7 +273,7 @@ export namespace se
             });
 
         registerCommand(reg, "set-depth-prepass", "set-depth-prepass {0|1} — toggle the depth pre-pass",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const json value = positionalOr(params, "enabled", 0);
                 bool enabled = true;
@@ -295,7 +295,7 @@ export namespace se
             });
 
         registerCommand(reg, "list-entities", "list all entities",
-            [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json&) -> Result<json>
             {
                 json entities = json::array();
                 forEach<IdComponent, NameComponent>(ctx.editor.scene,
@@ -307,7 +307,7 @@ export namespace se
             });
 
         registerCommand(reg, "list-components", "list registered component types",
-            [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json&) -> Result<json>
             {
                 json names = json::array();
                 for (const ComponentTraits& traits : ctx.editor.registry.rows)
@@ -318,7 +318,7 @@ export namespace se
             });
 
         registerCommand(reg, "create-entity", "create-entity {name}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string name = asString(positionalOr(params, "name", 0), "Entity");
                 Entity entity = createEntity(ctx.editor.scene, name);
@@ -327,17 +327,17 @@ export namespace se
 
         // Imports + bakes a model, then spawns an entity carrying it (selected).
         registerCommand(reg, "import-model", "import-model {path}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string path = asString(positionalOr(params, "path", 0), "");
                 if (path.empty())
                 {
-                    return std::unexpected(std::string{ "missing 'path'" });
+                    return Err(std::string{ "missing 'path'" });
                 }
-                std::expected<ImportResult, std::string> imported = importModel(ctx.assets, ctx.renderer, path);
+                auto imported = importModel(ctx.assets, ctx.renderer, path);
                 if (!imported)
                 {
-                    return std::unexpected(imported.error());
+                    return Err(imported.error());
                 }
                 Entity entity = spawnModel(ctx.editor.scene, "Mesh", *imported);
                 setSelection(ctx.editor, entity);
@@ -350,28 +350,28 @@ export namespace se
         // Imports an external image into the asset dir; returns its texture id (assign
         // it with set-material --albedoTexture <id>).
         registerCommand(reg, "import-texture", "import-texture {path}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string path = asString(positionalOr(params, "path", 0), "");
                 if (path.empty())
                 {
-                    return std::unexpected(std::string{ "missing 'path'" });
+                    return Err(std::string{ "missing 'path'" });
                 }
-                std::expected<Uuid, std::string> id = importTexture(ctx.assets, ctx.renderer, path);
+                auto id = importTexture(ctx.assets, ctx.renderer, path);
                 if (!id)
                 {
-                    return std::unexpected(id.error());
+                    return Err(id.error());
                 }
                 return json{ { "texture", id->value } };
             });
 
         registerCommand(reg, "destroy-entity", "destroy-entity {entity}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 const u64 id = getComponent<IdComponent>(ctx.editor.scene, *entity).id.value;
                 if (ctx.editor.selected.handle == entity->handle)
@@ -383,44 +383,44 @@ export namespace se
             });
 
         registerCommand(reg, "add-component", "add-component {entity, component}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 const std::string name = asString(positionalOr(params, "component", 1), "");
                 const ComponentTraits* row = findByName(ctx.editor.registry, name);
                 if (row == nullptr)
                 {
-                    return std::unexpected(std::format("unknown component '{}'", name));
+                    return Err(std::format("unknown component '{}'", name));
                 }
                 if (row->has(ctx.editor.scene, *entity))
                 {
-                    return std::unexpected(std::format("entity already has '{}'", name));
+                    return Err(std::format("entity already has '{}'", name));
                 }
                 row->addDefault(ctx.editor.scene, *entity);
                 return json{ { "added", row->name } };
             });
 
         registerCommand(reg, "remove-component", "remove-component {entity, component}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 const std::string name = asString(positionalOr(params, "component", 1), "");
                 const ComponentTraits* row = findByName(ctx.editor.registry, name);
                 if (row == nullptr)
                 {
-                    return std::unexpected(std::format("unknown component '{}'", name));
+                    return Err(std::format("unknown component '{}'", name));
                 }
                 if (!row->removable)
                 {
-                    return std::unexpected(std::format("component '{}' is not removable", row->name));
+                    return Err(std::format("component '{}' is not removable", row->name));
                 }
                 row->remove(ctx.editor.scene, *entity);
                 return json{ { "removed", row->name } };
@@ -429,24 +429,24 @@ export namespace se
         // Applies a component's serialized form. Routing through the registry's
         // deserialize keeps the wire shape identical to scene files.
         registerCommand(reg, "set-component", "set-component {entity, component, json}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 const std::string name = asString(positionalOr(params, "component", 1), "");
                 const ComponentTraits* row = findByName(ctx.editor.registry, name);
                 if (row == nullptr)
                 {
-                    return std::unexpected(std::format("unknown component '{}'", name));
+                    return Err(std::format("unknown component '{}'", name));
                 }
                 const json body = params.value("json", json::object());
-                std::expected<void, std::string> result = row->deserialize(ctx.editor.scene, *entity, body);
+                auto result = row->deserialize(ctx.editor.scene, *entity, body);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 return json{ { "set", row->name } };
             });
@@ -454,21 +454,21 @@ export namespace se
         // Routes through the Transform row's deserialize so the wire shape matches
         // scene files exactly: {translation:{x,y,z}, rotation:{x,y,z} Euler radians, scale:{x,y,z}}.
         registerCommand(reg, "set-transform", "set-transform {entity, translation?, rotation?, scale?}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 const ComponentTraits* row = findByName(ctx.editor.registry, "Transform");
                 if (row == nullptr)
                 {
-                    return std::unexpected(std::string{ "Transform component is not registered" });
+                    return Err(std::string{ "Transform component is not registered" });
                 }
                 if (!row->has(ctx.editor.scene, *entity))
                 {
-                    return std::unexpected(std::string{ "entity has no Transform" });
+                    return Err(std::string{ "entity has no Transform" });
                 }
                 // Merge provided fields over the current transform so unspecified
                 // fields (e.g. scale) are preserved rather than reset to defaults.
@@ -476,10 +476,10 @@ export namespace se
                 if (params.contains("translation")) { body["translation"] = params["translation"]; }
                 if (params.contains("rotation")) { body["rotation"] = params["rotation"]; }
                 if (params.contains("scale")) { body["scale"] = params["scale"]; }
-                std::expected<void, std::string> result = row->deserialize(ctx.editor.scene, *entity, body);
+                auto result = row->deserialize(ctx.editor.scene, *entity, body);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 return entityRef(ctx.editor.scene, *entity);
             });
@@ -487,17 +487,17 @@ export namespace se
         // Adds/updates the entity's Material, merging the provided fields over its
         // current value (baseColor as {x,y,z,w}).
         registerCommand(reg, "set-material", "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid, unlit?:0|1}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 const ComponentTraits* row = findByName(ctx.editor.registry, "Material");
                 if (row == nullptr)
                 {
-                    return std::unexpected(std::string{ "Material component is not registered" });
+                    return Err(std::string{ "Material component is not registered" });
                 }
                 if (!row->has(ctx.editor.scene, *entity))
                 {
@@ -541,10 +541,10 @@ export namespace se
                     }
                     body["unlit"] = unlit;
                 }
-                std::expected<void, std::string> result = row->deserialize(ctx.editor.scene, *entity, body);
+                auto result = row->deserialize(ctx.editor.scene, *entity, body);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 return entityRef(ctx.editor.scene, *entity);
             });
@@ -552,21 +552,21 @@ export namespace se
         // Sets the directional light (the given entity, else the first one),
         // merging provided fields (direction/color as {x,y,z}) over its current value.
         registerCommand(reg, "set-light", "set-light {entity?, direction?, color?, intensity?, ambient?}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const ComponentTraits* row = findByName(ctx.editor.registry, "DirectionalLight");
                 if (row == nullptr)
                 {
-                    return std::unexpected(std::string{ "DirectionalLight component is not registered" });
+                    return Err(std::string{ "DirectionalLight component is not registered" });
                 }
                 Entity target{ entt::null };
                 const json selector = positionalOr(params, "entity", 0);
                 if (!selector.is_null())
                 {
-                    std::expected<Entity, std::string> resolved = resolveEntity(ctx, params);
+                    auto resolved = resolveEntity(ctx, params);
                     if (!resolved)
                     {
-                        return std::unexpected(resolved.error());
+                        return Err(resolved.error());
                     }
                     target = *resolved;
                 }
@@ -582,35 +582,35 @@ export namespace se
                 }
                 if (target.handle == entt::null || !row->has(ctx.editor.scene, target))
                 {
-                    return std::unexpected(std::string{ "no DirectionalLight to set" });
+                    return Err(std::string{ "no DirectionalLight to set" });
                 }
                 json body = row->serialize(ctx.editor.scene, target);
                 if (params.contains("direction")) { body["direction"] = params["direction"]; }
                 if (params.contains("color")) { body["color"] = params["color"]; }
                 if (params.contains("intensity")) { body["intensity"] = params["intensity"]; }
                 if (params.contains("ambient")) { body["ambient"] = params["ambient"]; }
-                std::expected<void, std::string> result = row->deserialize(ctx.editor.scene, target, body);
+                auto result = row->deserialize(ctx.editor.scene, target, body);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 return entityRef(ctx.editor.scene, target);
             });
 
         registerCommand(reg, "select", "select {entity}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 setSelection(ctx.editor, *entity);
                 return entityRef(ctx.editor.scene, *entity);
             });
 
         registerCommand(reg, "pick", "pick {u=0.5, v=0.5} — ray-pick at viewport UV (0,0 = top-left)",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const json uParam = positionalOr(params, "u", 0);
                 const json vParam = positionalOr(params, "v", 1);
@@ -632,12 +632,12 @@ export namespace se
             });
 
         registerCommand(reg, "inspect", "inspect {entity} — dump all its components as json",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 json components = json::object();
                 for (const ComponentTraits& row : ctx.editor.registry.rows)
@@ -653,7 +653,7 @@ export namespace se
             });
 
         registerCommand(reg, "list-assets", "list the project asset catalog",
-            [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json&) -> Result<json>
             {
                 json out = json::array();
                 for (const AssetEntry& entry : ctx.assets.catalog.entries)
@@ -665,13 +665,13 @@ export namespace se
             });
 
         registerCommand(reg, "rename-asset", "rename-asset {id|name, newName}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string selector = asString(positionalOr(params, "asset", 0), "");
                 const std::string newName = asString(positionalOr(params, "name", 1), "");
                 if (selector.empty() || newName.empty())
                 {
-                    return std::unexpected(std::string{ "usage: rename-asset {id|name} {newName}" });
+                    return Err(std::string{ "usage: rename-asset {id|name} {newName}" });
                 }
                 const u64 byId = std::strtoull(selector.c_str(), nullptr, 10);
                 for (AssetEntry& entry : ctx.assets.catalog.entries)
@@ -682,16 +682,16 @@ export namespace se
                         return json{ { "id", entry.id.value }, { "name", entry.name } };
                     }
                 }
-                return std::unexpected(std::format("no asset '{}'", selector));
+                return Err(std::format("no asset '{}'", selector));
             });
 
         registerCommand(reg, "assign-asset", "assign-asset {entity, slot:mesh|albedo, id|name}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 const std::string slot = asString(positionalOr(params, "slot", 1), "");
                 const std::string selector = asString(positionalOr(params, "asset", 2), "");
@@ -706,7 +706,7 @@ export namespace se
                 }
                 if (match == nullptr)
                 {
-                    return std::unexpected(std::format("no asset '{}'", selector));
+                    return Err(std::format("no asset '{}'", selector));
                 }
                 if (slot == "mesh")
                 {
@@ -726,22 +726,22 @@ export namespace se
                 }
                 else
                 {
-                    return std::unexpected(std::string{ "slot must be 'mesh' or 'albedo'" });
+                    return Err(std::string{ "slot must be 'mesh' or 'albedo'" });
                 }
                 return json{ { "id", match->id.value }, { "name", match->name }, { "slot", slot } };
             });
 
         registerCommand(reg, "focus", "focus {entity} — aim the editor camera at it",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
-                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                auto entity = resolveEntity(ctx, params);
                 if (!entity)
                 {
-                    return std::unexpected(entity.error());
+                    return Err(entity.error());
                 }
                 if (!hasComponent<TransformComponent>(ctx.editor.scene, *entity))
                 {
-                    return std::unexpected(std::string{ "entity has no Transform" });
+                    return Err(std::string{ "entity has no Transform" });
                 }
                 const glm::vec3 target = getComponent<TransformComponent>(ctx.editor.scene, *entity).translation;
                 ctx.editor.camera.position = target - editorCameraForward(ctx.editor.camera) * 5.0f;
@@ -749,34 +749,34 @@ export namespace se
             });
 
         registerCommand(reg, "save-scene", "save-scene {path}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string path = asString(positionalOr(params, "path", 0), "");
                 if (path.empty())
                 {
-                    return std::unexpected(std::string{ "missing 'path'" });
+                    return Err(std::string{ "missing 'path'" });
                 }
-                std::expected<void, std::string> result = writeScene(ctx.editor.registry, ctx.editor.scene, path);
+                auto result = writeScene(ctx.editor.registry, ctx.editor.scene, path);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 ctx.editor.scenePath = path;
                 return json{ { "path", path } };
             });
 
         registerCommand(reg, "load-scene", "load-scene {path}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string path = asString(positionalOr(params, "path", 0), "");
                 if (path.empty())
                 {
-                    return std::unexpected(std::string{ "missing 'path'" });
+                    return Err(std::string{ "missing 'path'" });
                 }
-                std::expected<void, std::string> result = readScene(ctx.editor.registry, ctx.editor.scene, path);
+                auto result = readScene(ctx.editor.registry, ctx.editor.scene, path);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 ctx.editor.scenePath = path;
                 setSelection(ctx.editor, Entity{ entt::null });
@@ -784,27 +784,27 @@ export namespace se
             });
 
         registerCommand(reg, "save-project", "save-project {path} — assets catalog + scene in one file",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string path = asString(positionalOr(params, "path", 0), "project.json");
-                std::expected<void, std::string> result = saveProject(ctx.assets, ctx.editor.registry, ctx.editor.scene, path);
+                auto result = saveProject(ctx.assets, ctx.editor.registry, ctx.editor.scene, path);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 ctx.editor.scenePath = path;
                 return json{ { "path", path } };
             });
 
         registerCommand(reg, "load-project", "load-project {path} — assets catalog + scene",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string path = asString(positionalOr(params, "path", 0), "project.json");
-                std::expected<void, std::string> result =
+                Result<void> result =
                     loadProject(ctx.assets, ctx.renderer, ctx.editor.registry, ctx.editor.scene, path);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
                 ctx.editor.scenePath = path;
                 setSelection(ctx.editor, Entity{ entt::null });
@@ -812,38 +812,38 @@ export namespace se
             });
 
         registerCommand(reg, "screenshot", "screenshot {target:viewport|window, path}",
-            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json& params) -> Result<json>
             {
                 const std::string target = asString(positionalOr(params, "target", 0), "viewport");
                 const std::string path = asString(positionalOr(params, "path", 1), "");
                 if (path.empty())
                 {
-                    return std::unexpected(std::string{ "missing 'path'" });
+                    return Err(std::string{ "missing 'path'" });
                 }
                 if (target == "viewport")
                 {
-                    std::expected<void, std::string> shot = captureViewport(ctx.renderer, path);
+                    auto shot = captureViewport(ctx.renderer, path);
                     if (!shot)
                     {
-                        return std::unexpected(shot.error());
+                        return Err(shot.error());
                     }
                     return json{ { "target", target }, { "path", path }, { "pending", false } };
                 }
                 if (target == "window")
                 {
                     // Written at the end of the current frame.
-                    std::expected<void, std::string> shot = requestWindowCapture(ctx.renderer, path);
+                    auto shot = requestWindowCapture(ctx.renderer, path);
                     if (!shot)
                     {
-                        return std::unexpected(shot.error());
+                        return Err(shot.error());
                     }
                     return json{ { "target", target }, { "path", path }, { "pending", true } };
                 }
-                return std::unexpected(std::format("unknown target '{}' (viewport|window)", target));
+                return Err(std::format("unknown target '{}' (viewport|window)", target));
             });
 
         registerCommand(reg, "quit", "close the running app",
-            [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
+            [](EngineContext& ctx, const json&) -> Result<json>
             {
                 ctx.window.shouldClose = true;
                 return json{ { "quitting", true } };
@@ -876,12 +876,12 @@ export namespace se
         std::vector<ControlClient> clients;
     };
 
-    std::expected<ControlServer, std::string> startControlServer(std::string path)
+    Result<ControlServer> startControlServer(std::string path)
     {
         const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (fd < 0)
         {
-            return std::unexpected(std::format("socket: {}", std::strerror(errno)));
+            return Err(std::format("socket: {}", std::strerror(errno)));
         }
         ::unlink(path.c_str());
 
@@ -890,20 +890,20 @@ export namespace se
         if (path.size() >= sizeof(addr.sun_path))
         {
             ::close(fd);
-            return std::unexpected(std::format("socket path too long: {}", path));
+            return Err(std::format("socket path too long: {}", path));
         }
         std::memcpy(addr.sun_path, path.c_str(), path.size() + 1);
         if (::bind(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) != 0)
         {
             ::close(fd);
-            return std::unexpected(std::format("bind '{}': {}", path, std::strerror(errno)));
+            return Err(std::format("bind '{}': {}", path, std::strerror(errno)));
         }
         // Owner-only file permission is the access control (with the 0700 runtime dir).
         ::chmod(path.c_str(), 0600);
         if (::listen(fd, 8) != 0)
         {
             ::close(fd);
-            return std::unexpected(std::format("listen: {}", std::strerror(errno)));
+            return Err(std::format("listen: {}", std::strerror(errno)));
         }
         return ControlServer{ fd, std::move(path), {} };
     }
@@ -942,7 +942,7 @@ export namespace se
             return reply;
         }
         const json params = request.value("params", json::object());
-        std::expected<json, std::string> result = row->run(ctx, params);
+        auto result = row->run(ctx, params);
         if (!result)
         {
             reply["ok"] = false;
@@ -994,7 +994,7 @@ export namespace se
                 const std::string line = client.inbuf.substr(0, newline);
                 client.inbuf.erase(0, newline + 1);
 
-                std::expected<json, std::string> request = parseJson(line);
+                auto request = parseJson(line);
                 json reply;
                 if (!request)
                 {
@@ -1030,7 +1030,7 @@ export namespace se
         ControlContext* ctx = new ControlContext();
         registerBuiltinCommands(ctx->registry);
 
-        std::expected<ControlServer, std::string> server = startControlServer(controlSocketPath());
+        auto server = startControlServer(controlSocketPath());
         if (server)
         {
             ctx->server = std::move(*server);

@@ -41,7 +41,7 @@ export namespace se
         f32 seconds = 0.0f;
     };
 
-    constexpr f32 toMilliseconds(TimeSpan span)
+    constexpr auto toMilliseconds(TimeSpan span) -> f32
     {
         return span.seconds * 1000.0f;
     }
@@ -53,7 +53,7 @@ export namespace se
         u64 value = 0;
     };
 
-    Uuid newUuid()
+    auto newUuid() -> Uuid
     {
         static std::mt19937_64 engine{ std::random_device{}() };
         static std::uniform_int_distribution<u64> distribution{ 1, std::numeric_limits<u64>::max() };

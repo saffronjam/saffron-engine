@@ -339,7 +339,7 @@ export namespace se
         std::function<void(Scene&, Entity)> remove;
         std::function<void(Scene&, Entity, Scene&, Entity)> copyTo;  // clone src -> dst
         std::function<nlohmann::json(Scene&, Entity)> serialize;
-        std::function<std::expected<void, std::string>(Scene&, Entity, const nlohmann::json&)> deserialize;
+        std::function<Result<void>(Scene&, Entity, const nlohmann::json&)> deserialize;
         std::function<void(Scene&, Entity)> drawInspector;  // opaque here; ImGui body lives in the editor
     };
 
@@ -357,7 +357,7 @@ export namespace se
     void registerComponent(ComponentRegistry& reg, std::string name,
                            std::function<void(Scene&, Entity)> drawFn,
                            std::function<nlohmann::json(const C&)> toJson,
-                           std::function<std::expected<void, std::string>(C&, const nlohmann::json&)> fromJson,
+                           std::function<Result<void>(C&, const nlohmann::json&)> fromJson,
                            bool removable = true)
     {
         ComponentTraits traits;
@@ -378,7 +378,7 @@ export namespace se
         {
             return toJson(getComponent<C>(s, e));
         };
-        traits.deserialize = [fromJson](Scene& s, Entity e, const nlohmann::json& j) -> std::expected<void, std::string>
+        traits.deserialize = [fromJson](Scene& s, Entity e, const nlohmann::json& j) -> Result<void>
         {
             if (!hasComponent<C>(s, e))
             {
@@ -435,7 +435,7 @@ export namespace se
         return components;
     }
 
-    std::expected<void, std::string> deserializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity,
+    Result<void> deserializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity,
                                                        const nlohmann::json& components)
     {
         for (auto it = components.begin(); it != components.end(); ++it)
@@ -446,10 +446,10 @@ export namespace se
                 logWarn(std::format("unknown component '{}', skipping", it.key()));
                 continue;
             }
-            std::expected<void, std::string> result = traits->deserialize(scene, entity, it.value());
+            auto result = traits->deserialize(scene, entity, it.value());
             if (!result)
             {
-                return std::unexpected(std::format("{}: {}", it.key(), result.error()));
+                return Err(std::format("{}: {}", it.key(), result.error()));
             }
         }
         return {};
@@ -473,20 +473,20 @@ export namespace se
     }
 
     // Replaces the scene's entities from a `sceneToJson` document.
-    std::expected<void, std::string> sceneFromJson(ComponentRegistry& reg, Scene& scene, const nlohmann::json& doc)
+    Result<void> sceneFromJson(ComponentRegistry& reg, Scene& scene, const nlohmann::json& doc)
     {
         if (!doc.is_object())
         {
-            return std::unexpected(std::string{ "scene root is not an object" });
+            return Err(std::string{ "scene root is not an object" });
         }
         const int version = static_cast<int>(jsonU64Or(doc, "version", 0));
         if (version != SceneVersion)
         {
-            return std::unexpected(std::format("unsupported scene version {}", version));
+            return Err(std::format("unsupported scene version {}", version));
         }
         if (!doc.contains("entities") || !doc["entities"].is_array())
         {
-            return std::unexpected(std::string{ "scene missing 'entities' array" });
+            return Err(std::string{ "scene missing 'entities' array" });
         }
 
         scene.registry.clear();
@@ -498,12 +498,12 @@ export namespace se
         {
             if (!entry.is_object())
             {
-                return std::unexpected(std::string{ "entity entry is not an object" });
+                return Err(std::string{ "entity entry is not an object" });
             }
             const u64 uuid = jsonU64Or(entry, "id", 0);
             if (uuid == 0)
             {
-                return std::unexpected(std::string{ "entity missing 'id'" });
+                return Err(std::string{ "entity missing 'id'" });
             }
             entt::entity handle = scene.registry.create();
             scene.registry.emplace<IdComponent>(handle, Uuid{ uuid });
@@ -511,11 +511,11 @@ export namespace se
 
             if (entry.contains("components") && entry["components"].is_object())
             {
-                std::expected<void, std::string> result =
+                Result<void> result =
                     deserializeEntity(reg, scene, Entity{ handle }, entry["components"]);
                 if (!result)
                 {
-                    return std::unexpected(result.error());
+                    return Err(result.error());
                 }
             }
         }
@@ -526,35 +526,35 @@ export namespace se
         return {};
     }
 
-    std::expected<void, std::string> writeScene(ComponentRegistry& reg, Scene& scene, const std::string& path)
+    Result<void> writeScene(ComponentRegistry& reg, Scene& scene, const std::string& path)
     {
         std::ofstream out(path);
         if (!out)
         {
-            return std::unexpected(std::format("cannot open '{}' for writing", path));
+            return Err(std::format("cannot open '{}' for writing", path));
         }
         out << dumpJson(sceneToJson(reg, scene), 2);
         out.flush();
         if (!out)
         {
-            return std::unexpected(std::format("write failed for '{}'", path));
+            return Err(std::format("write failed for '{}'", path));
         }
         return {};
     }
 
-    std::expected<void, std::string> readScene(ComponentRegistry& reg, Scene& scene, const std::string& path)
+    Result<void> readScene(ComponentRegistry& reg, Scene& scene, const std::string& path)
     {
         std::ifstream in(path);
         if (!in)
         {
-            return std::unexpected(std::format("cannot open '{}'", path));
+            return Err(std::format("cannot open '{}'", path));
         }
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
-        std::expected<nlohmann::json, std::string> doc = parseJson(text);
+        auto doc = parseJson(text);
         if (!doc)
         {
-            return std::unexpected(std::format("'{}': {}", path, doc.error()));
+            return Err(std::format("'{}': {}", path, doc.error()));
         }
         return sceneFromJson(reg, scene, *doc);
     }
@@ -567,7 +567,7 @@ export namespace se
         registerComponent<NameComponent>(reg, "Name",
             [](Scene&, Entity) {},
             [](const NameComponent& c) { return nlohmann::json{ { "name", c.name } }; },
-            [](NameComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](NameComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.name = jsonStringOr(j, "name", std::string{});
                 return {};
@@ -581,7 +581,7 @@ export namespace se
                                        { "scale", vec3ToJson(t.scale) },
                                        { "rotation", vec3ToJson(t.rotation) } };
             },
-            [](TransformComponent& t, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](TransformComponent& t, const nlohmann::json& j) -> Result<void>
             {
                 t.translation = vec3FromJson(j.value("translation", nlohmann::json::object()));
                 t.scale = vec3FromJson(j.value("scale", nlohmann::json::object()));
@@ -596,7 +596,7 @@ export namespace se
         getComponent<TransformComponent>(scene, cube).translation = glm::vec3(1.0f, 2.0f, 3.0f);
 
         const std::string path = "/tmp/saffron_scene_selftest.json";
-        std::expected<void, std::string> wrote = writeScene(reg, scene, path);
+        auto wrote = writeScene(reg, scene, path);
         if (!wrote)
         {
             logError(std::format("scene self-test write failed: {}", wrote.error()));
@@ -604,7 +604,7 @@ export namespace se
         }
 
         Scene loaded;
-        std::expected<void, std::string> read = readScene(reg, loaded, path);
+        auto read = readScene(reg, loaded, path);
         if (!read)
         {
             logError(std::format("scene self-test read failed: {}", read.error()));

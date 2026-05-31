@@ -18,13 +18,13 @@ import Saffron.Core;
 // the library's own error path is `std::abort()` — a parse error, a `.dump()` on invalid
 // UTF-8, or a typed read (`get<T>()`/`value<>`/`at()`) on the wrong type all crash the
 // process. These wrappers convert every such failure into the engine's error-as-value
-// style (`std::expected` / a checked default) so json input never aborts.
+// style (`Result` / a checked default) so json input never aborts.
 export namespace se
 {
     using Json = nlohmann::json;
 
     /// Parse text into a Json value, or an error (never aborts).
-    std::expected<Json, std::string> parseJson(std::string_view text);
+    Result<Json> parseJson(std::string_view text);
 
     /// Serialize to a string; invalid UTF-8 is replaced rather than aborting. indent < 0
     /// is compact, >= 0 pretty-prints with that many spaces.
@@ -33,10 +33,10 @@ export namespace se
     /// Typed object-field reads. Each checks the value's type before extracting, so a
     /// missing key or a wrong type yields an error instead of aborting. jsonU64 also
     /// accepts a numeric string (the se CLI passes bare numbers as strings).
-    std::expected<u64, std::string> jsonU64(const Json& object, std::string_view key);
-    std::expected<std::string, std::string> jsonString(const Json& object, std::string_view key);
-    std::expected<f64, std::string> jsonF64(const Json& object, std::string_view key);
-    std::expected<bool, std::string> jsonBool(const Json& object, std::string_view key);
+    Result<u64> jsonU64(const Json& object, std::string_view key);
+    Result<std::string> jsonString(const Json& object, std::string_view key);
+    Result<f64> jsonF64(const Json& object, std::string_view key);
+    Result<bool> jsonBool(const Json& object, std::string_view key);
 
     /// The same reads, returning a fallback instead of an error when the key is absent or
     /// mistyped (the "value-or-default" pattern for optional fields).
@@ -48,12 +48,12 @@ export namespace se
 
 namespace se
 {
-    std::expected<Json, std::string> parseJson(std::string_view text)
+    Result<Json> parseJson(std::string_view text)
     {
         Json value = Json::parse(text, nullptr, false);  // allow_exceptions = false
         if (value.is_discarded())
         {
-            return std::unexpected(std::string{ "invalid JSON" });
+            return Err(std::string{ "invalid JSON" });
         }
         return value;
     }
@@ -76,12 +76,12 @@ namespace se
         }
     }
 
-    std::expected<u64, std::string> jsonU64(const Json& object, std::string_view key)
+    Result<u64> jsonU64(const Json& object, std::string_view key)
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
         {
-            return std::unexpected(std::format("missing key '{}'", key));
+            return Err(std::format("missing key '{}'", key));
         }
         if (it->is_number_unsigned())
         {
@@ -105,54 +105,54 @@ namespace se
                 return parsed;
             }
         }
-        return std::unexpected(std::format("key '{}' is not an unsigned integer", key));
+        return Err(std::format("key '{}' is not an unsigned integer", key));
     }
 
-    std::expected<std::string, std::string> jsonString(const Json& object, std::string_view key)
+    Result<std::string> jsonString(const Json& object, std::string_view key)
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
         {
-            return std::unexpected(std::format("missing key '{}'", key));
+            return Err(std::format("missing key '{}'", key));
         }
         if (it->is_string())
         {
             return it->get<std::string>();
         }
-        return std::unexpected(std::format("key '{}' is not a string", key));
+        return Err(std::format("key '{}' is not a string", key));
     }
 
-    std::expected<f64, std::string> jsonF64(const Json& object, std::string_view key)
+    Result<f64> jsonF64(const Json& object, std::string_view key)
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
         {
-            return std::unexpected(std::format("missing key '{}'", key));
+            return Err(std::format("missing key '{}'", key));
         }
         if (it->is_number())
         {
             return it->get<f64>();
         }
-        return std::unexpected(std::format("key '{}' is not a number", key));
+        return Err(std::format("key '{}' is not a number", key));
     }
 
-    std::expected<bool, std::string> jsonBool(const Json& object, std::string_view key)
+    Result<bool> jsonBool(const Json& object, std::string_view key)
     {
         Json::const_iterator it = findField(object, key);
         if (it == object.end())
         {
-            return std::unexpected(std::format("missing key '{}'", key));
+            return Err(std::format("missing key '{}'", key));
         }
         if (it->is_boolean())
         {
             return it->get<bool>();
         }
-        return std::unexpected(std::format("key '{}' is not a boolean", key));
+        return Err(std::format("key '{}' is not a boolean", key));
     }
 
     u64 jsonU64Or(const Json& object, std::string_view key, u64 fallback)
     {
-        std::expected<u64, std::string> value = jsonU64(object, key);
+        auto value = jsonU64(object, key);
         if (value)
         {
             return *value;
@@ -162,7 +162,7 @@ namespace se
 
     std::string jsonStringOr(const Json& object, std::string_view key, std::string fallback)
     {
-        std::expected<std::string, std::string> value = jsonString(object, key);
+        auto value = jsonString(object, key);
         if (value)
         {
             return *value;
@@ -172,7 +172,7 @@ namespace se
 
     f32 jsonF32Or(const Json& object, std::string_view key, f32 fallback)
     {
-        std::expected<f64, std::string> value = jsonF64(object, key);
+        auto value = jsonF64(object, key);
         if (value)
         {
             return static_cast<f32>(*value);
@@ -182,7 +182,7 @@ namespace se
 
     bool jsonBoolOr(const Json& object, std::string_view key, bool fallback)
     {
-        std::expected<bool, std::string> value = jsonBool(object, key);
+        auto value = jsonBool(object, key);
         if (value)
         {
             return *value;

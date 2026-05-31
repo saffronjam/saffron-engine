@@ -37,7 +37,7 @@ export namespace se
         bool layoutBuilt = false;          // seeded the default dock layout once
     };
 
-    std::expected<Ui, std::string> newUi(Renderer& renderer, Window& window);
+    Result<Ui> newUi(Renderer& renderer, Window& window);
     void destroyUi(Renderer& renderer, Ui& ui);
 
     void uiBeginFrame(Ui& ui);                  // NewFrame + dockspace host
@@ -62,7 +62,7 @@ export namespace se
 
 namespace se
 {
-    std::expected<Ui, std::string> newUi(Renderer& renderer, Window& window)
+    Result<Ui> newUi(Renderer& renderer, Window& window)
     {
         Ui ui;
 
@@ -78,7 +78,7 @@ namespace se
         vk::ResultValue<vk::DescriptorPool> pool = renderer.device.createDescriptorPool(poolInfo);
         if (pool.result != vk::Result::eSuccess)
         {
-            return std::unexpected(std::format("createDescriptorPool: {}", vk::to_string(pool.result)));
+            return Err(std::format("createDescriptorPool: {}", vk::to_string(pool.result)));
         }
         ui.descriptorPool = pool.value;
 
@@ -103,7 +103,7 @@ namespace se
 
         if (!ImGui_ImplSDL3_InitForVulkan(window.handle))
         {
-            return std::unexpected(std::string{ "ImGui_ImplSDL3_InitForVulkan failed" });
+            return Err(std::string{ "ImGui_ImplSDL3_InitForVulkan failed" });
         }
 
         // ImGui consumes the color format during Init (when it builds its pipeline),
@@ -127,7 +127,7 @@ namespace se
         init.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &colorFormat;
         if (!ImGui_ImplVulkan_Init(&init))
         {
-            return std::unexpected(std::string{ "ImGui_ImplVulkan_Init failed" });
+            return Err(std::string{ "ImGui_ImplVulkan_Init failed" });
         }
 
         window.eventSinks.push_back([](const SDL_Event& event) { ImGui_ImplSDL3_ProcessEvent(&event); });

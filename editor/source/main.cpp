@@ -68,7 +68,7 @@ int main()
         // Vendored Lucide type icons (the fallback when a real thumbnail isn't available).
         auto loadIcon = [&app](const char* file) -> Thumbnail
         {
-            std::expected<se::Ref<se::GpuTexture>, std::string> tex =
+            auto tex =
                 se::uploadSvgIcon(app.renderer, se::assetPath(file), 64, glm::vec4(0.85f));
             if (!tex)
             {
@@ -109,7 +109,7 @@ int main()
                 {
                     return state->meshIcon.id;
                 }
-                std::expected<se::Ref<se::GpuTexture>, std::string> rendered =
+                auto rendered =
                     se::renderMeshThumbnail(app.renderer, mesh, 128);
                 if (!rendered)
                 {
@@ -126,7 +126,7 @@ int main()
 
         // Mesh pipelines are owned by the renderer's PSO cache (resolved per material in
         // renderScene), so the client no longer creates one. Just seed the scene.
-        std::expected<se::ImportResult, std::string> cube =
+        auto cube =
             se::importModel(state->assets, app.renderer, se::assetPath("models/cube.gltf"));
         if (cube)
         {
@@ -146,13 +146,13 @@ int main()
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
             {
-                if (std::expected<se::Uuid, std::string> id = se::importTexture(state->assets, app.renderer, path); !id)
+                if (auto id = se::importTexture(state->assets, app.renderer, path); !id)
                 {
                     se::logError(id.error());
                 }
                 return;
             }
-            if (std::expected<se::ImportResult, std::string> model = se::importModel(state->assets, app.renderer, path); !model)
+            if (auto model = se::importModel(state->assets, app.renderer, path); !model)
             {
                 se::logError(model.error());
             }
@@ -161,7 +161,7 @@ int main()
         // Create > Cube imports the bundled cube into the catalog and spawns an entity.
         state->editor->onCreateCube = [state, &app]()
         {
-            std::expected<se::ImportResult, std::string> cube =
+            auto cube =
                 se::importModel(state->assets, app.renderer, se::assetPath("models/cube.gltf"));
             if (!cube)
             {
@@ -172,7 +172,7 @@ int main()
         };
         state->editor->onSaveProject = [state](const std::string& path)
         {
-            if (std::expected<void, std::string> result =
+            if (auto result =
                     se::saveProject(state->assets, state->editor->registry, state->editor->scene, path); !result)
             {
                 se::logError(result.error());
@@ -180,7 +180,7 @@ int main()
         };
         state->editor->onLoadProject = [state, &app](const std::string& path)
         {
-            if (std::expected<void, std::string> result = se::loadProject(state->assets, app.renderer,
+            if (auto result = se::loadProject(state->assets, app.renderer,
                     state->editor->registry, state->editor->scene, path); !result)
             {
                 se::logError(result.error());

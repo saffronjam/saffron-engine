@@ -36,11 +36,11 @@ export namespace se
         std::vector<std::function<void(const SDL_Event&)>> eventSinks;
     };
 
-    std::expected<Window, std::string> newWindow(const WindowConfig& config)
+    Result<Window> newWindow(const WindowConfig& config)
     {
         if (!SDL_Init(SDL_INIT_VIDEO))
         {
-            return std::unexpected(std::format("SDL_Init failed: {}", SDL_GetError()));
+            return Err(std::format("SDL_Init failed: {}", SDL_GetError()));
         }
 
         SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
@@ -51,7 +51,7 @@ export namespace se
             flags);
         if (handle == nullptr)
         {
-            return std::unexpected(std::format("SDL_CreateWindow failed: {}", SDL_GetError()));
+            return Err(std::format("SDL_CreateWindow failed: {}", SDL_GetError()));
         }
 
         Window window;

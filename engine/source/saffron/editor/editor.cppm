@@ -160,7 +160,7 @@ export namespace se
                 ImGui::InputText("##name", &getComponent<NameComponent>(s, e).name);
             },
             [](const NameComponent& c) { return nlohmann::json{ { "name", c.name } }; },
-            [](NameComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](NameComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.name = jsonStringOr(j, "name", std::string{});
                 return {};
@@ -185,7 +185,7 @@ export namespace se
                                        { "scale", vec3ToJson(t.scale) },
                                        { "rotation", vec3ToJson(t.rotation) } };
             },
-            [](TransformComponent& t, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](TransformComponent& t, const nlohmann::json& j) -> Result<void>
             {
                 t.translation = vec3FromJson(j.value("translation", nlohmann::json::object()));
                 t.scale = vec3FromJson(j.value("scale", nlohmann::json::object()));
@@ -201,7 +201,7 @@ export namespace se
                 drawAssetPicker(s, AssetType::Mesh, "Mesh", mesh.mesh, thumbnailFor);
             },
             [](const MeshComponent& c) { return nlohmann::json{ { "mesh", c.mesh.value } }; },
-            [](MeshComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](MeshComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.mesh = Uuid{ jsonU64Or(j, "mesh", 0) };
                 return {};
@@ -222,7 +222,7 @@ export namespace se
                 return nlohmann::json{ { "fov", c.fov }, { "near", c.nearPlane },
                                        { "far", c.farPlane }, { "primary", c.primary } };
             },
-            [](CameraComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](CameraComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.fov = jsonF32Or(j, "fov", 45.0f);
                 c.nearPlane = jsonF32Or(j, "near", 0.1f);
@@ -246,7 +246,7 @@ export namespace se
                                        { "albedoTexture", c.albedoTexture.value },
                                        { "unlit", c.unlit } };
             },
-            [](MaterialComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](MaterialComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.baseColor = vec4FromJson(j.value("baseColor", nlohmann::json::object()));
                 c.albedoTexture = Uuid{ jsonU64Or(j, "albedoTexture", 0) };
@@ -270,7 +270,7 @@ export namespace se
                                        { "color", vec3ToJson(c.color) },
                                        { "intensity", c.intensity }, { "ambient", c.ambient } };
             },
-            [](DirectionalLightComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](DirectionalLightComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.direction = vec3FromJson(j.value("direction", nlohmann::json::object()));
                 c.color = vec3FromJson(j.value("color", nlohmann::json::object()));
@@ -293,7 +293,7 @@ export namespace se
                 return nlohmann::json{ { "color", vec3ToJson(c.color) },
                                        { "intensity", c.intensity }, { "range", c.range } };
             },
-            [](PointLightComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](PointLightComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.color = vec3FromJson(j.value("color", nlohmann::json::object()));
                 c.intensity = jsonF32Or(j, "intensity", 5.0f);
@@ -320,7 +320,7 @@ export namespace se
                                        { "range", c.range }, { "innerAngle", c.innerAngle },
                                        { "outerAngle", c.outerAngle } };
             },
-            [](SpotLightComponent& c, const nlohmann::json& j) -> std::expected<void, std::string>
+            [](SpotLightComponent& c, const nlohmann::json& j) -> Result<void>
             {
                 c.direction = vec3FromJson(j.value("direction", nlohmann::json::object()));
                 c.color = vec3FromJson(j.value("color", nlohmann::json::object()));
