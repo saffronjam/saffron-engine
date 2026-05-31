@@ -523,6 +523,63 @@ export namespace se
                 return result;
             });
 
+        registerCommand(reg, "inspect", "inspect {entity} — dump all its components as json",
+            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            {
+                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                if (!entity)
+                {
+                    return std::unexpected(entity.error());
+                }
+                json components = json::object();
+                for (const ComponentTraits& row : ctx.editor.registry.rows)
+                {
+                    if (row.has(ctx.editor.scene, *entity))
+                    {
+                        components[row.name] = row.serialize(ctx.editor.scene, *entity);
+                    }
+                }
+                json result = entityRef(ctx.editor.scene, *entity);
+                result["components"] = std::move(components);
+                return result;
+            });
+
+        registerCommand(reg, "list-assets", "list registered mesh + texture assets",
+            [](EngineContext& ctx, const json&) -> std::expected<json, std::string>
+            {
+                auto entries = [](const std::unordered_map<u64, std::string>& paths,
+                                  auto& refCache)
+                {
+                    json out = json::array();
+                    for (const auto& [id, path] : paths)
+                    {
+                        auto cached = refCache.find(id);
+                        const bool loaded = cached != refCache.end() && cached->second != nullptr;
+                        out.push_back(json{ { "id", id }, { "path", path }, { "loaded", loaded } });
+                    }
+                    return out;
+                };
+                return json{ { "meshes", entries(ctx.assets.pathByUuid, ctx.assets.meshRefByUuid) },
+                             { "textures", entries(ctx.assets.texturePathByUuid, ctx.assets.textureRefByUuid) } };
+            });
+
+        registerCommand(reg, "focus", "focus {entity} — aim the editor camera at it",
+            [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
+            {
+                std::expected<Entity, std::string> entity = resolveEntity(ctx, params);
+                if (!entity)
+                {
+                    return std::unexpected(entity.error());
+                }
+                if (!hasComponent<TransformComponent>(ctx.editor.scene, *entity))
+                {
+                    return std::unexpected(std::string{ "entity has no Transform" });
+                }
+                const glm::vec3 target = getComponent<TransformComponent>(ctx.editor.scene, *entity).translation;
+                ctx.editor.camera.position = target - editorCameraForward(ctx.editor.camera) * 5.0f;
+                return entityRef(ctx.editor.scene, *entity);
+            });
+
         registerCommand(reg, "save-scene", "save-scene {path}",
             [](EngineContext& ctx, const json& params) -> std::expected<json, std::string>
             {
