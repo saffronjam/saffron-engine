@@ -20,4 +20,7 @@ add_custom_command(TARGET SaffronEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts
             ${SAFFRON_RUNTIME_DIR}/fonts
-    COMMENT "Copying models + fonts to the runtime dir")
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/icons
+            ${SAFFRON_RUNTIME_DIR}/icons
+    COMMENT "Copying models + fonts + icons to the runtime dir")

@@ -89,6 +89,13 @@ target_compile_options(cgltf PRIVATE -Wno-unused-function)
 add_library(tinyobjloader STATIC ${CMAKE_SOURCE_DIR}/cmake/tinyobjloader_impl.cpp)  # OBJ, v1.0.6
 target_include_directories(tinyobjloader PUBLIC ${CMAKE_SOURCE_DIR}/third_party/tinyobjloader)
 
+# --- nanosvg TU ---------------------------------------------------------------
+# Single-header, zlib license, vendored under third_party/nanosvg. One impl TU;
+# the renderer rasterizes SVG asset icons to GPU textures via uploadSvgIcon.
+add_library(nanosvg STATIC ${CMAKE_SOURCE_DIR}/cmake/nanosvg_impl.cpp)
+target_include_directories(nanosvg PUBLIC ${CMAKE_SOURCE_DIR}/third_party/nanosvg)
+target_compile_options(nanosvg PRIVATE -Wno-unused-function)
+
 # Convenience interface target aggregating everything the engine links against.
 add_library(saffron_third_party INTERFACE)
 target_link_libraries(saffron_third_party INTERFACE
@@ -102,6 +109,7 @@ target_link_libraries(saffron_third_party INTERFACE
     stb
     cgltf
     tinyobjloader
+    nanosvg
     imgui)
 # The engine bans exceptions; make nlohmann/json turn would-be throws into abort()
 # so any stray .at()/operator[] on missing keys fails loudly instead of throwing.

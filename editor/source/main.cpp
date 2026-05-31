@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 import Saffron.Core;
@@ -27,6 +28,13 @@ namespace
 {
     constexpr se::i32 KeyEscape = 27;  // SDLK_ESCAPE
 
+    // A cached asset thumbnail: the GPU texture + its ImGui handle.
+    struct Thumbnail
+    {
+        se::Ref<se::GpuTexture> texture;
+        ImTextureID id = 0;
+    };
+
     // State shared across the app lifecycle closures. The EditorContext is owned
     // by the engine (heap) so its heavy entt/json destructor stays out of this TU.
     struct EditorState
@@ -35,6 +43,13 @@ namespace
         se::ControlContext* control = nullptr;
         se::AssetServer assets;
         se::Ref<se::Pipeline> meshPipeline;
+
+        // Fallback SVG type icons + the per-asset thumbnail cache (textures show their
+        // image, meshes their rendered preview). All freed in onExit before the renderer.
+        Thumbnail meshIcon;
+        Thumbnail textureIcon;
+        Thumbnail fileIcon;
+        std::unordered_map<se::u64, Thumbnail> thumbnails;
     };
 }
 
@@ -51,9 +66,49 @@ int main()
         state->control = se::newControlContext();
         state->assets = se::newAssetServer(se::assetPath("assets"));
 
-        // Asset thumbnails are added in a later phase; for now the pickers show names only.
+        // Vendored Lucide type icons (the fallback when a real thumbnail isn't available).
+        auto loadIcon = [&app](const char* file) -> Thumbnail
+        {
+            std::expected<se::Ref<se::GpuTexture>, std::string> tex =
+                se::uploadSvgIcon(app.renderer, se::assetPath(file), 64, glm::vec4(0.85f));
+            if (!tex)
+            {
+                se::logError(tex.error());
+                return Thumbnail{};
+            }
+            return Thumbnail{ *tex, se::uiRegisterTexture(*tex) };
+        };
+        state->meshIcon = loadIcon("icons/box.svg");
+        state->textureIcon = loadIcon("icons/image.svg");
+        state->fileIcon = loadIcon("icons/file.svg");
+
+        // Best-effort thumbnail per asset: textures show their image, anything else the
+        // type icon (mesh render lands in a later step). Cached so AddTexture runs once.
         std::function<ImTextureID(const se::AssetEntry&)> thumbnailFor =
-            [](const se::AssetEntry&) -> ImTextureID { return 0; };
+            [state, &app](const se::AssetEntry& entry) -> ImTextureID
+        {
+            auto cached = state->thumbnails.find(entry.id.value);
+            if (cached != state->thumbnails.end())
+            {
+                return cached->second.id;
+            }
+            if (entry.type == se::AssetType::Texture)
+            {
+                se::Ref<se::GpuTexture> tex = se::loadTextureAsset(state->assets, app.renderer, entry.id);
+                if (!tex)
+                {
+                    return state->textureIcon.id;
+                }
+                Thumbnail thumb{ tex, se::uiRegisterTexture(tex) };
+                state->thumbnails.emplace(entry.id.value, thumb);
+                return thumb.id;
+            }
+            if (entry.type == se::AssetType::Mesh)
+            {
+                return state->meshIcon.id;
+            }
+            return state->fileIcon.id;
+        };
         se::registerBuiltinComponents(state->editor->registry, thumbnailFor);
 
         std::expected<se::Ref<se::Pipeline>, std::string> pipeline = se::newMeshPipeline(app.renderer, "shaders/mesh.spv");
@@ -202,7 +257,22 @@ int main()
         }
         // Drop every GPU Ref this client holds before destroyRenderer frees the
         // device/allocator — otherwise the cached meshes/textures and the pipeline
-        // would be freed too late (use-after-free).
+        // would be freed too late (use-after-free). Unregister ImGui textures first
+        // (RemoveTexture needs the ImGui Vulkan backend, torn down after onExit).
+        auto freeThumbnail = [](Thumbnail& thumb)
+        {
+            se::uiUnregisterTexture(thumb.id);
+            thumb = Thumbnail{};
+        };
+        for (auto& [id, thumb] : state->thumbnails)
+        {
+            se::uiUnregisterTexture(thumb.id);
+        }
+        state->thumbnails.clear();
+        freeThumbnail(state->meshIcon);
+        freeThumbnail(state->textureIcon);
+        freeThumbnail(state->fileIcon);
+
         state->assets.meshRefByUuid.clear();
         state->assets.textureRefByUuid.clear();
         state->meshPipeline.reset();

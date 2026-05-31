@@ -53,6 +53,11 @@ export namespace se
 
     // The Roboto Mono font for numeric/data fields, or null if it failed to load.
     ImFont* uiMonoFont(const Ui& ui);
+
+    // Registers a GPU texture with the ImGui Vulkan backend for display (ImGui::Image).
+    // Returns an ImTextureID (0 if the texture is null); free it with uiUnregisterTexture.
+    ImTextureID uiRegisterTexture(const Ref<GpuTexture>& texture);
+    void uiUnregisterTexture(ImTextureID texture);
 }
 
 namespace se
@@ -255,6 +260,24 @@ namespace se
     ImFont* uiMonoFont(const Ui& ui)
     {
         return ui.monoFont;
+    }
+
+    ImTextureID uiRegisterTexture(const Ref<GpuTexture>& texture)
+    {
+        if (!texture)
+        {
+            return 0;
+        }
+        return (ImTextureID)ImGui_ImplVulkan_AddTexture(
+            static_cast<VkImageView>(texture->view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    void uiUnregisterTexture(ImTextureID texture)
+    {
+        if (texture != 0)
+        {
+            ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)texture);
+        }
     }
 
     void uiRecordDrawData(Renderer& renderer)

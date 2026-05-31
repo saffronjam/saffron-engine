@@ -10,6 +10,8 @@ module;
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 #include <stb_image_write.h>
+#include <nanosvg.h>
+#include <nanosvgrast.h>
 #include <glm/glm.hpp>
 
 #include <array>
@@ -542,6 +544,11 @@ export namespace se
     std::expected<Ref<Pipeline>, std::string> newMeshPipeline(Renderer& renderer, std::string_view shaderName);
     std::expected<Ref<GpuMesh>, std::string> uploadMesh(Renderer& renderer, const Mesh& mesh);
     std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb);
+
+    // Rasterizes an SVG to a square RGBA icon (tint multiplied in) and uploads it as a
+    // GPU texture — used for asset-browser type icons. "currentColor" maps to white.
+    std::expected<Ref<GpuTexture>, std::string> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
+                                                              u32 pixelSize, glm::vec4 tint);
 
     // Uploads the frame's instance data, then records ONE submit() closure that binds
     // the light + instance sets once and issues one instanced drawIndexed per batch.
@@ -2403,6 +2410,54 @@ namespace se
     bool clusteredEnabled(const Renderer& renderer)
     {
         return renderer.useClustered;
+    }
+
+    std::expected<Ref<GpuTexture>, std::string> uploadSvgIcon(Renderer& renderer, const std::string& svgPath,
+                                                              u32 pixelSize, glm::vec4 tint)
+    {
+        std::ifstream in(svgPath);
+        if (!in)
+        {
+            return std::unexpected(std::format("cannot open '{}'", svgPath));
+        }
+        std::string svg((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        // nanosvg does not resolve the "currentColor" keyword; map it to white so
+        // stroke-only icons (e.g. Lucide) rasterize, then tint below.
+        for (std::size_t pos = svg.find("currentColor"); pos != std::string::npos; pos = svg.find("currentColor", pos))
+        {
+            svg.replace(pos, 12, "#ffffff");
+        }
+
+        NSVGimage* image = nsvgParse(svg.data(), "px", 96.0f);  // nsvgParse mutates the buffer
+        if (image == nullptr || image->width <= 0.0f || image->height <= 0.0f)
+        {
+            if (image != nullptr)
+            {
+                nsvgDelete(image);
+            }
+            return std::unexpected(std::format("nanosvg failed to parse '{}'", svgPath));
+        }
+        NSVGrasterizer* rasterizer = nsvgCreateRasterizer();
+        if (rasterizer == nullptr)
+        {
+            nsvgDelete(image);
+            return std::unexpected(std::string{ "nsvgCreateRasterizer failed" });
+        }
+        const f32 scale = static_cast<f32>(pixelSize) / glm::max(image->width, image->height);
+        std::vector<u8> rgba(static_cast<std::size_t>(pixelSize) * pixelSize * 4, 0);
+        nsvgRasterize(rasterizer, image, 0.0f, 0.0f, scale, rgba.data(),
+                      static_cast<int>(pixelSize), static_cast<int>(pixelSize), static_cast<int>(pixelSize) * 4);
+        nsvgDeleteRasterizer(rasterizer);
+        nsvgDelete(image);
+
+        for (std::size_t i = 0; i < rgba.size(); i = i + 4)
+        {
+            rgba[i + 0] = static_cast<u8>(rgba[i + 0] * tint.r);
+            rgba[i + 1] = static_cast<u8>(rgba[i + 1] * tint.g);
+            rgba[i + 2] = static_cast<u8>(rgba[i + 2] * tint.b);
+            rgba[i + 3] = static_cast<u8>(rgba[i + 3] * tint.a);
+        }
+        return uploadTexture(renderer, rgba.data(), pixelSize, pixelSize, false);
     }
 
     std::expected<Ref<GpuTexture>, std::string> uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb)
