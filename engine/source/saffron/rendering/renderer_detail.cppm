@@ -297,7 +297,8 @@ export namespace se
     }
 
     auto newDepthImage(Renderer& renderer, u32 width, u32 height,
-                                                    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1) -> Result<Image>
+                                                    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1,
+                                                    bool sampled = false) -> Result<Image>
     {
         VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -308,6 +309,10 @@ export namespace se
         imageInfo.samples = static_cast<VkSampleCountFlagBits>(samples);
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        if (sampled)
+        {
+            imageInfo.usage = imageInfo.usage | VK_IMAGE_USAGE_SAMPLED_BIT;  // shadow map: sampled in the mesh fragment
+        }
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
         VmaAllocationCreateInfo allocInfo{};
@@ -518,9 +523,16 @@ export namespace se
     {
         glm::vec4 directionAmbient;  // xyz direction, w ambient
         glm::vec4 colorIntensity;    // rgb color, a intensity
-        glm::uvec4 counts;           // x = punctual light count
+        glm::uvec4 counts;           // x = punctual count, y = directional-shadow enabled (0/1)
         glm::vec4 eyePosition;       // xyz world-space camera position
+        glm::mat4 shadowViewProj;    // directional light-space transform (world -> shadow clip)
     };
+
+    // Shadow-map resolution + slope/constant depth bias (units of D32 depth). Tuned on
+    // llvmpipe to remove acne without obvious peter-panning.
+    inline constexpr u32 ShadowMapSize = 2048;
+    inline constexpr f32 ShadowDepthBiasConstant = 1.25f;
+    inline constexpr f32 ShadowDepthBiasSlope = 2.0f;
 
     // Froxel cluster grid (X x Y screen tiles, Z exponential view-space slices) and
     // the per-cluster light cap. Must match light_cull.slang + mesh.slang.
@@ -746,6 +758,105 @@ export namespace se
         return std::make_shared<Pipeline>(std::move(pipeline));
     }
 
+    // A depth-only pipeline that renders the scene from a light's point of view into the
+    // shadow map. Like makeDepthPrepassPipeline but always single-sampled (the shadow map
+    // is 1x) and depth-biased (dynamic) to kill shadow acne. Reuses the mesh vertex shader.
+    auto makeShadowPipeline(Renderer& renderer, std::string_view shaderName) -> Result<Ref<Pipeline>>
+    {
+        auto moduleResult = loadShaderModule(renderer.context.device, assetPath(shaderName));
+        if (!moduleResult)
+        {
+            return Err(moduleResult.error());
+        }
+        vk::ShaderModule shaderModule = *moduleResult;
+
+        vk::PipelineShaderStageCreateInfo stage{};
+        stage.stage = vk::ShaderStageFlagBits::eVertex;
+        stage.module = shaderModule;
+        stage.pName = "vertexMain";
+
+        vk::VertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(Vertex);
+        binding.inputRate = vk::VertexInputRate::eVertex;
+        std::array<vk::VertexInputAttributeDescription, 3> attributes{
+            vk::VertexInputAttributeDescription{ 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position) },
+            vk::VertexInputAttributeDescription{ 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal) },
+            vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uv0) } };
+        vk::PipelineVertexInputStateCreateInfo vertexInput{};
+        vertexInput.setVertexBindingDescriptions(binding);
+        vertexInput.setVertexAttributeDescriptions(attributes);
+
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+        vk::PipelineViewportStateCreateInfo viewportState{};
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+        vk::PipelineRasterizationStateCreateInfo raster{};
+        raster.polygonMode = vk::PolygonMode::eFill;
+        raster.cullMode = vk::CullModeFlagBits::eNone;
+        raster.frontFace = vk::FrontFace::eCounterClockwise;
+        raster.depthBiasEnable = VK_TRUE;  // set dynamically per shadow pass
+        raster.lineWidth = 1.0f;
+        vk::PipelineMultisampleStateCreateInfo multisample{};
+        multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;  // the shadow map is never multisampled
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = vk::CompareOp::eLess;
+        vk::PipelineColorBlendStateCreateInfo colorBlend{};  // no color attachments
+        std::array<vk::DynamicState, 3> dynamicStates{
+            vk::DynamicState::eViewport, vk::DynamicState::eScissor, vk::DynamicState::eDepthBias };
+        vk::PipelineDynamicStateCreateInfo dynamic{};
+        dynamic.setDynamicStates(dynamicStates);
+
+        vk::PipelineRenderingCreateInfo renderingInfo{};
+        renderingInfo.depthAttachmentFormat = DepthFormat;
+
+        vk::PushConstantRange pushConstant{};
+        pushConstant.stageFlags = vk::ShaderStageFlagBits::eVertex;
+        pushConstant.offset = 0;
+        pushConstant.size = sizeof(glm::mat4);
+        std::array<vk::DescriptorSetLayout, 3> setLayouts{
+            renderer.descriptors.bindlessSetLayout, renderer.descriptors.lightSetLayout, renderer.descriptors.instanceSetLayout };
+        vk::PipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.setSetLayouts(setLayouts);
+        layoutInfo.setPushConstantRanges(pushConstant);
+        auto layoutResult = checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (shadow)");
+        if (!layoutResult)
+        {
+            renderer.context.device.destroyShaderModule(shaderModule);
+            return Err(layoutResult.error());
+        }
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.pNext = &renderingInfo;
+        pipelineInfo.setStages(stage);
+        pipelineInfo.pVertexInputState = &vertexInput;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &raster;
+        pipelineInfo.pMultisampleState = &multisample;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlend;
+        pipelineInfo.pDynamicState = &dynamic;
+        pipelineInfo.layout = *layoutResult;
+
+        vk::ResultValue<vk::Pipeline> created = renderer.context.device.createGraphicsPipeline(nullptr, pipelineInfo);
+        renderer.context.device.destroyShaderModule(shaderModule);
+        if (created.result != vk::Result::eSuccess)
+        {
+            renderer.context.device.destroyPipelineLayout(*layoutResult);
+            return Err(std::format("createGraphicsPipeline (shadow): {}", vk::to_string(created.result)));
+        }
+
+        Pipeline pipeline;
+        pipeline.device = renderer.context.device;
+        pipeline.pipeline = created.value;
+        pipeline.layout = *layoutResult;
+        return std::make_shared<Pipeline>(std::move(pipeline));
+    }
+
     // Write a texture into the bindless array at the given slot (set 0, binding 0).
     // update-after-bind: safe to write a live set between draws.
     void writeBindlessTexture(Renderer& renderer, vk::ImageView view, u32 index)
@@ -823,6 +934,64 @@ export namespace se
         }
         renderer.descriptors.linearSampler = *sampler;
 
+        // Depth-compare sampler for PCF shadow lookups: linear filtering across the 2x2
+        // compare results, clamp to a white (lit) border so off-map samples are unshadowed.
+        vk::SamplerCreateInfo shadowSamplerInfo{};
+        shadowSamplerInfo.magFilter = vk::Filter::eLinear;
+        shadowSamplerInfo.minFilter = vk::Filter::eLinear;
+        shadowSamplerInfo.mipmapMode = vk::SamplerMipmapMode::eNearest;
+        shadowSamplerInfo.addressModeU = vk::SamplerAddressMode::eClampToBorder;
+        shadowSamplerInfo.addressModeV = vk::SamplerAddressMode::eClampToBorder;
+        shadowSamplerInfo.addressModeW = vk::SamplerAddressMode::eClampToBorder;
+        shadowSamplerInfo.borderColor = vk::BorderColor::eFloatOpaqueWhite;
+        shadowSamplerInfo.compareEnable = VK_TRUE;
+        shadowSamplerInfo.compareOp = vk::CompareOp::eLessOrEqual;
+        auto shadowSampler = checked(renderer.context.device.createSampler(shadowSamplerInfo), "createSampler (shadow)");
+        if (!shadowSampler)
+        {
+            return Err(shadowSampler.error());
+        }
+        renderer.descriptors.shadowSampler = *shadowSampler;
+
+        // The directional shadow map: a single persistent sampled depth target. Transition
+        // it once to ShaderReadOnly so its descriptor layout is valid even on frames where
+        // the shadow pass doesn't run (shadows toggled off) — the shader gates the sample.
+        auto shadowMap = newDepthImage(renderer, ShadowMapSize, ShadowMapSize, vk::SampleCountFlagBits::e1, true);
+        if (!shadowMap)
+        {
+            return Err(shadowMap.error());
+        }
+        renderer.targets.shadowMap = std::move(*shadowMap);
+        {
+            vk::CommandBufferAllocateInfo allocInfo{};
+            allocInfo.commandPool = renderer.frame.frames[0].commandPool;
+            allocInfo.level = vk::CommandBufferLevel::ePrimary;
+            allocInfo.commandBufferCount = 1;
+            auto cmds = checked(renderer.context.device.allocateCommandBuffers(allocInfo), "shadow init cmd");
+            if (!cmds)
+            {
+                return Err(cmds.error());
+            }
+            vk::CommandBuffer cmd = (*cmds)[0];
+            vk::CommandBufferBeginInfo begin{};
+            begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            static_cast<void>(cmd.begin(begin));
+            transitionImage(cmd, renderer.targets.shadowMap.image,
+                vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal,
+                vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+                vk::ImageAspectFlagBits::eDepth);
+            static_cast<void>(cmd.end());
+            vk::CommandBufferSubmitInfo cmdInfo{};
+            cmdInfo.commandBuffer = cmd;
+            vk::SubmitInfo2 submitInfo{};
+            submitInfo.setCommandBufferInfos(cmdInfo);
+            static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+            static_cast<void>(renderer.context.device.waitIdle());
+            renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
+            renderer.targets.shadowMap.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+
         // Set 0 is the bindless albedo array: a runtime-sized combined-image-sampler
         // array, partially bound (not every slot filled) + update-after-bind (new
         // textures written into live slots). Indexed per-instance in the shader.
@@ -846,7 +1015,7 @@ export namespace se
         }
         renderer.descriptors.bindlessSetLayout = *materialLayout;
 
-        std::array<vk::DescriptorSetLayoutBinding, 4> lightBindings{};
+        std::array<vk::DescriptorSetLayoutBinding, 5> lightBindings{};
         lightBindings[0].binding = 0;  // directional + ambient + counts UBO
         lightBindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
         lightBindings[0].descriptorCount = 1;
@@ -863,6 +1032,10 @@ export namespace se
         lightBindings[3].descriptorType = vk::DescriptorType::eUniformBuffer;
         lightBindings[3].descriptorCount = 1;
         lightBindings[3].stageFlags = vk::ShaderStageFlagBits::eFragment;
+        lightBindings[4].binding = 4;  // directional shadow map (depth-compare sampler)
+        lightBindings[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        lightBindings[4].descriptorCount = 1;
+        lightBindings[4].stageFlags = vk::ShaderStageFlagBits::eFragment;
         vk::DescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.setBindings(lightBindings);
         auto lightLayout = checked(renderer.context.device.createDescriptorSetLayout(lightLayoutInfo), "lightSetLayout");
@@ -1011,6 +1184,17 @@ export namespace se
             lightWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
             lightWrite.setBufferInfo(lightBufferInfo);
             renderer.context.device.updateDescriptorSets(lightWrite, {});
+
+            // Bind the shadow map (compare sampler) at binding 4. The graph guarantees the
+            // map is in ShaderReadOnly when the scene pass samples it.
+            vk::DescriptorImageInfo shadowInfo{ renderer.descriptors.shadowSampler,
+                renderer.targets.shadowMap.view, vk::ImageLayout::eShaderReadOnlyOptimal };
+            vk::WriteDescriptorSet shadowWrite{};
+            shadowWrite.dstSet = renderer.lighting.lightSets[i];
+            shadowWrite.dstBinding = 4;
+            shadowWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            shadowWrite.setImageInfo(shadowInfo);
+            renderer.context.device.updateDescriptorSets(shadowWrite, {});
 
             // The punctual-light buffer starts at LightListInitial capacity and is
             // grown by ensureLightCapacity; bind it now so the set is complete.
@@ -1165,6 +1349,14 @@ export namespace se
             return Err(depthPrepass.error());
         }
         renderer.pipelines.depthPrepass = *depthPrepass;
+
+        // Directional shadow depth pass: depth-only + depth-biased, reuses the mesh vertex shader.
+        Result<Ref<Pipeline>> shadowDepth = makeShadowPipeline(renderer, "shaders/mesh.spv");
+        if (!shadowDepth)
+        {
+            return Err(shadowDepth.error());
+        }
+        renderer.pipelines.shadowDepth = *shadowDepth;
         return {};
     }
 }

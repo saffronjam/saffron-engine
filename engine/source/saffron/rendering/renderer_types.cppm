@@ -503,6 +503,7 @@ export namespace se
     struct Descriptors
     {
         vk::Sampler linearSampler;
+        vk::Sampler shadowSampler;                   // depth-compare sampler (PCF) for the shadow map
         vk::DescriptorSetLayout bindlessSetLayout;   // set 0: bindless combined-image-sampler array
         vk::DescriptorSetLayout lightSetLayout;      // set 1: directional light UBO
         vk::DescriptorSetLayout instanceSetLayout;   // set 2: per-instance storage buffer
@@ -539,6 +540,11 @@ export namespace se
         bool useClustered = true;        // false = fragment loops all lights (reference)
         u32 frameLightCount = 0;         // punctual lights uploaded this frame
         bool clusterDispatchPending = false;
+        // Directional shadow: the light-space transform written into the light UBO + the
+        // shadow pass push constant. shadowPending arms the depth pass for the frame.
+        bool useShadows = true;          // master toggle (se set-shadows)
+        bool shadowPending = false;      // a shadow-casting directional light is present this frame
+        glm::mat4 shadowViewProj{ 1.0f };
     };
 
     // Per-frame instance storage buffer + set. Grown on demand (never shrunk);
@@ -557,6 +563,7 @@ export namespace se
         Ref<Pipeline> thumbnail;     // lazy mesh-thumbnail graphics pipeline
         Ref<Pipeline> tonemap;       // in-place compute tonemap (post-process)
         Ref<Pipeline> depthPrepass;  // vertex-only depth pre-pass
+        Ref<Pipeline> shadowDepth;   // vertex-only depth pass into the shadow map (depth-biased)
         Ref<Pipeline> fxaa;          // compute FXAA post-process
         Ref<Pipeline> cull;          // compute light-cull (clustered forward)
         std::unordered_map<std::string, Ref<Pipeline>> cache;
@@ -567,6 +574,7 @@ export namespace se
     {
         Image offscreen;  // scene render target shown in the Viewport panel
         Image depth;      // depth buffer for the scene pass, sized to the viewport
+        Image shadowMap;  // directional-light depth map (sampled with the compare sampler)
         // MSAA: when sampleCount > 1 the scene renders to these multisampled targets and
         // resolves color into offscreen. Sized to the viewport, recreated with it.
         Image msaaColor;
@@ -716,6 +724,13 @@ export namespace se
     // Tonemap exposure in stops (EV). exp2(ev) scales radiance before the tonemap.
     void setExposure(Renderer& renderer, f32 ev);
     auto exposureEv(const Renderer& renderer) -> f32;
+    // Directional shadow map: toggle + the per-frame light-space transform. renderScene
+    // fits the transform to the scene each frame; beginFrameGraph runs the depth pass.
+    void setShadows(Renderer& renderer, bool enabled);
+    auto shadowsEnabled(const Renderer& renderer) -> bool;
+    void setDirectionalShadow(Renderer& renderer, const glm::mat4& lightViewProj, bool casting);
+    // Record the scene geometry depth-only from the light's point of view (shadow pass body).
+    void recordShadowDepth(Renderer& renderer, vk::CommandBuffer cmd, const glm::mat4& lightViewProj);
     void setDepthPrepass(Renderer& renderer, bool enabled);
     auto depthPrepassEnabled(const Renderer& renderer) -> bool;
     // Anti-aliasing: msaaSamples is 1 (off) / 2 / 4 / 8 (clamped to the device cap); fxaa

@@ -262,9 +262,11 @@ namespace se
         renderer.pipelines.tonemap.reset();
         renderer.pipelines.fxaa.reset();
         renderer.pipelines.depthPrepass.reset();
+        renderer.pipelines.shadowDepth.reset();
 
         renderer.targets.offscreen.reset();  // free before the allocator/device
         renderer.targets.depth.reset();
+        renderer.targets.shadowMap.reset();
         renderer.targets.msaaColor.reset();
         renderer.targets.msaaDepth.reset();
         renderer.targets.scratch.reset();
@@ -320,6 +322,10 @@ namespace se
         if (renderer.descriptors.linearSampler)
         {
             renderer.context.device.destroySampler(renderer.descriptors.linearSampler);
+        }
+        if (renderer.descriptors.shadowSampler)
+        {
+            renderer.context.device.destroySampler(renderer.descriptors.shadowSampler);
         }
 
         for (FrameData& frame : renderer.frame.frames)
@@ -509,6 +515,31 @@ namespace se
             renderer.swapchain.imageViews[renderer.frame.imageIndex], vk::ImageAspectFlagBits::eColor,
             vk::ImageLayout::eUndefined, nullptr);
 
+        // Directional shadow: a depth-only pass renders the scene from the light's view
+        // into the shadow map; the scene pass then samples it. The graph derives the
+        // DepthWrite -> ShaderReadOnly transition (and the cross-frame WAR) from the usages.
+        const bool doShadow = renderer.lighting.shadowPending && renderer.pipelines.shadowDepth &&
+                              renderer.targets.shadowMap.image;
+        RgResource shadowRes{};
+        if (doShadow)
+        {
+            Image& shadowMap = renderer.targets.shadowMap;
+            shadowRes = importImage(graph, shadowMap.image, shadowMap.view,
+                vk::ImageAspectFlagBits::eDepth, shadowMap.layout, &shadowMap.layout);
+            RgPass shadowPass;
+            shadowPass.name = "shadow";
+            shadowPass.kind = RgPassKind::Graphics;
+            shadowPass.depth = RgAttachment{ shadowRes, vk::AttachmentLoadOp::eClear,
+                vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
+            shadowPass.renderArea = shadowMap.extent;
+            const glm::mat4 lightViewProj = renderer.lighting.shadowViewProj;
+            shadowPass.execute = [&renderer, lightViewProj](vk::CommandBuffer cmd)
+        {
+                recordShadowDepth(renderer, cmd, lightViewProj);
+            };
+            addPass(graph, std::move(shadowPass));
+        }
+
         // Clustered forward: a compute pass culls the punctual lights into the froxel
         // grid; the scene fragment reads the result (the graph emits the compute→
         // fragment barrier from these declared usages).
@@ -557,6 +588,10 @@ namespace se
         if (doCull)
         {
             scene.accesses = { RgAccess{ clusterBuffer, RgUsage::StorageReadFragment } };
+        }
+        if (doShadow)
+        {
+            scene.accesses.push_back(RgAccess{ shadowRes, RgUsage::SampledRead });
         }
         // MSAA: render to the multisampled color, resolve into the offscreen (don't store
         // the multisampled samples). Otherwise render straight into the offscreen.
@@ -794,6 +829,22 @@ namespace se
     auto exposureEv(const Renderer& renderer) -> f32
     {
         return renderer.exposureEv;
+    }
+
+    void setShadows(Renderer& renderer, bool enabled)
+    {
+        renderer.lighting.useShadows = enabled;
+    }
+
+    auto shadowsEnabled(const Renderer& renderer) -> bool
+    {
+        return renderer.lighting.useShadows;
+    }
+
+    void setDirectionalShadow(Renderer& renderer, const glm::mat4& lightViewProj, bool casting)
+    {
+        renderer.lighting.shadowViewProj = lightViewProj;
+        renderer.lighting.shadowPending = casting && renderer.lighting.useShadows;
     }
 
     void waitGpuIdle(Renderer& renderer)

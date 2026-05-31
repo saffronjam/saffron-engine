@@ -458,14 +458,16 @@ export namespace se
                 lights.push_back(gpu);
             });
         // The camera world position is the inverse-view translation; the BRDF needs it
-        // as the view-vector origin for specular.
+        // as the view-vector origin for specular. The lighting upload happens after the
+        // draw loop, once the scene AABB (hence the shadow frustum) is known.
         const glm::vec3 eyePosition = glm::vec3(glm::inverse(view)[3]);
-        setSceneLighting(renderer, lightDir, lightColor, lightIntensity, lightAmbient, eyePosition, lights);
-        setClusterCamera(renderer, view, proj, camera.nearPlane, camera.farPlane);  // arms the cull dispatch
 
         // Gather the scene's renderables as a flat draw list; the renderer batches them
-        // by (mesh, texture) and the scene + depth passes consume the result.
+        // by (mesh, texture) and the scene + depth passes consume the result. The world
+        // AABB accumulated here fits the directional shadow frustum below.
         std::vector<DrawItem> items;
+        glm::vec3 sceneMin{ std::numeric_limits<f32>::max() };
+        glm::vec3 sceneMax{ std::numeric_limits<f32>::lowest() };
         forEach<TransformComponent, MeshComponent>(scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
         {
@@ -496,6 +498,17 @@ export namespace se
                     }
                 }
                 const glm::mat4 model = transformMatrix(transform);
+                // Accumulate the world AABB from the 8 transformed local-AABB corners.
+                for (u32 corner = 0; corner < 8; corner = corner + 1)
+                {
+                    glm::vec3 p = meshRef->boundsMin;
+                    if (corner & 1u) { p.x = meshRef->boundsMax.x; }
+                    if (corner & 2u) { p.y = meshRef->boundsMax.y; }
+                    if (corner & 4u) { p.z = meshRef->boundsMax.z; }
+                    const glm::vec3 world = glm::vec3(model * glm::vec4(p, 1.0f));
+                    sceneMin = glm::min(sceneMin, world);
+                    sceneMax = glm::max(sceneMax, world);
+                }
                 DrawItem item;
                 item.mesh = meshRef;
                 item.texture = textureRef;
@@ -509,6 +522,26 @@ export namespace se
                 item.material.unlit = unlit;
                 items.push_back(std::move(item));
             });
+
+        // Fit an orthographic shadow frustum to the scene's world AABB, looking down the
+        // directional light. A bounding sphere keeps the fit rotation-stable.
+        const bool castShadow = !items.empty() && sceneMax.x >= sceneMin.x;
+        glm::mat4 shadowViewProj{ 1.0f };
+        if (castShadow)
+        {
+            const glm::vec3 center = (sceneMin + sceneMax) * 0.5f;
+            const f32 radius = glm::length(sceneMax - sceneMin) * 0.5f + 0.5f;
+            const glm::vec3 dir = glm::normalize(lightDir);
+            const glm::vec3 up = glm::abs(dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+            const glm::vec3 eye = center - dir * (radius + 1.0f);
+            const glm::mat4 lightView = glm::lookAt(eye, center, up);
+            // GLM_FORCE_DEPTH_ZERO_TO_ONE => glm::ortho already emits Vulkan [0,1] clip depth.
+            const glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, 0.0f, 2.0f * radius + 2.0f);
+            shadowViewProj = lightProj * lightView;
+        }
+        setDirectionalShadow(renderer, shadowViewProj, castShadow);
+        setSceneLighting(renderer, lightDir, lightColor, lightIntensity, lightAmbient, eyePosition, lights);
+        setClusterCamera(renderer, view, proj, camera.nearPlane, camera.farPlane);  // arms the cull dispatch
 
         submitDrawList(renderer, viewProjection, items);
     }

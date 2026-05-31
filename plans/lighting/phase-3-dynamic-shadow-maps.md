@@ -1,7 +1,35 @@
 # Phase 3: Dynamic Shadow Maps
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS
 <!-- Flip to COMPLETED when the "Done when" checklist passes, validation-clean. Delete this file only after COMPLETED + merged. -->
+
+<!--
+DONE 2026-05-31 (directional shadow, the load-bearing slice — validation-clean under a
+headless weston Wayland display in the toolbox):
+- A single persistent D32 sampled shadow map (2048², Targets::shadowMap), depth-compare
+  (PCF) sampler (Descriptors::shadowSampler, eLessOrEqual + ClampToBorder white border).
+- A depth-only, depth-biased shadow PSO (makeShadowPipeline, dynamic eDepthBias; reuses
+  mesh.slang vertexMain), recorded by recordShadowDepth with the light's viewProj.
+- A graph "shadow" pass added in beginFrameGraph before the scene pass; the scene pass
+  declares SampledRead on the map so the graph derives DepthWrite -> ShaderReadOnly +
+  the cross-frame WAR. The map is pre-transitioned to ShaderReadOnly at init so its
+  descriptor is valid on frames the pass is skipped (shader gates the sample on counts.y).
+- renderScene fits an ortho light frustum to the scene world AABB (bounding-sphere,
+  rotation-stable; GLM_FORCE_DEPTH_ZERO_TO_ONE so glm::ortho is Vulkan [0,1]).
+- LightUbo gained counts.y (shadow-enabled flag) + shadowViewProj (set 1, binding 4 is
+  the shadow map). mesh.slang: Sampler2DShadow + 3x3 PCF directionalShadow(), multiplied
+  into the directional BRDF term only.
+- se set-shadows {0|1}; render-stats reports shadows. Verified: caster cube casts a clear
+  shadow onto a ground slab (shadows on vs off differ; changed region darker by mean ~47
+  luminance, 84% of changed pixels darker).
+
+REMAINING (later increments, then flip to COMPLETED):
+- Spot-light shadows (atlas tile + per-light shadowViewProj/atlasRect in GpuLight).
+- Directional CSM cascades (3-4 frustum-fit slices, texel snap, seam blend).
+- Point cube / 6-tile omnidirectional shadows (reuse phase-2 cubemap Image).
+- Depth-bias tuning per light; enabling back-face cull for the main pass.
+-->
+
 
 ## Goal
 

@@ -348,4 +348,31 @@ namespace se
             }
         }
     }
+
+    void recordShadowDepth(Renderer& renderer, vk::CommandBuffer cmd, const glm::mat4& lightViewProj)
+    {
+        SceneDrawList& list = renderer.frame.sceneDrawList;
+        if (!list.valid || !renderer.pipelines.shadowDepth)
+        {
+            return;
+        }
+        // Same vertex-only path as the depth pre-pass, but the push constant is the LIGHT's
+        // viewProj and the rasterizer applies a depth bias (set here per pass).
+        vk::PipelineLayout layout = renderer.pipelines.shadowDepth->layout;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.shadowDepth->pipeline);
+        cmd.setDepthBias(ShadowDepthBiasConstant, 0.0f, ShadowDepthBiasSlope);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 2, list.instanceSet, {});
+        cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &lightViewProj);
+        for (const DrawBatch& batch : list.batches)
+        {
+            vk::DeviceSize offset = 0;
+            cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
+            cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+            for (const Submesh& submesh : batch.mesh->submeshes)
+            {
+                cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex,
+                                submesh.vertexOffset, batch.baseInstance);
+            }
+        }
+    }
 }

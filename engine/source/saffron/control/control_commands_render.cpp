@@ -44,6 +44,7 @@ namespace se
                              { "instances", stats.instances },
                              { "clustered", clusteredEnabled(ctx.renderer) },
                              { "depthPrepass", depthPrepassEnabled(ctx.renderer) },
+                             { "shadows", shadowsEnabled(ctx.renderer) },
                              { "pipelines", pipelineCount(ctx.renderer) },
                              { "hdr", true },
                              { "exposureEv", exposureEv(ctx.renderer) },
@@ -93,6 +94,28 @@ namespace se
                 }
                 setClustered(ctx.renderer, enabled);
                 return json{ { "clustered", enabled } };
+            });
+
+        registerCommand(reg, "set-shadows", "set-shadows {0|1} — toggle the directional shadow map",
+            [](EngineContext& ctx, const json& params) -> Result<json>
+            {
+                const json value = positionalOr(params, "enabled", 0);
+                bool enabled = true;
+                if (value.is_number())
+                {
+                    enabled = value.get<double>() != 0.0;
+                }
+                else if (value.is_boolean())
+                {
+                    enabled = value.get<bool>();
+                }
+                else if (value.is_string())
+                {
+                    const std::string s = value.get<std::string>();
+                    enabled = !(s == "0" || s == "false" || s == "off");
+                }
+                setShadows(ctx.renderer, enabled);
+                return json{ { "shadows", enabled } };
             });
 
         registerCommand(reg, "set-exposure", "set-exposure {ev} — tonemap exposure in stops (exp2)",

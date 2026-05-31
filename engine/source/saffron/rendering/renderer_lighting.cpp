@@ -109,8 +109,10 @@ namespace se
         LightUbo ubo;
         ubo.directionAmbient = glm::vec4(glm::normalize(direction), ambient);
         ubo.colorIntensity = glm::vec4(color, intensity);
-        ubo.counts = glm::uvec4(count, 0, 0, 0);
+        // counts.y carries the directional-shadow-enabled flag (set by setDirectionalShadow).
+        ubo.counts = glm::uvec4(count, renderer.lighting.shadowPending ? 1u : 0u, 0, 0);
         ubo.eyePosition = glm::vec4(eyePosition, 0.0f);
+        ubo.shadowViewProj = renderer.lighting.shadowViewProj;
         std::memcpy(renderer.lighting.lightMapped[frame], &ubo, sizeof(ubo));
         vmaFlushAllocation(renderer.context.allocator, renderer.lighting.lightAllocs[frame], 0, sizeof(ubo));
         renderer.lighting.frameLightCount = count;

@@ -44,8 +44,9 @@ struct LightGlobals
 {
     float4 directionAmbient;  // xyz = travel direction, w = ambient
     float4 colorIntensity;    // rgb = color, a = intensity
-    uint4 counts;             // x = punctual light count
+    uint4 counts;             // x = punctual light count, y = directional shadow enabled (0/1)
     float4 eyePosition;       // xyz = world-space camera position (for the view vector)
+    float4x4 shadowViewProj;  // world -> directional light clip space
 };
 [[vk::binding(0, 1)]] ConstantBuffer<LightGlobals> globals;
 
@@ -74,6 +75,32 @@ struct ClusterParams
     float4 zPlanes;       // x = near, y = far
 };
 [[vk::binding(3, 1)]] ConstantBuffer<ClusterParams> clusterParams;
+
+// Directional shadow map: a depth texture sampled with a comparison (PCF) sampler.
+[[vk::binding(4, 1)]] Sampler2DShadow shadowMap;
+
+// PCF visibility for the directional light (1 = lit, 0 = fully shadowed). Off-map and
+// beyond-far-plane samples are treated as lit.
+float directionalShadow(float3 worldPos)
+{
+    float4 clip = mul(globals.shadowViewProj, float4(worldPos, 1.0));
+    float3 ndc = clip.xyz / clip.w;
+    float2 uv = ndc.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0)
+    {
+        return 1.0;
+    }
+    const float texel = 1.0 / 2048.0;  // matches ShadowMapSize
+    float sum = 0.0;
+    for (int x = -1; x <= 1; x = x + 1)
+    {
+        for (int y = -1; y <= 1; y = y + 1)
+        {
+            sum += shadowMap.SampleCmp(uv + float2(x, y) * texel, ndc.z);
+        }
+    }
+    return sum / 9.0;
+}
 
 struct Instance
 {
@@ -213,10 +240,16 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     float roughness = clamp(input.mr.y, 0.045, 1.0);  // clamp away from 0 (specular singularity)
     float3 v = normalize(globals.eyePosition.xyz - input.worldPos);
 
-    // Directional light, evaluated through the same BRDF as the punctual lights.
+    // Directional light, evaluated through the same BRDF as the punctual lights, then
+    // attenuated by the shadow map (only the directional light casts shadows in v1).
     float3 lDir = -normalize(globals.directionAmbient.xyz);
+    float shadow = 1.0;
+    if (globals.counts.y != 0)
+    {
+        shadow = directionalShadow(input.worldPos);
+    }
     float3 lo = brdf(n, v, lDir, albedo, metallic, roughness,
-                     globals.colorIntensity.rgb * globals.colorIntensity.a);
+                     globals.colorIntensity.rgb * globals.colorIntensity.a) * shadow;
 
     // Punctual lights — clustered when enabled, else loop every light.
     if (clusterParams.screenSize.z != 0)
