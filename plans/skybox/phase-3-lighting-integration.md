@@ -1,6 +1,29 @@
 # Phase 3: Lighting Integration
 
-**Status:** NOT STARTED (heavily revised — most of the original scope is already shipped)
+**Status:** COMPLETED (heavily revised — most of the original scope was already shipped)
+
+<!--
+COMPLETED 2026-06-01 (commit 93117eb), validation-clean. Most of the original phase-3 scope
+(IBL diffuse/specular, PBR, colored ambient via the env) was already shipped by the lighting
+roadmap, and sky<->lighting coherence is already achieved by phase 2 reusing the envCube. The
+genuinely-remaining, in-scope work done here: RGB fallback ambient driven by SceneEnvironment.
+- Appended ambientColor (vec4) to the light UBO + mesh LightGlobals; the non-IBL fallback now
+  uses globals.ambientColor.rgb (directionAmbient.w kept as a legacy luminance). setSceneLighting
+  takes a premultiplied glm::vec3 ambient (was a scalar); setDirectionalLight passes grayscale to
+  preserve old behavior. renderScene drives it from environment.ambientColor*ambientIntensity when
+  useSkyForAmbient, else the directional light's legacy scalar ambient.
+- Verified A/B: IBL OFF -> red vs blue environment ambient tints the mesh strongly
+  (center [186,86,86] vs [86,86,186]); IBL ON -> ambientColor ignored (red vs blue pixel-identical
+  [150,160,176], diff 0.0), so existing IBL behavior is unchanged. VAL=0.
+
+NOT done here (deferred — shares the "re-bake from new inputs" machinery with phase 4): driving
+the *procedural skygen* sun from the scene's DirectionalLight + an on-demand rebakeEnvironment so
+the visible sun in the sky aligns with the light and the IBL relights to match; routing
+environment sky color into the (off-by-default) DDGI skyColor. The skygen sun/colors remain
+hardcoded in ibl_skygen.slang. These are the natural next increment and belong with phase 4's
+user-equirect IBL re-bake.
+-->
+
 
 ## Goal
 

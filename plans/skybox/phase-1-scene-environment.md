@@ -1,6 +1,22 @@
 # Phase 1: Scene Environment Data
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
+
+<!--
+COMPLETED 2026-06-01 (commit 94e2de7), validation-clean. SkyMode {Color,Texture,Procedural}
++ SceneEnvironment (clearColor, skyTexture Uuid, skyIntensity/skyRotation/exposure, visible,
+useSkyForAmbient, ambientColor/ambientIntensity) added to Scene (scene.cppm). SceneVersion
+1->2; sceneToJson emits an "environment" block; sceneFromJson accepts versions [1, 2] and
+environmentFromJson defaults every missing field (so a v1 doc migrates cleanly). skyModeName/
+skyModeFromName for the enum<->string. Environment editor panel (mode combo, clear-color /
+texture picker / intensity / rotation / visible / ambient color+intensity), docked beside the
+Inspector. se get-environment / set-environment (typed --json merge + named-field overlay,
+preserving unspecified fields). Default skyMode = Procedural (the visible sky shows by default
+and matches the IBL). Verified: get/set round-trip, project save (scene v2), v1 migration to
+defaults, validation-clean. NOTE: exposure is serialized but reserved (tonemap exposure is set
+via the renderer's set-exposure, not the environment).
+-->
+
 
 ## Goal
 

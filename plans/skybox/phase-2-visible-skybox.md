@@ -1,6 +1,38 @@
 # Phase 2: Visible Skybox Rendering
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
+
+<!--
+COMPLETED 2026-06-01 (commit 211d0ae), validation-clean. sky.slang: a fullscreen-triangle
+(SV_VertexID, no vertex buffer) graphics pass; the fragment reconstructs the world view ray
+from the inverse view-projection (far - near, so translation cancels => camera-locked), yaws
+it by skyRotation, then shades by mode: 0 Color (flat clearColor*intensity), 1 Texture
+(equirect panorama from the bindless array, set 0, indexed by a push-constant slot), 2
+Procedural (the baked IBL envCube, set 1 => background matches the lighting). Output is linear
+HDR; the existing tonemap pass handles display.
+- Renderer: a Sky state struct (mode/clearColor/intensity/rotation/visible/textureIndex +
+  pipeline + set + setLayout), SkyRenderSettings + submitSky (renderer_lighting.cpp) + recordSky
+  (renderer_drawlist.cpp). The sky descriptor set (set 1 = envCube) is written after the IBL
+  bake, reusing the IBL sampler; the panorama is sampled from the existing bindless set 0 (no
+  per-frame descriptor writes). makeSkyPipeline: no vertex input, depth test+write off, cull
+  none, sample-count aware; built at init and rebuilt with the other PSOs in setAa.
+- Graph: a "sky" graphics pass added before the scene pass in beginFrameGraph, writing the SAME
+  color target the scene chose (offscreen / msaaColor / scratch) so MSAA resolve + FXAA/TAA
+  filtering treat sky and geometry alike; the scene pass switches its color loadOp Clear->Load
+  when the sky is present. recordSky pushes inverse(sceneDrawList.viewProj) so the sky aligns
+  with the geometry exactly. renderScene resolves Scene.environment into submitSky (loads the
+  panorama for Texture mode; falls back to Color if missing).
+- Verified headless: procedural sky visible by default (skytop ~[155,157,162]); Color mode
+  distinct; visible=false falls back to the clear; all four AA modes (off/fxaa/msaa4/taa) render
+  the sky consistently; proc-vs-hidden 44% px changed (the sky pass paints the background); VAL=0.
+- Control: driven via se set-environment / the Environment panel (the scene env is the source of
+  truth), not a dedicated sky command.
+- NOTE: skyRotation is plumbed but does not visibly change the *procedural* sky in a typical view
+  because that sky is a near-vertical gradient (yaw-invariant); it rotates a Texture-mode
+  panorama. HDR (.hdr) panoramas are LDR-only for now (phase 4). No depth interaction (sky never
+  writes/tests depth), so picking + depth prepass are unaffected.
+-->
+
 
 ## Goal
 

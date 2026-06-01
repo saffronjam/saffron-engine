@@ -41,6 +41,18 @@ rebuilt exactly the subsystems this plan targets. The grounded facts (from a rec
 Net effect on scope: **phases 1 + 2 + the non-done slice of phase 3 are the implementable
 work; phase 4 stays a roadmap.** Each phase file below has been updated in place to match.
 
+> **PHASES 1–3 COMPLETED (2026-06-01), validation-clean.** Scene-level `SceneEnvironment`
+> state + serialization (v1→v2 migration) + an Environment editor panel + `se` commands
+> (phase 1, `94e2de7`); a visible fullscreen sky pass — Color / equirect Texture / Procedural
+> (the baked IBL `envCube`, so background and lighting share one source) — integrated across
+> all AA modes (phase 2, `211d0ae`); RGB scene-environment ambient for the non-IBL fallback
+> (phase 3, `93117eb`). **Phase 4 stays a roadmap** (HDR `.hdr` import, user equirect→cube IBL
+> re-bake, reflection probes, procedural-atmosphere LUTs, clouds, time-of-day). One deferred
+> phase-3 increment — driving the procedural skygen sun from the scene's directional light via
+> an on-demand IBL re-bake — is noted in the phase-3 file and belongs with phase 4's re-bake
+> machinery. Plan files are kept until merged (this branch is unpushed); delete after merge per
+> the convention above.
+
 ## Recommendation
 
 The sky should be modeled as scene environment state, not as a normal mesh entity.
