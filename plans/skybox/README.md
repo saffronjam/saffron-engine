@@ -46,12 +46,18 @@ work; phase 4 stays a roadmap.** Each phase file below has been updated in place
 > (phase 1, `94e2de7`); a visible fullscreen sky pass — Color / equirect Texture / Procedural
 > (the baked IBL `envCube`, so background and lighting share one source) — integrated across
 > all AA modes (phase 2, `211d0ae`); RGB scene-environment ambient for the non-IBL fallback
-> (phase 3, `93117eb`). **Phase 4 stays a roadmap** (HDR `.hdr` import, user equirect→cube IBL
-> re-bake, reflection probes, procedural-atmosphere LUTs, clouds, time-of-day). One deferred
-> phase-3 increment — driving the procedural skygen sun from the scene's directional light via
-> an on-demand IBL re-bake — is noted in the phase-3 file and belongs with phase 4's re-bake
-> machinery. Plan files are kept until merged (this branch is unpushed); delete after merge per
-> the convention above.
+> (phase 3, `93117eb`); and the procedural skygen sun now follows the scene's directional light
+> via an on-demand IBL re-bake (the phase-3 deferred increment, `b863151`) — the visible sky +
+> IBL re-tint together when the light moves. **Phase 4 stays a roadmap** (HDR `.hdr` import, user
+> equirect→cube IBL re-bake, reflection probes, procedural-atmosphere LUTs, clouds, time-of-day);
+> routing the environment sky color into the off-by-default DDGI is also deferred there. Plan
+> files are kept until merged (this branch is unpushed); delete after merge per the convention
+> above.
+>
+> **Known pre-existing issue (not introduced by skybox work):** a VMA "allocations were not freed
+> before destruction" assertion aborts the process at *teardown* (a teardown-ordering leak from
+> the lighting work — reproduces on the phase-3 binary, which added no VMA allocations). It fires
+> only at process exit, after all rendering, so it does not affect functionality or validation.
 
 ## Recommendation
 

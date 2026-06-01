@@ -16,12 +16,18 @@ genuinely-remaining, in-scope work done here: RGB fallback ambient driven by Sce
   (center [186,86,86] vs [86,86,186]); IBL ON -> ambientColor ignored (red vs blue pixel-identical
   [150,160,176], diff 0.0), so existing IBL behavior is unchanged. VAL=0.
 
-NOT done here (deferred — shares the "re-bake from new inputs" machinery with phase 4): driving
-the *procedural skygen* sun from the scene's DirectionalLight + an on-demand rebakeEnvironment so
-the visible sun in the sky aligns with the light and the IBL relights to match; routing
-environment sky color into the (off-by-default) DDGI skyColor. The skygen sun/colors remain
-hardcoded in ibl_skygen.slang. These are the natural next increment and belong with phase 4's
-user-equirect IBL re-bake.
+DONE as a follow-up (commit b863151): the procedural skygen sun now follows the scene's
+DirectionalLight via an on-demand IBL re-bake. ibl_skygen takes a sun push constant
+(direction = -lightDir, color, intensity); bakeEnvironment gained a SkygenParams + firstBake
+flag (a re-bake reuses the existing images — waitIdle first, Undefined->General barriers discard
+old contents — and skips image creation + descriptor writes); requestSkyBake (from renderScene)
+flags a re-bake only when the sun inputs change, and beginFrameGraph consumes it at a GPU-idle
+point. The visible sky + IBL share the envCube, so moving the light re-tints both together.
+Verified: init bakes once, each light move = exactly one re-bake, steady state never re-bakes,
+validation-clean. (skyIntensity stays in the visible-sky pass, not baked, to avoid double-counting.)
+
+STILL deferred to phase 4: routing environment sky color into the off-by-default DDGI skyColor,
+and the user-equirect IBL re-bake (a different env *source*, sharing this re-bake machinery).
 -->
 
 
