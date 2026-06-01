@@ -1,7 +1,33 @@
 # Phase 8: ReSTIR Many-Light + RT-GI Capstone
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 <!-- Flip to COMPLETED when the "Done when" checklist passes, validation-clean. Delete this file only after COMPLETED + merged. -->
+
+<!--
+COMPLETED 2026-06-01 (commit 71b7307), validation-clean on llvmpipe (~1 FPS). ReSTIR DI —
+stochastic many-light direct lighting with per-pixel ray-traced shadows.
+- Per-pixel reservoir SSBOs (32B/pixel: chosen light, W, wSum, M): initial / combined /
+  previous, sized to the viewport (recreateRestirTargets). Gated on rtSupported.
+- 3 compute graph passes (after the G-buffer prepass + TLAS build, before scene):
+  restir_initial (RIS over K=16 candidate lights drawn from the pixel's FROXEL CLUSTER
+  list — reuses the phase-3 candidate set; weighted reservoir sampling, no shadow ray);
+  restir_reuse (temporal reproject via the phase-5 motion vector + 4 spatial neighbors,
+  depth/normal-similar, M-clamped to bound bias); restir_resolve (ONE ray_query shadow ray
+  for the chosen sample via the phase-7 TLAS, shade, write per-pixel direct radiance + copy
+  the combined reservoir into previous for next frame).
+- mesh.slang set 7 samples the resolved radiance (screenFlags.w) and replaces its punctual
+  loop with restir*albedo/PI. G-buffer forced on for ReSTIR; resolve's TLAS + per-frame
+  light/cluster SSBOs rebound each frame (writeRestirFrameBindings). se set-restir.
+- Verified: 16-point-light scene renders with per-pixel ray-traced contact shadows the
+  clustered path lacks; temporally stable (frame delta 0.0 after convergence); A/B vs the
+  clustered-forward path; VAL=0.
+
+NOT done (the plan's "later"/XL items, noted as seams): ReSTIR GI (reuse the reservoir
+machinery over secondary path vertices to replace/augment phase-6 DDGI); a dedicated SVGF
+denoiser (current output relies on temporal+spatial reservoir reuse, no separate denoise
+pass); unbiased GRIS contribution weights (v1 is biased-but-stable); specular/glossy direct.
+-->
+
 
 ## Goal
 

@@ -47,7 +47,7 @@ here is `COMPLETED` and deleted, delete the folder.
 | 5 | Temporal AA + history + motion vectors ✅ COMPLETED | `phase-5-temporal-aa-history.md` | 4's thin G-buffer | ✅ |
 | 6 | DDGI probe GI (software voxel trace) ✅ COMPLETED | `phase-6-ddgi-probe-gi.md` | 1, 2, 5 | ✅ sample side; slow update |
 | 7 | Ray-tracing foundation + ray-query shadows ✅ COMPLETED | `phase-7-raytracing-foundation.md` | 1–3 | ⚠️ builds+validates ~1 FPS |
-| 8 | ReSTIR many-light + RT-GI capstone | `phase-8-restir-many-light.md` | 5, 7 | ⚠️ ~1 FPS |
+| 8 | ReSTIR many-light + RT-GI capstone ✅ COMPLETED (DI) | `phase-8-restir-many-light.md` | 5, 7 | ⚠️ ~1 FPS |
 
 **Ordering note:** the dependency-correct order is 1 → 3 → 2 → … (PBR, then shadows,
 then IBL). Phases 2 and 3 both depend only on phase 1 and are independent of each
@@ -58,6 +58,14 @@ either order after phase 1.
 prerequisite for every later tier (shadows, IBL, and all GI feed radiance *into* the
 BRDF, and the current flat scalar ambient *is* the only "GI"). Do not start GI or ray
 tracing before PBR + shadows are dialed in.
+
+> **ALL EIGHT PHASES COMPLETED (2026-06-01).** PBR+HDR, IBL, shadows (dir/spot/point),
+> screen-space GI/AO (GTAO+contact+SSGI; SSR skipped), TAA, DDGI, RT foundation +
+> ray-query shadows, and ReSTIR DI all build green + validation-clean on llvmpipe (the
+> RT/ReSTIR tiers at ~1 FPS as expected — interactive perf awaits real RT hardware in the
+> toolbox, an AGENTS.md follow-up). Per-phase "NOT done" seams are noted in each file.
+> These files are kept until the work is merged (the branch is unpushed); delete them
+> after merge per the convention above.
 
 ## Cross-cutting infrastructure (shared prerequisites)
 
