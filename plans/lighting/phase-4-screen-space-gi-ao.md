@@ -1,7 +1,36 @@
 # Phase 4: Screen-Space GI / AO (GTAO, SSGI, SSR)
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS
 <!-- Flip to COMPLETED when the "Done when" checklist passes, validation-clean. Delete this file only after COMPLETED + merged. -->
+
+<!--
+DONE 2026-06-01 (the MRT infra + thin G-buffer + GTAO ambient-occlusion slice;
+validation-clean under headless weston):
+- MRT (the load-bearing infra, commit 22e53fc): RgPass.color (single optional) ->
+  RgPass.colors (std::vector<RgAttachment>); executeRenderGraph loops them for barriers +
+  the dynamic-rendering color array; per-attachment MSAA resolve kept. All call sites
+  (scene, ui) updated. Other phases (5 TAA, SSR) reuse this.
+- Thin G-buffer (commit c241947): a prepass renders view-space normal (rgb) + view-Z (.a)
+  into one rgba16f target (gbuffer.slang + makeGbufferPipeline), with its own depth scratch.
+  Targets gNormal/gDepth/aoMap recreate with the viewport (recreateSsaoTargets) + refresh
+  descriptors. NOTE: kept as a separate prepass rather than a 2nd attachment on the main
+  scene pass — simpler, and the scene pass stays single-color (MSAA/forward unaffected);
+  the MRT widening is still in place for TAA/SSR. The mesh fragment was NOT changed to emit
+  SV_Target1 (the prepass owns normals); revisit if a full G-buffer is wanted.
+- GTAO (gtao.slang): HBAO-style hemisphere occlusion (4 slices x 6 steps, screen radius
+  scaled by view distance, range falloff), output an r8 AO factor. A Compute graph pass
+  after the G-buffer prepass. The mesh multiplies AO into the INDIRECT (ambient) term only
+  (counts.w gate), never direct. se set-ssao; render-stats reports ssao.
+- Verified: cubes on a ground plane, IBL ambient-dominant — AO on vs off darkens contact
+  creases (18% px changed, 100% darkening), VAL=0.
+
+REMAINING for COMPLETED:
+- Spatial denoise (XeGTAO 5x5) — current AO has mild per-pixel noise (no denoise yet).
+- Screen-space contact shadows (Step 3).
+- SSGI (Step 4) — needs phase 5 temporal history (do phase 5 first).
+- SSR (Step 5, optional) — Hi-Z march + cubemap fallback.
+-->
+
 
 ## Goal
 
