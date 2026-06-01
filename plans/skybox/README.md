@@ -54,10 +54,13 @@ work; phase 4 stays a roadmap.** Each phase file below has been updated in place
 > files are kept until merged (this branch is unpushed); delete after merge per the convention
 > above.
 >
-> **Known pre-existing issue (not introduced by skybox work):** a VMA "allocations were not freed
-> before destruction" assertion aborts the process at *teardown* (a teardown-ordering leak from
-> the lighting work — reproduces on the phase-3 binary, which added no VMA allocations). It fires
-> only at process exit, after all rendering, so it does not affect functionality or validation.
+> **Fixed a pre-existing teardown leak (commit `7243ca4`):** a VMA "allocations were not freed
+> before destruction" assertion was aborting the process at *exit* (SIGABRT). Root cause (from
+> the lighting work, not skybox): `destroyRenderer` cleared `frame.sceneDrawList` but not
+> `renderer.rt.frameMeshes`, which `setRtScene` fills with `Ref<GpuMesh>` each frame — so the last
+> frame's mesh (vertex + index + BLAS = 3 allocations / 2184 bytes) outlived `vmaDestroyAllocator`.
+> The fix clears `rt.frameMeshes`/`frameModels` in `destroyRenderer`. The editor now exits cleanly
+> (code 0) on both the frame-bounded and control-`quit` paths.
 
 ## Recommendation
 
