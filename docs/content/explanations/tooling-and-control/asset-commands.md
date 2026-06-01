@@ -19,6 +19,17 @@ The asset commands import models and textures, browse and rename the project ass
 
 `import-model` is the one command that also spawns: it imports, bakes the `.smesh`, then `spawnModel`s an entity and selects it. `import-texture` only adds to the catalog; you attach the result with `assign-asset` or `set-material --albedoTexture`. `assign-asset` takes `slot: mesh|albedo`, resolves the asset by id or name, adds the target component if the entity lacks it, and writes the asset id into the slot.
 
+## Thumbnails and previews
+
+| Command | Params | Effect |
+|---|---|---|
+| `get-thumbnail` | `{asset, size=128}` | Renders a small preview of a catalog asset; returns the PNG as base64. |
+| `view-asset` | `{asset, size=512}` | Same as `get-thumbnail` at a larger default size, for a full-asset look. |
+
+Both resolve the `asset` by id or name and return `{format: "png", size, base64}` — the encoded image bytes inline in the JSON result, so a remote UI can show a preview without sharing a filesystem. The asset's type picks the path: a **mesh** is drawn as a framed 3D render through `renderMeshThumbnail` (the same preview the Assets panel tiles use), a **texture** is the image itself read straight back from the GPU.
+
+The work is a synchronous GPU→CPU readback: the command records **its own command buffer**, renders or copies into a host-visible staging buffer, then `waitIdle`s before encoding the PNG to memory. That mirrors [`captureViewport`](../screenshots-and-capture/) — it runs **between frames on the command-drain step, never on the present path**, so it never stalls or tears a frame in flight. Because it blocks for a GPU round-trip it is heavier than the list/rename commands; a UI should request a thumbnail once and cache the result, keying off the catalog version rather than re-fetching every frame.
+
 ## Save and load
 
 | Command | Params | Effect |
@@ -46,10 +57,12 @@ The project commands are the whole-project pair: one `project.json` holds the ca
 | Registration | `control_commands_asset.cpp` | `registerAssetCommands` |
 | Import | `control_commands_asset.cpp` | `import-model` (`importModel`, `spawnModel`), `import-texture` (`importTexture`) |
 | Catalog | `control_commands_asset.cpp` | `list-assets`, `rename-asset`, `assign-asset`; `ctx.assets.catalog.entries` |
+| Thumbnails | `control_commands_asset.cpp` | `get-thumbnail`, `view-asset` (`renderMeshThumbnail`, base64 PNG-to-memory) |
 | Project IO | `control_commands_asset.cpp` | `save-project`/`load-project`, `save-scene`/`load-scene` |
 | Capture + quit | `control_commands_asset.cpp` | `screenshot` (`captureViewport`, `requestWindowCapture`), `quit` |
 
 ## Related
-- [Capture](../screenshots-and-capture/) — the PNG capture path behind `screenshot`
+- [Capture](../screenshots-and-capture/) — the PNG capture path behind `screenshot` and the thumbnail readback
+- [Shared types](../shared-types/) — the base64-PNG result shape and the wire contract
 - [Scene commands](../scene-commands/) — `set-material` is the other way to set albedo
 - [Geometry & assets](../../geometry-and-assets/) — import and the asset catalog

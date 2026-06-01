@@ -1,0 +1,50 @@
++++
+title = 'Shared types'
+weight = 7
++++
+
+# Shared types
+
+The control wire has one source of truth: a set of JSON Schemas. Everything that consumes the protocol — the TypeScript client, the C++ engine — is derived from or checked against those schemas, so a field cannot mean one thing on the wire and another in a consumer. The schemas live in `schemas/control/*.schema.json` and are written to JSON Schema **draft 2020-12**.
+
+## Schema-first, in one direction
+
+```
+schemas/control/*.schema.json   (draft 2020-12 — the source of truth)
+        │
+        ├── json-schema-to-typescript ──▶ the TS protocol types   (phase 3)
+        │
+        └── tools/check-control-schema  ──▶ validates the C++ replies
+```
+
+The schema is authored first. From it, `json-schema-to-typescript` generates the TypeScript protocol the UI imports — the TS side is **generated**, never hand-maintained. The C++ side goes the other way: it is a **validated consumer**, not a generator. There are **no named C++ DTO structs**; every command builds its response as inline `nlohmann::json`. A contract test, `tools/check-control-schema`, drives the running editor, captures real replies, and validates them against the schemas. If a reply drifts from its schema, the test fails — that is what keeps the inline JSON honest without a parallel hierarchy of C++ types to maintain.
+
+`dump-schema` (see [Scene commands](../scene-commands/)) and [reflect-cpp](https://github.com/getml/reflect-cpp) are **deferred forward seams**: the eventual goal is to generate the schemas from C++ types directly. That needs C++26 static reflection, which is not in stock Clang 21 + libc++ yet, so for now the schemas are hand-written and the contract test guards them. `dump-schema` already emits the live runtime shapes, so when reflection lands the generation direction can flip without changing the wire.
+
+## Wire invariants
+
+These hold across the whole protocol, in both the schemas and every reply:
+
+- **IDs are u64 numbers on the wire, strings in TS.** Every `Uuid`/`id` is a 64-bit unsigned integer emitted as a JSON **number** — and it may exceed 2^53, so it is not safely a JavaScript `number`. The `uuid` schema carries a `tsType` of `string`, and the TS client parses with a string-preserving parser, so an id is typed `string` end-to-end on the TS side while staying a number on the wire. Never round-trip an id through a plain JS `number`.
+- **camelCase on the wire.** Every key is camelCase (`baseColor`, `albedoTexture`, `emissiveStrength`), matching the scene-file encoding and the generated TS field names.
+- **`Transform.rotation` is Euler XYZ radians.** The wire value is radians; a UI that shows degrees converts at the edge. (This matches `set-transform`, which merges radians.)
+- **Spot-light angles are degrees.** `SpotLightComponent.innerAngle` / `outerAngle` are in **degrees** on the wire, unlike the transform rotation — they are authored as degrees and stay degrees.
+- **Camera uses `near`/`far`.** The camera near/far planes are the keys `near` and `far` (not `nearPlane`/`zNear`), for both ECS cameras and the editor fly-cam.
+
+The schema is where these are pinned: the `uuid` type's `tsType`, the per-field units, and the key casing are all stated once and inherited by everything generated from or checked against it.
+
+## In the code
+
+| What | File | Symbols |
+|---|---|---|
+| Schemas (source of truth) | `schemas/control/*.schema.json` | the `uuid`, component, environment, and render-stats schemas |
+| TS generation | `json-schema-to-typescript` | the generated protocol types (phase 3) |
+| C++ contract test | `tools/check-control-schema` | drives the editor, validates replies against the schemas |
+| Live shapes | `control_commands_scene.cpp` | `dump-schema` |
+| Replies (no DTOs) | `control_commands_*.cpp` | inline `nlohmann::json` per command |
+
+## Related
+- [se CLI](../se-cli-protocol/) — the request/response shape and token coercion these types describe
+- [Scene commands](../scene-commands/) — `dump-schema` and the camelCase component bodies
+- [Asset commands](../asset-commands/) — the base64-PNG thumbnail result shape
+- [Control plane](../control-plane-architecture/) — how a reply is built and dispatched

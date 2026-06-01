@@ -24,9 +24,57 @@ Most commands take an `{entity}` argument. `resolveEntity` accepts a UUID (numbe
 | `set-material` | `{entity, baseColor?, albedoTexture?, metallic?, roughness?, emissive?, emissiveStrength?, unlit?}` | Adds Material if missing, then merges the given fields. |
 | `set-light` | `{entity?, direction?, color?, intensity?, ambient?}` | Edits the directional light (the given entity, else the first one found). |
 | `select` | `{entity}` | Sets editor selection; returns `{id, name}`. |
+| `get-selection` | — | Returns the current selection as `{id, name}`, or `{id: null}` when nothing is selected. |
+| `deselect` | — | Clears the editor selection. Returns `{id: null}`. |
+| `add-entity` | `{preset?}` | Creates an entity from a preset (default `empty`); selects it; returns `{id, name}`. |
+| `copy-entity` | `{entity}` | Deep-duplicates the entity (all components, new UUID); selects the copy; returns `{id, name}`. |
+| `set-component-field` | `{entity, component, field, value}` | Merges a single field into a component (generic; adds the component if missing). |
 | `pick` | `{u=0.5, v=0.5}` | Ray-picks at a viewport UV (`0,0` = top-left) and selects the hit. Returns `{hit, id?, name?}`. |
 | `inspect` | `{entity}` | Dumps every present component as JSON under `components`. |
 | `focus` | `{entity}` | Moves the editor camera to look at the entity's transform. |
+
+## Presets
+
+`add-entity` takes a `preset` that names what to spawn, matching the editor's **Create** menu:
+
+| Preset | Spawns |
+|---|---|
+| `empty` | A bare entity (Transform only). |
+| `cube` | The built-in cube mesh + default material. |
+| `model` | An empty model entity (mesh slot left unassigned for a later `assign-asset`). |
+| `point-light` | A `PointLightComponent`. |
+| `spot-light` | A `SpotLightComponent`. |
+| `directional-light` | A `DirectionalLightComponent`. |
+| `camera` | A `CameraComponent`. |
+
+An unknown preset is an error, not a silent fall-through to `empty`.
+
+## The editor camera and gizmo
+
+| Command | Params | Effect |
+|---|---|---|
+| `get-camera` | — | Returns the editor fly-cam as `{position, yaw, pitch, fov, near, far}`. |
+| `set-camera` | `{position?, yaw?, pitch?, fov?, near?, far?}` | Merges the given fields into the editor fly-cam. |
+| `get-gizmo` | — | Returns the shared gizmo state `{op, space}`. |
+| `set-gizmo` | `{op?, space?}` | Sets the gizmo `op` (`translate\|rotate\|scale`) and/or `space` (`world\|local`). |
+| `dump-schema` | — | Returns the live shapes of every component, the scene environment, and render-stats. |
+
+`get-camera`/`set-camera` drive the same editor [fly-camera](../../ui-and-editor/) the viewport uses — the scene-view eye, not an ECS `CameraComponent`. `set-camera` merges fields the same way the transform commands do.
+
+`get-gizmo`/`set-gizmo` read and write **one** gizmo state. The in-viewport ImGuizmo path and the W/E/R shortcut both read it, and any future native (non-ImGuizmo) manipulation path is meant to read the same state, so the gizmo mode is consistent no matter who set it. `op` selects translate/rotate/scale; `space` selects world vs. local.
+
+`dump-schema` returns the actual runtime shapes — it serializes a default of each registered component, the `SceneEnvironment`, and the render-stats block — so a tool can discover the wire shape without parsing C++. It is the **codegen seam**: see [Shared types](../shared-types/) for where the schema-first pipeline takes over.
+
+## Polling counters
+
+`EditorContext` carries two monotonically increasing counters a UI can poll to diff cheaply instead of re-listing the whole scene every frame:
+
+| Counter | Bumped when |
+|---|---|
+| `sceneVersion` | `add-entity`, `copy-entity`, `destroy-entity`, and scene/project `load`. |
+| `selectionVersion` | every `setSelection` (including `select`, `deselect`, `pick`, and an entity destroy that clears it). |
+
+A client reads the counter once, then re-fetches the entity list or the selection only when the number changes. The counters live on the context, not the wire, so any command that mutates the scene bumps the right one regardless of who invoked it.
 
 ## Merge, don't reset
 
@@ -42,11 +90,16 @@ Most commands take an `{entity}` argument. `resolveEntity` accepts a UUID (numbe
 |---|---|---|
 | Registration | `control_commands_scene.cpp` | `registerSceneCommands` |
 | Entity resolution | `command.cppm` | `resolveEntity`, `entityRef` |
-| Component edits | `control_commands_scene.cpp` | `set-component`, `set-transform`, `set-material`, `set-light` |
-| Selection + picking | `control_commands_scene.cpp` | `select`, `pick`, `focus`; `pickEntity`, `editorCameraView` |
+| Component edits | `control_commands_scene.cpp` | `set-component`, `set-transform`, `set-material`, `set-light`, `set-component-field` |
+| Presets + duplicate | `control_commands_scene.cpp` | `add-entity`, `copy-entity` |
+| Selection + picking | `control_commands_scene.cpp` | `select`, `get-selection`, `deselect`, `pick`, `focus`; `pickEntity`, `editorCameraView` |
+| Editor camera + gizmo | `control_commands_scene.cpp` | `get-camera`/`set-camera`, `get-gizmo`/`set-gizmo` |
+| Schema dump | `control_commands_scene.cpp` | `dump-schema` |
+| Poll counters | `editor.cppm` | `EditorContext.sceneVersion`, `EditorContext.selectionVersion`, `setSelection` |
 | The registry behind the edits | `editor.cppm` / `scene.cppm` | `ComponentTraits.serialize`/`deserialize`, `findByName` |
 
 ## Related
 - [Asset commands](../asset-commands/) — assigning meshes and textures to entities
+- [Shared types](../shared-types/) — the schema-first wire contract `dump-schema` feeds
 - [Scene & ECS](../../scene-and-ecs/) — the component registry these commands drive
 - [Control plane](../control-plane-architecture/) — how a command is registered and dispatched
