@@ -5,75 +5,57 @@ weight = 10
 
 # Theme & fonts
 
-The editor ships a dark theme, two fonts (Roboto for the UI, Roboto Mono for numeric fields), and a default docking layout that lands the four panels in sensible places on first run. All three are set up once during `newUi`.
+The editor's React UI is built with shadcn/ui (Radix primitives copied into the repo) on Tailwind CSS v4, not hand-rolled CSS. The dark `theme::` palette from the old engine survives — it is mapped one-to-one onto shadcn's CSS tokens, and the app is forced dark. The two fonts carry over too: Roboto for the chrome, Roboto Mono for data fields.
 
-## Dark theme
+## The palette as shadcn tokens
 
-`applyTheme` starts from ImGui's built-in dark style, then overrides the color slots from a small named palette — `IM_COL32` constants in a `theme` namespace: accent orange, a highlight blue, and a ladder of grays from `titlebar` to `background` to `propertyField`:
+shadcn styles every component from a small set of CSS custom properties (`--background`, `--primary`, `--border`, …). The editor sets those variables to the engine's exact theme hexes, so the React UI reads as the same dark editor the C++ build did:
 
-```cpp
-constexpr ImU32 accent        = IM_COL32(236, 158,  36, 255);
-constexpr ImU32 background    = IM_COL32( 36,  36,  36, 255);
-constexpr ImU32 propertyField = IM_COL32( 15,  15,  15, 255);
-```
-
-Interactive accents (check marks, slider grabs, the docking preview) get the orange `accent`; hover and active separators get the blue `highlight`. The style also tightens the geometry — `FrameRounding = 2.5`, a 1px frame/window border, `TabRounding = 3.5`, a small `IndentSpacing`. `applyTheme` runs right after `CreateContext`, before the backends initialize.
-
-## Two fonts, one monospace
-
-Data fields read better in a monospace font, so the editor loads Roboto for the general UI and Roboto Mono for numeric/data fields. Both loads are optional and fall back to the built-in font if the file is missing:
-
-```cpp
-const std::string robotoPath = assetPath("fonts/Roboto-Regular.ttf");
-if (std::filesystem::exists(robotoPath))
-    io.FontDefault = io.Fonts->AddFontFromFileTTF(robotoPath.c_str(), 17.0f);
-
-const std::string monoPath = assetPath("fonts/RobotoMono-Regular.ttf");
-if (std::filesystem::exists(monoPath))
-    ui.monoFont = io.Fonts->AddFontFromFileTTF(monoPath.c_str(), 16.0f);
-```
-
-Roboto becomes the default font; the mono face is stashed on the `Ui` and handed out by `uiMonoFont` for panels that want to push it around a numeric field. The `exists` guard means a stripped build with no font files still runs, just with ImGui's default face.
-
-## Default dock layout
-
-ImGui docking persists a layout to its `.ini` once you've moved panels around. A fresh install has no saved layout, so the editor seeds one with the DockBuilder API on the first frame, but only when the dockspace node is empty — a saved layout is left alone:
-
-```cpp
-ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockId);
-if (node == nullptr || node->IsLeafNode())  // empty (no saved layout) → seed a default
-{
-    ImGui::DockBuilderRemoveNode(dockId);
-    ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetMainViewport()->Size);
-    ImGuiID center = dockId;
-    const ImGuiID left   = DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
-    const ImGuiID bottom = DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
-    const ImGuiID leftBottom = DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, nullptr, nullptr);
-    DockBuilderDockWindow("Hierarchy", left);
-    DockBuilderDockWindow("Inspector", leftBottom);
-    DockBuilderDockWindow("Assets",    bottom);
-    DockBuilderDockWindow("Viewport",  center);
-    DockBuilderFinish(dockId);
+```css
+:root {
+  --background: #242424;   /* theme::background */
+  --foreground: #c0c0c0;
+  --primary:    #ec9e24;   /* the accent orange */
+  --input:      #0f0f0f;   /* propertyField */
+  --border:     #4d4d4d;   /* muted */
+  --muted:      #2f2f2f;   /* groupHeader */
+  --popover:    #3f464d;
+  --ring:       #ec9e24;
+  --radius:     0.15rem;
 }
 ```
 
-The splits give the familiar layout: Hierarchy top-left, Inspector below it, Assets along the bottom, and the [Viewport](../viewport-panel/) filling the center. Window names must match the `ImGui::Begin` titles in the panels for the dock assignment to take.
+`index.html` pins `class="dark"` on `<html>` and the same hexes drive both `:root` and `.dark`, so there is no light mode to fall into — the editor runs in one known-modern webview, so a single forced-dark palette is all it needs. An `@theme inline` block re-exports each variable as a Tailwind color (`--color-background: var(--background)`) so utilities like `bg-background` and `border-border` resolve to the palette.
 
-> [!TIP]
-> Because the seed only fires when no layout is saved, once you rearrange panels your layout sticks across runs (ImGui writes it to its `.ini`). Delete that file to get the default back.
+## Two fonts, one monospace
+
+Data reads better in a monospace face, so the chrome uses Roboto and number/data fields use Roboto Mono — the same two TTFs the C++ editor loaded. Tauri runs offline (no font CDN), so both are bundled and declared with `@font-face`; Vite fingerprints the `.ttf` into the build:
+
+```css
+@font-face { font-family: "Roboto";      src: url("./assets/fonts/Roboto-Regular.ttf") format("truetype"); }
+@font-face { font-family: "Roboto Mono";  src: url("./assets/fonts/RobotoMono-Regular.ttf") format("truetype"); }
+```
+
+`--font-sans` names Roboto and `--font-mono` names Roboto Mono. Chrome (labels, buttons, menus, hierarchy rows) uses `--font-sans`; data — the inspector number/vector/color inputs, the entity and asset names, the render-stats counters — uses `font-mono`, mirroring the old `uiMonoFont` rule.
+
+## Layout: a resizable dock
+
+The old ImGui DockBuilder default is reproduced with `react-resizable-panels` (shadcn's `resizable`): Hierarchy plus a tabbed Inspector/Environment/Stats column on the left, Assets along the bottom, [Viewport](../viewport-panel/) in the center. The split ratios mirror the DockBuilder splits (left 0.20, bottom 0.28, the left column split 0.45/0.55). The C++ editor floated Render Stats as its own window; tabbing it next to Inspector and Environment is the accepted parity choice and keeps every panel in a non-viewport region.
+
+> [!NOTE]
+> Every panel, handle, and Radix portal lives outside the viewport rect on purpose. The reparented native window always paints over its rect, so the dock arrangement is also the occlusion strategy — see [the native bridge](../tauri-editor-and-x11-bridge/) page.
 
 ## In the code
 
 | What | File | Symbols |
 |---|---|---|
-| Palette | `ui.cppm` | the `theme` namespace constants |
-| Theme application | `ui.cppm` | `applyTheme` |
-| Font loading | `ui.cppm` | `AddFontFromFileTTF`, `ui.monoFont`, `uiMonoFont` |
-| Default layout | `ui.cppm` | `uiBeginFrame`, `DockBuilder*`, `layoutBuilt` |
+| Palette → shadcn tokens | `editor/src/styles.css` | `:root` / `.dark` vars, `@theme inline` |
+| Bundled fonts | `editor/src/styles.css` | `@font-face` Roboto / Roboto Mono, `--font-sans` / `--font-mono` |
+| The dock layout | `editor/src/app/Layout.tsx` | `Layout`, `LeftBottomTabs`, the panel split sizes |
+| Layout-settled bus | `editor/src/app/layoutBus.ts` | `emitLayoutSettled`, `onLayoutSettled` |
 
 ## Related
 
-- [ImGui integration](../imgui-integration/) — where `applyTheme` and the fonts are wired in
+- [Tauri editor and the X11 bridge](../tauri-editor-and-x11-bridge/) — the shell the theme dresses + the occlusion rule
 - [Viewport panel](../viewport-panel/) — the panel that fills the dock center
-- [Inspector](../inspector/) — uses the mono font + `vec3Control` styling
+- [Inspector](../inspector/) — uses the mono font for its data fields
