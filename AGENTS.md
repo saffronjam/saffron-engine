@@ -123,7 +123,8 @@ SaffronEngine/
 │   ├── CMakeLists.txt      # SaffronEditor executable
 │   ├── assets/models/      # source models (cube.gltf/.obj), copied next to the exe
 │   └── source/main.cpp     # client app: builds AppConfig, attaches a Layer, calls se::run()
-└── tools/se/               # the `se` control CLI (json over the unix socket; no engine dep)
+├── tools/se/               # the `se` control CLI (json over the unix socket; no engine dep)
+└── plans/                  # phased implementation plans for FUTURE expansions (not yet built)
 ```
 
 Modules form a DAG (real imports, not a single chain): `Signal→Core`, `Json→Core`,
@@ -267,11 +268,32 @@ Working and verified (validation-clean) in the toolbox:
 
 Not done yet (planned):
 - **PBR** (metallic/roughness/normal maps — tangents + `materialSlot` per-submesh multi-material are reserved),
-  shadows (a shadow pass now slots into the graph), transparency pass.
+  shadows (a shadow pass now slots into the graph), transparency pass, and the full dynamic-lighting /
+  global-illumination / ray-tracing roadmap — all scoped phase-by-phase in `plans/lighting/`.
 - **Transient render-graph resources** (graph-created images + memory aliasing) + async compute; GPU-driven
   culling (`vkCmdDrawIndexedIndirect`/MDI, mesh shaders) — the graph + draw-item layer leave the seams.
 - `Saffron.Physics` (Jolt) RigidBody + system; `resolveRefs` + scene-graph parenting; undo/redo.
 - `volk`, multi-viewport ImGui (incl. multi-viewport gizmo), hardware GPU in the toolbox.
+
+## Future expansion plans (`plans/`)
+
+The `plans/` folder holds **phased, dependency-ordered implementation plans for future
+expansions** that are scoped but not yet built. Each subfolder is one feature area
+(e.g. `plans/lighting/`, `plans/skybox/`) with a `README.md` index and numbered
+`phase-N-*.md` files. Plans are grounded in the current code (file/function
+references) so a session can pick one up directly.
+
+Convention: each plan carries a `**Status:**` line (`NOT STARTED` / `IN PROGRESS` /
+`COMPLETED`). **Mark a plan `COMPLETED` when its work is done; delete a plan file only
+*after* it is `COMPLETED`** (so pending work is never lost). When implementing a
+feature, check `plans/` first — if a plan covers it, follow and update that plan rather
+than starting cold.
+
+- `plans/lighting/` — dynamic lighting roadmap: PBR+HDR → IBL → shadows → screen-space
+  GI → temporal → DDGI (no-bake GI) → ray tracing → ReSTIR. See the `lighting-roadmap`
+  memory for the investigation behind it.
+- `plans/skybox/` — skybox + scene-environment rendering (shares cubemap/IBL infra with
+  `plans/lighting/phase-2`).
 
 See the memory notes (`build-environment`, `saffron-rewrite-plan`,
 `code-style-go-conventions`) for deeper rationale.
