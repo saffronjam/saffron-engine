@@ -120,7 +120,10 @@ namespace se
         const u32 ssgiFlag = (renderer.ssao.useSsgi && renderer.ssao.ready) ? 1u : 0u;
         const u32 ddgiFlag = (renderer.ddgi.useDdgi && renderer.ddgi.ready) ? 1u : 0u;
         ubo.counts = glm::uvec4(count, renderer.lighting.shadowPending ? 1u : 0u, iblFlag, ssaoFlag);
-        ubo.screenFlags = glm::uvec4(contactFlag, ssgiFlag, ddgiFlag, 0);
+        // screenFlags.w = ReSTIR direct-lighting flag: the mesh replaces its punctual loop
+        // with the resolved ReSTIR radiance buffer.
+        const u32 restirFlag = (renderer.restir.useRestir && renderer.restir.ready && renderer.context.rtSupported) ? 1u : 0u;
+        ubo.screenFlags = glm::uvec4(contactFlag, ssgiFlag, ddgiFlag, restirFlag);
         ubo.ddgiVolumeMin = glm::vec4(renderer.ddgi.volumeMin, 0.0f);
         ubo.ddgiVolumeExtent = glm::vec4(renderer.ddgi.volumeExtent, 0.0f);
         ubo.ddgiProbeCount = glm::uvec4(DdgiProbesX, DdgiProbesY, DdgiProbesZ, DdgiIrrInterior);

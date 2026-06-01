@@ -155,6 +155,10 @@ static const float IblPrefilterMaxMip = 4.0;  // == IblPrefilterMips - 1 (render
 [[vk::binding(0, 5)]] Sampler2D ddgiIrradiance;
 [[vk::binding(1, 5)]] Sampler2D ddgiDistance;
 
+// Set 7: ReSTIR resolved direct-light radiance (screen UV). Replaces the punctual light
+// loop when screenFlags.w != 0 (multiplied by albedo/PI for the diffuse direct term).
+[[vk::binding(0, 7)]] Sampler2D restirRadiance;
+
 // Set 6: the ray-tracing TLAS for inline ray-query shadows (pointShadowMeta.z gates it).
 // Present only when the device supports RT (the PSO layout omits set 6 otherwise), but the
 // binding compiles unconditionally — it is only accessed under the runtime flag.
@@ -418,8 +422,15 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     float3 lo = brdf(n, v, lDir, albedo, metallic, roughness,
                      globals.colorIntensity.rgb * globals.colorIntensity.a) * shadow;
 
-    // Punctual lights — clustered when enabled, else loop every light.
-    if (clusterParams.screenSize.z != 0)
+    // Punctual lights. ReSTIR (screenFlags.w) replaces the per-light loop with one resolved
+    // stochastic many-light direct radiance sample (diffuse term); otherwise loop the
+    // froxel cluster's lights (clustered) or every light (reference).
+    if (globals.screenFlags.w != 0)
+    {
+        float3 restir = restirRadiance.SampleLevel(screenUv, 0.0).rgb;
+        lo += restir * albedo / PI;  // resolved radiance already includes geometry * vis * W
+    }
+    else if (clusterParams.screenSize.z != 0)
     {
         float viewZ = mul(clusterParams.view, float4(input.worldPos, 1.0)).z;
         uint clusterIndex = clusterIndexFor(input.position.xy, viewZ);

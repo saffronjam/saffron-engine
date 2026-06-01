@@ -343,6 +343,13 @@ namespace se
         renderer.pipelines.ddgiBlendIrr.reset();
         renderer.pipelines.ddgiBlendDist.reset();
         renderer.pipelines.ddgiBorder.reset();
+        renderer.pipelines.restirInitial.reset();
+        renderer.pipelines.restirReuse.reset();
+        renderer.pipelines.restirResolve.reset();
+        renderer.restir.radiance.reset();
+        renderer.restir.initial.reset();
+        renderer.restir.combined.reset();
+        renderer.restir.previous.reset();
         renderer.ddgi.boxBuffer.reset();
         renderer.ddgi.voxels.reset();
         renderer.ddgi.irradiance.reset();
@@ -486,6 +493,15 @@ namespace se
         {
             renderer.context.device.destroyDescriptorSetLayout(renderer.rt.meshLayout);
         }
+        for (vk::DescriptorSetLayout l : { renderer.restir.initialLayout, renderer.restir.reuseLayout,
+                                           renderer.restir.resolveLayout, renderer.restir.meshLayout })
+        {
+            if (l) { renderer.context.device.destroyDescriptorSetLayout(l); }
+        }
+        if (renderer.restir.sampler)
+        {
+            renderer.context.device.destroySampler(renderer.restir.sampler);
+        }
 
         for (FrameData& frame : renderer.frame.frames)
         {
@@ -574,6 +590,7 @@ namespace se
                 recreateFxaaTarget(renderer);   // and the FXAA/TAA scratch target
                 recreateSsaoTargets(renderer);  // and the SSAO G-buffer + AO map
                 recreateTaaTargets(renderer);   // and the TAA motion + history (after scratch)
+                if (renderer.context.rtSupported) { recreateRestirTargets(renderer); }  // ReSTIR reservoirs
             }
             else
             {
@@ -801,14 +818,20 @@ namespace se
         const bool doSsao = gbufReady && renderer.ssao.useSsao && renderer.pipelines.gtao && renderer.pipelines.aoBlur;
         const bool doContact = gbufReady && renderer.ssao.useContact && renderer.pipelines.contact;
         const bool doSsgi = gbufReady && renderer.ssao.useSsgi && renderer.pipelines.ssgi && renderer.pipelines.copyColor;
-        const bool doScreen = doSsao || doContact || doSsgi;
+        // ReSTIR also needs the G-buffer (world pos/normal). Force the prepass when ReSTIR is
+        // on even with no screen effect; the gNormal handle is captured for its sets.
+        const bool wantRestir = renderer.restir.useRestir && renderer.restir.ready &&
+                                renderer.context.rtSupported && gbufReady;
+        const bool doScreen = doSsao || doContact || doSsgi || wantRestir;
         const vk::Extent2D ssExtent = offscreen.extent;
         const auto ssGroups = [](u32 n) -> u32 { return (n + 7) / 8; };
         renderer.graph.hasAo = false;
         renderer.graph.hasContact = false;
         renderer.graph.hasSsgi = false;
+        renderer.graph.hasGbuffer = false;
         if (doScreen)
         {
+            renderer.graph.hasGbuffer = true;
             RgResource gNormalRes = importImage(graph, renderer.targets.gNormal.image, renderer.targets.gNormal.view,
                 vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
             RgResource gDepthRes = importImage(graph, renderer.targets.gDepth.image, renderer.targets.gDepth.view,
@@ -1108,6 +1131,88 @@ namespace se
             addPass(graph, std::move(tlasPass));
         }
 
+        // ReSTIR DI: initial candidate sampling -> temporal+spatial reuse -> resolve (1 shadow
+        // ray) + shade, writing a per-pixel direct-radiance image the scene pass samples.
+        // Needs the G-buffer (forced on below), the per-frame light + cluster SSBOs, and the
+        // TLAS. Three compute passes; the reservoir SSBOs serialize via memory barriers the
+        // graph derives from StorageWrite->StorageRead on a representative resource.
+        renderer.graph.hasRestir = false;
+        const bool doRestir = renderer.restir.useRestir && renderer.restir.ready &&
+                              renderer.context.rtSupported && renderer.rt.tlasReady &&
+                              renderer.graph.hasGbuffer && doCull /* froxel candidate lists */;
+        if (doRestir)
+        {
+            // Per-frame writes: light SSBO + cluster SSBO (they grow), G-buffer + motion
+            // samplers, and the TLAS into the resolve set.
+            writeRestirFrameBindings(renderer, f);
+            RgResource radianceRes = importImage(graph, renderer.restir.radiance.image, renderer.restir.radiance.view,
+                vk::ImageAspectFlagBits::eColor, renderer.restir.radiance.layout, &renderer.restir.radiance.layout);
+            // A sentinel buffer access so consecutive ReSTIR passes get RAW barriers on the
+            // reservoir storage (initial->reuse->resolve write/read the same buffers).
+            RgResource resvSentinel = importBuffer(graph, renderer.restir.combined->buffer);
+
+            const vk::Extent2D ex = offscreen.extent;
+            const glm::mat4 invView = glm::inverse(renderer.ssao.view);
+            const glm::mat4 invProj = renderer.ssao.invProjection;
+            const u32 fi = renderer.restir.frameIndex;
+            const bool histValid = !renderer.restir.historyReset;
+
+            RgPass init;
+            init.name = "restir-initial";
+            init.kind = RgPassKind::Compute;
+            init.accesses = { RgAccess{ resvSentinel, RgUsage::StorageWriteCompute } };
+            init.execute = [&renderer, ex, invView, invProj, fi](vk::CommandBuffer cmd)
+        {
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.restirInitial->pipeline);
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.restirInitial->layout, 0, renderer.restir.initialSet, {});
+                struct { glm::mat4 invView; glm::mat4 invProjection; glm::uvec4 gridSize; glm::uvec4 screenSize; glm::vec4 zPlanes; }
+                    push{ invView, invProj,
+                          glm::uvec4(ClusterGridX, ClusterGridY, ClusterGridZ, renderer.lighting.frameLightCount),
+                          glm::uvec4(ex.width, ex.height, renderer.restir.candidateCount, fi),
+                          glm::vec4(0.1f, 100.0f, 0.0f, 0.0f) };
+                cmd.pushConstants(renderer.pipelines.restirInitial->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push), &push);
+                cmd.dispatch((ex.width + 7) / 8, (ex.height + 7) / 8, 1);
+            };
+            addPass(graph, std::move(init));
+
+            RgPass reuse;
+            reuse.name = "restir-reuse";
+            reuse.kind = RgPassKind::Compute;
+            reuse.accesses = { RgAccess{ resvSentinel, RgUsage::StorageReadCompute } };
+            reuse.execute = [&renderer, ex, invView, invProj, fi, histValid](vk::CommandBuffer cmd)
+        {
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.restirReuse->pipeline);
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.restirReuse->layout, 0, renderer.restir.reuseSet, {});
+                struct { glm::mat4 invView; glm::mat4 invProjection; glm::uvec4 screenSize; glm::vec4 params; }
+                    push{ invView, invProj, glm::uvec4(ex.width, ex.height, 20u, fi),
+                          glm::vec4(16.0f, histValid ? 1.0f : 0.0f, 0.0f, 0.0f) };
+                cmd.pushConstants(renderer.pipelines.restirReuse->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push), &push);
+                cmd.dispatch((ex.width + 7) / 8, (ex.height + 7) / 8, 1);
+            };
+            addPass(graph, std::move(reuse));
+
+            RgPass resolve;
+            resolve.name = "restir-resolve";
+            resolve.kind = RgPassKind::Compute;
+            resolve.accesses = { RgAccess{ resvSentinel, RgUsage::StorageReadCompute },
+                                 RgAccess{ radianceRes, RgUsage::StorageImageRWCompute } };
+            const glm::vec3 eye = glm::vec3(invView[3]);
+            resolve.execute = [&renderer, ex, invView, invProj, eye](vk::CommandBuffer cmd)
+        {
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.restirResolve->pipeline);
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.restirResolve->layout, 0, renderer.restir.resolveSet, {});
+                struct { glm::mat4 invView; glm::mat4 invProjection; glm::uvec4 screenSize; glm::vec4 eyePosition; }
+                    push{ invView, invProj, glm::uvec4(ex.width, ex.height, 0, 0), glm::vec4(eye, 0.0f) };
+                cmd.pushConstants(renderer.pipelines.restirResolve->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push), &push);
+                cmd.dispatch((ex.width + 7) / 8, (ex.height + 7) / 8, 1);
+            };
+            addPass(graph, std::move(resolve));
+            renderer.graph.restirRadiance = radianceRes;
+            renderer.graph.hasRestir = true;
+            renderer.restir.frameIndex = renderer.restir.frameIndex + 1;
+            renderer.restir.historyReset = false;
+        }
+
         RgPass scene;
         scene.name = "scene";
         scene.kind = RgPassKind::Graphics;
@@ -1131,6 +1236,10 @@ namespace se
         {
             scene.accesses.push_back(RgAccess{ renderer.graph.ddgiIrradiance, RgUsage::SampledRead });
             scene.accesses.push_back(RgAccess{ renderer.graph.ddgiDistance, RgUsage::SampledRead });
+        }
+        if (renderer.graph.hasRestir)
+        {
+            scene.accesses.push_back(RgAccess{ renderer.graph.restirRadiance, RgUsage::SampledRead });
         }
         if (doShadow)
         {
@@ -1590,6 +1699,21 @@ namespace se
         recordTlasBuild(renderer, cmd, f, count);
         renderer.rt.frameInstanceCount = count;
         renderer.rt.tlasReady = true;
+    }
+
+    void setRestir(Renderer& renderer, bool enabled)
+    {
+        const bool on = enabled && renderer.context.rtSupported && renderer.restir.ready;
+        if (on && !renderer.restir.useRestir)
+        {
+            renderer.restir.historyReset = true;
+        }
+        renderer.restir.useRestir = on;
+    }
+
+    auto restirEnabled(const Renderer& renderer) -> bool
+    {
+        return renderer.restir.useRestir && renderer.context.rtSupported && renderer.restir.ready;
     }
 
     void setDdgi(Renderer& renderer, bool enabled)

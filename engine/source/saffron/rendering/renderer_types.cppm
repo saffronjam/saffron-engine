@@ -660,6 +660,9 @@ export namespace se
         Ref<Pipeline> ddgiBlendIrr;  // blend rays -> irradiance atlas
         Ref<Pipeline> ddgiBlendDist; // blend rays -> moment atlas
         Ref<Pipeline> ddgiBorder;    // octahedral gutter copy
+        Ref<Pipeline> restirInitial; // ReSTIR initial candidate sampling
+        Ref<Pipeline> restirReuse;   // ReSTIR temporal + spatial reuse
+        Ref<Pipeline> restirResolve; // ReSTIR resolve (1 shadow ray) + shade
         Ref<Pipeline> fxaa;          // compute FXAA post-process
         Ref<Pipeline> cull;          // compute light-cull (clustered forward)
         std::unordered_map<std::string, Ref<Pipeline>> cache;
@@ -868,6 +871,34 @@ export namespace se
         bool buildPending = false;  // RT shadows on + instances present this frame
     };
 
+    // ReSTIR DI (reservoir spatiotemporal importance resampling) — stochastic many-light
+    // direct lighting. Feeds off the froxel candidate lists (set via the cluster SSBO) +
+    // the phase-7 TLAS for one visibility ray per pixel + phase-5 motion for temporal reuse.
+    // Gated on rtSupported (needs ray-query). Per-pixel reservoir SSBOs (initial, combined,
+    // previous) + an output radiance image the mesh adds in. Diffuse direct only in v1.
+    struct Restir
+    {
+        bool useRestir = false;
+        bool ready = false;
+        bool historyReset = true;
+        Image radiance;             // per-pixel resolved direct radiance (rgba16f)
+        Ref<Buffer> initial;        // initial reservoirs (this frame's candidate sampling)
+        Ref<Buffer> combined;       // after temporal+spatial reuse
+        Ref<Buffer> previous;       // last frame's combined (temporal source)
+        u32 reservoirCapacity = 0;  // pixels the buffers are sized for
+        vk::Sampler sampler;        // nearest, clamp — samples G-buffer/motion
+        vk::DescriptorSetLayout initialLayout;   // 4 bindings
+        vk::DescriptorSetLayout reuseLayout;     // 6 bindings
+        vk::DescriptorSetLayout resolveLayout;   // 6 bindings (incl. TLAS)
+        vk::DescriptorSetLayout meshLayout;      // set 7: the radiance sampler
+        vk::DescriptorSet initialSet;
+        vk::DescriptorSet reuseSet;
+        vk::DescriptorSet resolveSet;
+        vk::DescriptorSet meshSet;
+        u32 frameIndex = 0;
+        u32 candidateCount = 16;    // K initial candidates per pixel
+    };
+
     // The frame as a render graph + the resource handles app-authored passes reference.
     struct FrameGraphState
     {
@@ -880,10 +911,13 @@ export namespace se
         RgResource prevColorResource; // prevColor handle (imported once; read by SSGI, written by copy)
         RgResource ddgiIrradiance;    // DDGI irradiance atlas handle when DDGI ran
         RgResource ddgiDistance;      // DDGI moment atlas handle when DDGI ran
+        RgResource restirRadiance;    // ReSTIR direct-radiance handle when ReSTIR ran
         bool hasAo = false;
         bool hasContact = false;
         bool hasSsgi = false;
         bool hasDdgi = false;
+        bool hasGbuffer = false;      // the thin G-buffer prepass ran (screen effects or ReSTIR)
+        bool hasRestir = false;
     };
 
     struct Renderer
@@ -900,6 +934,7 @@ export namespace se
         Ssao ssao;
         Ddgi ddgi;
         Rt rt;
+        Restir restir;
         FrameGraphState graph;
 
         bool useDepthPrepass = false;
@@ -1052,6 +1087,9 @@ export namespace se
     // Records into the active command buffer (a graph compute pass). Arms tlasReady.
     void buildTlas(Renderer& renderer, vk::CommandBuffer cmd,
                    const std::vector<glm::mat4>& models, const std::vector<Ref<GpuMesh>>& meshes);
+    // ReSTIR many-light direct lighting (feature-gated on rtSupported). Diffuse direct in v1.
+    void setRestir(Renderer& renderer, bool enabled);
+    auto restirEnabled(const Renderer& renderer) -> bool;
     // Records the G-buffer prepass (view normal + view-Z) for the screen-space pass bodies.
     void recordGbuffer(Renderer& renderer, vk::CommandBuffer cmd);
     // Feeds the camera the screen-space passes need: view, proj (SAME Y-flipped projection

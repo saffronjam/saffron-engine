@@ -339,11 +339,16 @@ namespace se
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 4, renderer.ssao.meshSet, {});
         // Set 5 = DDGI probe atlases (irradiance + distance); gated by screenFlags.z.
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 5, renderer.ddgi.meshSet, {});
-        // Set 6 = the RT TLAS (only when RT is supported + the set is valid this frame).
+        // Set 6 = the RT TLAS, set 7 = the ReSTIR radiance (only when RT is supported, so the
+        // PSO layout has them). Both gated in-shader by their runtime flags.
         if (renderer.context.rtSupported && renderer.rt.meshSets[renderer.frame.index])
         {
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 6,
                 renderer.rt.meshSets[renderer.frame.index], {});
+            if (renderer.restir.meshSet)
+            {
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 7, renderer.restir.meshSet, {});
+            }
         }
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &list.viewProj);
         for (const DrawBatch& batch : list.batches)

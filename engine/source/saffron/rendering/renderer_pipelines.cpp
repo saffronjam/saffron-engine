@@ -132,7 +132,8 @@ namespace se
             renderer.ssao.meshSetLayout, renderer.ddgi.meshLayout };
         if (renderer.context.rtSupported && renderer.rt.meshLayout)
         {
-            setLayouts.push_back(renderer.rt.meshLayout);
+            setLayouts.push_back(renderer.rt.meshLayout);       // set 6: TLAS
+            setLayouts.push_back(renderer.restir.meshLayout);   // set 7: ReSTIR radiance
         }
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayouts);

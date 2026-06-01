@@ -889,6 +889,7 @@ export namespace se
     void updateFxaaSet(Renderer& renderer);  // defined alongside updateTonemapSet below
     void recreateSsaoTargets(Renderer& renderer);  // defined after the SSAO pipeline helpers
     void recreateTaaTargets(Renderer& renderer);   // defined after the TAA pipeline helpers
+    void recreateRestirTargets(Renderer& renderer); // defined after the ReSTIR pipeline helpers
 
     // (Re)create the 1x scratch target FXAA + TAA read from (the scene renders here when
     // either is on); drop it when neither. Sized to the offscreen; the GPU is already idle.
@@ -1946,6 +1947,144 @@ export namespace se
         }
     }
 
+    // (Re)creates the ReSTIR reservoir buffers (initial/combined/previous, 32B/pixel) + the
+    // output radiance image at the viewport extent, and writes the STABLE descriptor bindings
+    // (reservoirs, radiance, the resolve TLAS). The per-frame light + cluster SSBO + sampler
+    // bindings (G-buffer/motion) are rewritten in the ReSTIR graph passes since those buffers
+    // change. Called at init + on resize (GPU already idle). Requires rtSupported.
+    void recreateRestirTargets(Renderer& renderer)
+    {
+        renderer.restir.ready = false;
+        renderer.restir.radiance.reset();
+        renderer.restir.initial.reset();
+        renderer.restir.combined.reset();
+        renderer.restir.previous.reset();
+        const u32 w = renderer.targets.offscreen.extent.width;
+        const u32 h = renderer.targets.offscreen.extent.height;
+        if (w == 0 || h == 0) { return; }
+        const u32 pixels = w * h;
+        const vk::DeviceSize reservoirBytes = static_cast<vk::DeviceSize>(pixels) * 2 * sizeof(glm::vec4);  // 2x float4
+        auto mk = [&]() -> Result<Ref<Buffer>> { return makeDeviceStorageBuffer(renderer, reservoirBytes); };
+        auto r0 = mk(); if (!r0) { logError(r0.error()); return; } renderer.restir.initial = *r0;
+        auto r1 = mk(); if (!r1) { logError(r1.error()); return; } renderer.restir.combined = *r1;
+        auto r2 = mk(); if (!r2) { logError(r2.error()); return; } renderer.restir.previous = *r2;
+        renderer.restir.reservoirCapacity = pixels;
+        auto rad = newColorImage(renderer, w, h, GNormalFormat, true);  // rgba16f radiance, storage
+        if (!rad) { logError(rad.error()); return; }
+        renderer.restir.radiance = std::move(*rad);
+
+        // Radiance rests in ShaderReadOnly (mesh samples it; resolve writes it as storage).
+        {
+            vk::CommandBufferAllocateInfo allocInfo{};
+            allocInfo.commandPool = renderer.frame.frames[0].commandPool;
+            allocInfo.level = vk::CommandBufferLevel::ePrimary;
+            allocInfo.commandBufferCount = 1;
+            auto cmds = checked(renderer.context.device.allocateCommandBuffers(allocInfo), "restir init cmd");
+            if (!cmds) { logError(cmds.error()); return; }
+            vk::CommandBuffer cmd = (*cmds)[0];
+            vk::CommandBufferBeginInfo begin{};
+            begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            static_cast<void>(cmd.begin(begin));
+            transitionImage(cmd, renderer.restir.radiance.image, vk::ImageLayout::eUndefined,
+                vk::ImageLayout::eShaderReadOnlyOptimal,
+                vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            renderer.restir.radiance.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            static_cast<void>(cmd.end());
+            vk::CommandBufferSubmitInfo cmdInfo{}; cmdInfo.commandBuffer = cmd;
+            vk::SubmitInfo2 submitInfo{}; submitInfo.setCommandBufferInfos(cmdInfo);
+            static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+            static_cast<void>(renderer.context.device.waitIdle());
+            renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
+        }
+
+        auto bufInfo = [](const Ref<Buffer>& b) { return vk::DescriptorBufferInfo{ b->buffer, 0, b->size }; };
+        auto wBuf = [&](vk::DescriptorSet set, u32 binding, const Ref<Buffer>& b)
+        {
+            auto bi = bufInfo(b);
+            vk::WriteDescriptorSet w{}; w.dstSet = set; w.dstBinding = binding;
+            w.descriptorType = vk::DescriptorType::eStorageBuffer; w.setBufferInfo(bi);
+            renderer.context.device.updateDescriptorSets(w, {});
+        };
+        // initial set: b3 = reservoir out (initial buffer).
+        wBuf(renderer.restir.initialSet, 3, renderer.restir.initial);
+        // reuse set: b2 = initial, b3 = previous, b5 = combined.
+        wBuf(renderer.restir.reuseSet, 2, renderer.restir.initial);
+        wBuf(renderer.restir.reuseSet, 3, renderer.restir.previous);
+        wBuf(renderer.restir.reuseSet, 5, renderer.restir.combined);
+        // resolve set: b1 = combined, b2 = previousOut. The radiance storage image (b5) + TLAS
+        // (b4) + samplers + light SSBO are written per frame in the pass (TLAS changes; light
+        // SSBO grows). Radiance storage written here (stable view).
+        wBuf(renderer.restir.resolveSet, 1, renderer.restir.combined);
+        wBuf(renderer.restir.resolveSet, 2, renderer.restir.previous);
+        {
+            vk::DescriptorImageInfo radStore{};
+            radStore.imageView = renderer.restir.radiance.view;
+            radStore.imageLayout = vk::ImageLayout::eGeneral;
+            vk::WriteDescriptorSet w{}; w.dstSet = renderer.restir.resolveSet; w.dstBinding = 5;
+            w.descriptorType = vk::DescriptorType::eStorageImage; w.setImageInfo(radStore);
+            renderer.context.device.updateDescriptorSets(w, {});
+            // mesh set 7: the radiance sampled.
+            vk::DescriptorImageInfo radSamp{ renderer.descriptors.linearSampler, renderer.restir.radiance.view,
+                                             vk::ImageLayout::eShaderReadOnlyOptimal };
+            vk::WriteDescriptorSet wm{}; wm.dstSet = renderer.restir.meshSet; wm.dstBinding = 0;
+            wm.descriptorType = vk::DescriptorType::eCombinedImageSampler; wm.setImageInfo(radSamp);
+            renderer.context.device.updateDescriptorSets(wm, {});
+        }
+        renderer.restir.ready = true;
+    }
+
+    // Writes the ReSTIR sets' PER-FRAME bindings: the punctual light SSBO + cluster list SSBO
+    // (they regrow), the G-buffer + motion samplers, and the TLAS into the resolve set. Called
+    // each frame before the ReSTIR passes (the stable bindings were written in recreate).
+    void writeRestirFrameBindings(Renderer& renderer, u32 frame)
+    {
+        vk::Device dev = renderer.context.device;
+        const vk::ImageView gv = renderer.targets.gNormal.view;
+        const vk::ImageView mv = renderer.targets.motion.image ? renderer.targets.motion.view : gv;  // motion may be absent (TAA off)
+        auto wSampler = [&](vk::DescriptorSet set, u32 binding, vk::ImageView v)
+        {
+            vk::DescriptorImageInfo ii{ renderer.restir.sampler, v, vk::ImageLayout::eShaderReadOnlyOptimal };
+            vk::WriteDescriptorSet w{}; w.dstSet = set; w.dstBinding = binding;
+            w.descriptorType = vk::DescriptorType::eCombinedImageSampler; w.setImageInfo(ii);
+            dev.updateDescriptorSets(w, {});
+        };
+        auto wBuffer = [&](vk::DescriptorSet set, u32 binding, vk::Buffer buf, vk::DeviceSize size)
+        {
+            vk::DescriptorBufferInfo bi{ buf, 0, size };
+            vk::WriteDescriptorSet w{}; w.dstSet = set; w.dstBinding = binding;
+            w.descriptorType = vk::DescriptorType::eStorageBuffer; w.setBufferInfo(bi);
+            dev.updateDescriptorSets(w, {});
+        };
+        const Ref<Buffer>& lightBuf = renderer.lighting.lightListBuffers[frame];
+        const Ref<Buffer>& clusterBuf = renderer.lighting.clusterBuffers[frame];
+
+        // initial: b0 gbuffer, b1 lights, b2 clusters.
+        wSampler(renderer.restir.initialSet, 0, gv);
+        if (lightBuf) { wBuffer(renderer.restir.initialSet, 1, lightBuf->buffer, lightBuf->size); }
+        if (clusterBuf) { wBuffer(renderer.restir.initialSet, 2, clusterBuf->buffer, clusterBuf->size); }
+        // reuse: b0 gbuffer, b1 motion, b4 lights.
+        wSampler(renderer.restir.reuseSet, 0, gv);
+        wSampler(renderer.restir.reuseSet, 1, mv);
+        if (lightBuf) { wBuffer(renderer.restir.reuseSet, 4, lightBuf->buffer, lightBuf->size); }
+        // resolve: b0 gbuffer, b3 lights, b4 TLAS.
+        wSampler(renderer.restir.resolveSet, 0, gv);
+        if (lightBuf) { wBuffer(renderer.restir.resolveSet, 3, lightBuf->buffer, lightBuf->size); }
+        {
+            VkAccelerationStructureKHR handle = static_cast<VkAccelerationStructureKHR>(renderer.rt.tlas[frame]->handle);
+            VkWriteDescriptorSetAccelerationStructureKHR asWrite{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
+            asWrite.accelerationStructureCount = 1;
+            asWrite.pAccelerationStructures = &handle;
+            VkWriteDescriptorSet w{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            w.pNext = &asWrite;
+            w.dstSet = static_cast<VkDescriptorSet>(renderer.restir.resolveSet);
+            w.dstBinding = 4;
+            w.descriptorCount = 1;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            vkUpdateDescriptorSets(static_cast<VkDevice>(dev), 1, &w, 0, nullptr);
+        }
+    }
+
     // Write a texture into the bindless array at the given slot (set 0, binding 0).
     // update-after-bind: safe to write a live set between draws.
     void writeBindlessTexture(Renderer& renderer, vk::ImageView view, u32 index)
@@ -2256,8 +2395,8 @@ export namespace se
             // tonemap/fxaa/TAA(4) + screen-space chain + DDGI (voxel/ray/atlas storages)
             // ~= two dozen; plus generous headroom.
             vk::DescriptorPoolSize{ vk::DescriptorType::eStorageImage, 48 },
-            // RT: one TLAS descriptor per in-flight frame (set 6).
-            vk::DescriptorPoolSize{ vk::DescriptorType::eAccelerationStructureKHR, MaxFramesInFlight + 2 } };
+            // RT: one TLAS descriptor per in-flight frame (set 6) + the ReSTIR resolve set + headroom.
+            vk::DescriptorPoolSize{ vk::DescriptorType::eAccelerationStructureKHR, MaxFramesInFlight + 4 } };
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;  // texture sets freed on Ref drop
         poolInfo.maxSets = 1024 + 8 * MaxFramesInFlight + 64;
@@ -2941,6 +3080,85 @@ export namespace se
             {
                 return Err(seeded.error());
             }
+
+            // ReSTIR DI (needs ray-query for the resolve visibility ray): a nearest sampler,
+            // three compute set layouts + a mesh set layout (set 7), the four sets, and the
+            // reservoir buffers + radiance image (sized to the viewport in recreate).
+            vk::SamplerCreateInfo rsSampler{};
+            rsSampler.magFilter = vk::Filter::eNearest;
+            rsSampler.minFilter = vk::Filter::eNearest;
+            rsSampler.mipmapMode = vk::SamplerMipmapMode::eNearest;
+            rsSampler.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+            rsSampler.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+            rsSampler.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+            auto rss = checked(renderer.context.device.createSampler(rsSampler), "restir sampler");
+            if (!rss) { return Err(rss.error()); }
+            renderer.restir.sampler = *rss;
+
+            // Layout helper: ordered descriptor types (sampler / storage-buffer / storage-image / AS).
+            auto rsLayout = [&](std::vector<vk::DescriptorType> types, const char* name) -> Result<vk::DescriptorSetLayout>
+            {
+                std::vector<vk::DescriptorSetLayoutBinding> b;
+                for (u32 i = 0; i < types.size(); i = i + 1)
+                {
+                    vk::DescriptorSetLayoutBinding bd{};
+                    bd.binding = i;
+                    bd.descriptorType = types[i];
+                    bd.descriptorCount = 1;
+                    bd.stageFlags = vk::ShaderStageFlagBits::eCompute;
+                    b.push_back(bd);
+                }
+                vk::DescriptorSetLayoutCreateInfo info{};
+                info.setBindings(b);
+                return checked(renderer.context.device.createDescriptorSetLayout(info), name);
+            };
+            const auto CS = vk::DescriptorType::eCombinedImageSampler;
+            const auto SB = vk::DescriptorType::eStorageBuffer;
+            const auto SI = vk::DescriptorType::eStorageImage;
+            const auto AS = vk::DescriptorType::eAccelerationStructureKHR;
+            // initial: gbuffer + lightSSBO + clusterSSBO + reservoirOut
+            auto il = rsLayout({ CS, SB, SB, SB }, "restirInitialLayout");      if (!il) { return Err(il.error()); } renderer.restir.initialLayout = *il;
+            // reuse: gbuffer + motion + initial + previous + lights + combined
+            auto rl = rsLayout({ CS, CS, SB, SB, SB, SB }, "restirReuseLayout"); if (!rl) { return Err(rl.error()); } renderer.restir.reuseLayout = *rl;
+            // resolve: gbuffer + combined + previousOut + lights + TLAS + radianceImage
+            auto sl = rsLayout({ CS, SB, SB, SB, AS, SI }, "restirResolveLayout"); if (!sl) { return Err(sl.error()); } renderer.restir.resolveLayout = *sl;
+            // mesh set 7: the radiance sampler (fragment stage)
+            vk::DescriptorSetLayoutBinding meshBind{};
+            meshBind.binding = 0;
+            meshBind.descriptorType = CS;
+            meshBind.descriptorCount = 1;
+            meshBind.stageFlags = vk::ShaderStageFlagBits::eFragment;
+            vk::DescriptorSetLayoutCreateInfo meshLi{};
+            meshLi.setBindings(meshBind);
+            auto ml = checked(renderer.context.device.createDescriptorSetLayout(meshLi), "restirMeshLayout");
+            if (!ml) { return Err(ml.error()); } renderer.restir.meshLayout = *ml;
+
+            auto rsAlloc = [&](vk::DescriptorSetLayout layout, const char* name) -> Result<vk::DescriptorSet>
+            {
+                vk::DescriptorSetAllocateInfo ai{};
+                ai.descriptorPool = renderer.descriptors.descriptorPool;
+                ai.setSetLayouts(layout);
+                auto s = checked(renderer.context.device.allocateDescriptorSets(ai), name);
+                if (!s) { return Err(s.error()); }
+                return (*s)[0];
+            };
+            auto si0 = rsAlloc(renderer.restir.initialLayout, "restirInitialSet"); if (!si0) { return Err(si0.error()); } renderer.restir.initialSet = *si0;
+            auto si1 = rsAlloc(renderer.restir.reuseLayout, "restirReuseSet");     if (!si1) { return Err(si1.error()); } renderer.restir.reuseSet = *si1;
+            auto si2 = rsAlloc(renderer.restir.resolveLayout, "restirResolveSet"); if (!si2) { return Err(si2.error()); } renderer.restir.resolveSet = *si2;
+            auto si3 = rsAlloc(renderer.restir.meshLayout, "restirMeshSet");       if (!si3) { return Err(si3.error()); } renderer.restir.meshSet = *si3;
+
+            // Pipelines. initial: invView+invProj+grid+screen+zPlanes; reuse: +params; resolve: +eye.
+            const u32 initialPush = static_cast<u32>(2 * sizeof(glm::mat4) + 2 * sizeof(glm::uvec4) + sizeof(glm::vec4));
+            const u32 reusePush = static_cast<u32>(2 * sizeof(glm::mat4) + sizeof(glm::uvec4) + sizeof(glm::vec4));
+            const u32 resolvePush = static_cast<u32>(2 * sizeof(glm::mat4) + sizeof(glm::uvec4) + sizeof(glm::vec4));
+            auto rp1 = newComputePipeline(renderer, "shaders/restir_initial.spv", renderer.restir.initialLayout, initialPush);
+            if (!rp1) { return Err(rp1.error()); } renderer.pipelines.restirInitial = *rp1;
+            auto rp2 = newComputePipeline(renderer, "shaders/restir_reuse.spv", renderer.restir.reuseLayout, reusePush);
+            if (!rp2) { return Err(rp2.error()); } renderer.pipelines.restirReuse = *rp2;
+            auto rp3 = newComputePipeline(renderer, "shaders/restir_resolve.spv", renderer.restir.resolveLayout, resolvePush);
+            if (!rp3) { return Err(rp3.error()); } renderer.pipelines.restirResolve = *rp3;
+
+            recreateRestirTargets(renderer);
         }
 
         return {};
