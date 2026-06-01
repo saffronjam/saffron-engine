@@ -1,7 +1,37 @@
 # Phase 5: Temporal AA + History + Motion Vectors
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 <!-- Flip to COMPLETED when the "Done when" checklist passes, validation-clean. Delete this file only after COMPLETED + merged. -->
+
+<!--
+COMPLETED 2026-06-01 (commit 13376ab), validation-clean under headless weston across many
+frames (the cross-frame history ping-pong is the risky part — it is sound).
+- Motion vectors (motion.slang + makeMotionPipeline): a depth-tested prepass writing
+  per-pixel screen motion (rg16f, MotionFormat) from cur vs prev camera viewProj. CAMERA
+  MOTION ONLY — per-instance previous-model is deferred (plan-sanctioned; covers the editor
+  fly-cam case). Renderer.prevViewProj stored in endFrame from the frame's draw-list viewProj.
+- History: two ping-pong OffscreenColorFormat (rgba16f) storage images (targets.history[2],
+  historyIndex parity, historyValid gate). Layouts carried cross-frame via the graph
+  externalLayout mechanism.
+- TAA resolve (taa.slang): reproject history through the motion vector, 3x3 neighborhood
+  min/max clamp (rejects ghosting + handles disocclusion), exponential blend (weight 0.9),
+  write to offscreen + next-frame history. A Compute graph pass after the scene.
+- Third AA mode: setAa(samples, fxaa, taa) — off|fxaa|taa|msaaN mutually exclusive; TAA
+  (like FXAA) renders the scene into the 1x scratch and resolves scratch+history->offscreen.
+  Default OFF (the plan's editor-workflow note: TAA ghosting can smear the gizmo; it is the
+  "GI/denoise" mode, MSAA stays the editor default). se set-aa taa; render-stats aa=taa.
+- Verified: VAL=0 over many frames; a static scene under TAA converges to the off image
+  with zero ghosting/drift (frame-to-frame delta 0.0). History + motion are now available as
+  the inputs SSGI (phase 4) / DDGI (6) / ReSTIR (8) denoisers consume.
+
+FOLLOW-UPS (do not block COMPLETED; the substrate + enabler goal is met):
+- Sub-pixel camera JITTER (halton) so TAA also anti-aliases a STATIC image — without it,
+  zero motion = no static-edge AA (it only smooths under motion). Pairs with making the
+  editor tolerate jitter (or jitter only in a "render"/GI mode).
+- Per-instance previous-model matrices for moving-geometry motion vectors.
+- A velocity-weighted variable history blend + luma-clamp tuning.
+-->
+
 
 ## Goal
 
