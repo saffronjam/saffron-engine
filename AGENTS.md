@@ -1,7 +1,10 @@
 # SaffronEngine
 
-A from-scratch **Vulkan** renderer / **C++26** game engine with an ImGui-based
-editor. This is a clean-slate rewrite (branch `main`) of an older DirectX 11 /
+A from-scratch **Vulkan** renderer / **C++26** game engine with a **Tauri/React/TypeScript**
+editor (`editor/`) that embeds the engine's live scene as a reparented native X11 child window
+and drives every editor operation over the JSON-over-unix-socket control plane; the C++
+`SaffronEditor` (`editor-old/`) is the **headless viewport host** the editor spawns (present-only,
+no ImGui panels). This is a clean-slate rewrite (branch `main`) of an older DirectX 11 /
 premake engine; the prior code lives on `old-master`, `rework`, and the various
 experiment branches and is kept only for reference.
 
@@ -39,9 +42,22 @@ the harness default). `main` is an intentional orphan fresh-start; keep its hist
     cd /var/home/saffronjam/repos/SaffronEngine
     cmake --preset debug           # first time / after CMake changes
     cmake --build build/debug -j1  # -j1: parallel builds intermittently hit a clang module-BMI ICE
-    ./build/debug/bin/SaffronEditor
+    ./build/debug/bin/SaffronEditor   # the headless viewport host (editor-old/); present-only, no panels
   '
   ```
+- **The editor is the Tauri app under `editor/`.** After building the engine above, run it with the
+  host `bun` on PATH inside the toolbox; it auto-spawns + embeds `SaffronEditor`:
+  ```sh
+  toolbox run -c saffron-build bash -lc '
+    export PATH="/var/home/saffronjam/.bun/bin:$PATH"
+    cd /var/home/saffronjam/repos/SaffronEngine/editor
+    bun install        # first time
+    bun run check      # generate @saffron/protocol from schemas/control + tsc --noEmit
+    bun run tauri dev  # launch the editor (needs an X11/XWayland display for the X11 reparent)
+  '
+  ```
+- Reproducible verification gates live in `tools/ci/check.sh` (engine build + present-only smoke +
+  schema contract test + frontend `bun run build`); run it under a headless display.
 - For automated/headless verification, bound the run:
   `SAFFRON_EXIT_AFTER_FRAMES=5 ./build/debug/bin/SaffronEditor` exits after N frames.
 - **No display?** The editor needs a Wayland/X display. In the toolbox run a headless compositor —
@@ -65,7 +81,7 @@ the harness default). `main` is an intentional orphan fresh-start; keep its hist
 | Compiler | Clang + libc++ | 21.1.8 | libc++ ships the `std` module; GCC 16 isn't in F43 |
 | Build | CMake + Ninja | 3.31 / 1.13 | FetchContent for vendored static deps |
 | Windowing/input | SDL3 | 3.4.8 | System package (C ABI) |
-| Vulkan | **Vulkan-Hpp (`vk::`)** | headers 1.4.341, target **1.3** | dynamic rendering + synchronization2 |
+| Vulkan | **Vulkan-Hpp (`vk::`)** | headers 1.4.341, target **1.4** | dynamic rendering + synchronization2 |
 | Vulkan bootstrap | vk-bootstrap | 1.4.352 | instance/device/swapchain selection |
 | GPU allocation | VMA | 3.3.0 | one impl TU in `cmake/vma_impl.cpp` |
 | ECS | EnTT | 3.16.0 | scene/entity + value components |
@@ -133,14 +149,21 @@ SaffronEngine/
 │       ├── rendering/renderer.cppm  # module Saffron.Rendering — Vulkan device/swapchain + render-graph frame + submit() seam
 │       ├── ui/ui.cppm            # module Saffron.Ui — ImGui docking (SDL3 + Vulkan backends) + Viewport
 │       ├── assets/assets.cppm    # module Saffron.Assets — AssetServer (Uuid→mesh registry) + importModel + renderScene
-│       ├── editor/editor.cppm    # module Saffron.Editor — hierarchy + generic inspector + component registration
+│       ├── editor/editor.cppm    # module Saffron.Editor — EditorContext + component registry (JSON serde) + native-gizmo math
 │       ├── control/control.cppm  # module Saffron.Control — unix-socket control plane (commands + screenshots)
 │       └── app/app.cppm          # module Saffron.App — App/Layer/AppConfig + run() main loop
-├── editor/
-│   ├── CMakeLists.txt      # SaffronEditor executable
-│   ├── assets/models/      # source models (cube.gltf/.obj), copied next to the exe
-│   └── source/main.cpp     # client app: builds AppConfig, attaches a Layer, calls se::run()
+├── editor/                 # the Tauri/React/TypeScript editor (Vite + shadcn/ui + Tailwind v4);
+│   │                       #   spawns + embeds editor-old's SaffronEditor + drives it over the control plane
+│   ├── src/                # React UI (hierarchy/inspector/assets/env/stats panels) + typed control client + Zustand store
+│   ├── src-tauri/          # Rust bridge: ONE generic control(cmd,params) passthrough + window-handle/lifecycle commands
+│   └── components.json     # shadcn/ui config (components copied into src/components/ui/)
+├── editor-old/             # the C++ SaffronEditor headless host (present-only); owns engine shader + asset compilation
+│   ├── CMakeLists.txt      # SaffronEditor executable + saffron_compile_shaders + models/fonts/icons copy
+│   └── source/main.cpp     # 6-line stub: int main(){ return se::runEditor(...); }
+├── schemas/control/        # hand-authored JSON Schemas (draft 2020-12) — the wire contract (→ TS @saffron/protocol)
 ├── tools/se/               # the `se` control CLI (json over the unix socket; no engine dep)
+├── tools/check-control-schema/  # Bun contract test: validates live `se` output against schemas/control/
+├── tools/ci/               # reproducible verification gate(s) (engine build + present-only smoke + schema test + bun check)
 ├── plans/                  # phased implementation plans for FUTURE expansions (not yet built)
 └── docs/                   # Hugo (hugo-book) docs site — per-concept explanations + how-to/reference/tutorials
 ```
@@ -192,7 +215,7 @@ The editor exe links `Saffron::Engine` and imports the modules it needs (Core/Ap
 Working and verified (validation-clean) in the toolbox:
 - ✅ Build system + all vendored deps under Clang 21 + libc++ + `import std`.
 - ✅ SDL3 window + Go-style App/Layer lifecycle + signal/slot events.
-- ✅ Vulkan 1.3 via Vulkan-Hpp `vk::` (no-exceptions): device/swapchain (vk-bootstrap),
+- ✅ Vulkan 1.4 via Vulkan-Hpp `vk::` (no-exceptions): device/swapchain (vk-bootstrap),
   VMA allocator, sync2 + dynamic rendering, clears + presents, swapchain recreation,
   per-image-fence sync.
 - ✅ RAII meta-layer wrappers (`Pipeline`, `Image`, `GpuMesh`, `GpuTexture`, `Buffer`), move-only,
