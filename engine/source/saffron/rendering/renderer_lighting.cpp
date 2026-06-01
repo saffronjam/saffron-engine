@@ -185,4 +185,17 @@ namespace se
         renderer.sky.visible = settings.visible;
         renderer.sky.textureIndex = settings.textureIndex;
     }
+
+    void requestSkyBake(Renderer& renderer, const SkygenParams& params)
+    {
+        // Values are copied verbatim from stable component/environment data each frame, so an
+        // exact compare flags only real user changes (no per-frame float drift -> no churn).
+        const SkygenParams& baked = renderer.ibl.bakedParams;
+        if (params.sunDir != baked.sunDir || params.sunColor != baked.sunColor ||
+            params.sunIntensity != baked.sunIntensity)
+        {
+            renderer.ibl.rebakePending = true;
+        }
+        renderer.ibl.pendingParams = params;
+    }
 }

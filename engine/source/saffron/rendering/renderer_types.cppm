@@ -715,9 +715,20 @@ export namespace se
         u32 generation = 0;        // bumped whenever the offscreen image is recreated
     };
 
+    // Inputs that drive the procedural-sky bake (ibl_skygen). The sun follows the scene's
+    // directional light, so a re-bake re-tints the visible sky AND the IBL together. (Overall
+    // sky intensity is applied by the visible-sky pass, not baked, to avoid double-counting.)
+    struct SkygenParams
+    {
+        glm::vec3 sunDir{ 0.5f, 1.0f, 0.3f };  // direction TO the sun (= -lightDir); shader normalizes
+        f32 sunIntensity = 1.0f;
+        glm::vec3 sunColor{ 1.0f };
+    };
+
     // Image-based lighting: a procedural/HDR environment cubemap convolved into a diffuse
     // irradiance cube + a roughness-mipped prefiltered specular cube + a split-sum BRDF
-    // LUT. Sampled as the mesh ambient (set 3). Baked once at startup.
+    // LUT. Sampled as the mesh ambient (set 3). Baked at startup; re-baked on demand when the
+    // sky inputs change (the directional light moves).
     struct Ibl
     {
         Image envCube;          // source environment (procedural sky)
@@ -730,6 +741,9 @@ export namespace se
         vk::DescriptorSet set;
         bool ready = false;
         bool useIbl = true;     // false = flat scalar ambient fallback
+        SkygenParams bakedParams;    // the params the current envCube was baked with
+        SkygenParams pendingParams;  // requested params (applied at the next beginFrameGraph)
+        bool rebakePending = false;  // pendingParams differ from bakedParams -> re-bake
     };
 
     // Visible sky background, drawn by a fullscreen graphics pass before the scene pass.
@@ -1054,6 +1068,11 @@ export namespace se
     void submitSky(Renderer& renderer, const SkyRenderSettings& settings);
     // Record the fullscreen sky into the active pass (the sky-pass body).
     void recordSky(Renderer& renderer, vk::CommandBuffer cmd);
+
+    // Requests an IBL re-bake if `params` (the sun, from the scene's directional light) differ
+    // from what the environment was last baked with. The re-bake is deferred to the next
+    // beginFrameGraph (a GPU-idle point), so this is cheap to call every frame.
+    void requestSkyBake(Renderer& renderer, const SkygenParams& params);
 
     // One punctual (point or spot) light in the per-frame light storage buffer
     // (set 1, binding 1). Positions/directions are world space; the fragment shader

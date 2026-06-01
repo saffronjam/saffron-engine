@@ -615,6 +615,16 @@ export namespace se
             ambient = scene.environment.ambientColor * scene.environment.ambientIntensity;
         }
         setSceneLighting(renderer, lightDir, lightColor, lightIntensity, ambient, eyePosition, lights);
+        // Drive the procedural sky bake from the directional light: the sun sits opposite the
+        // light's travel direction, so the visible sky's sun + the IBL relight to follow it.
+        // requestSkyBake no-ops unless the inputs actually changed (re-bake happens in beginFrameGraph).
+        {
+            SkygenParams skyBake;
+            skyBake.sunDir = -lightDir;
+            skyBake.sunColor = lightColor;
+            skyBake.sunIntensity = lightIntensity;
+            requestSkyBake(renderer, skyBake);
+        }
         setClusterCamera(renderer, view, proj, camera.nearPlane, camera.farPlane);  // arms the cull dispatch
         // Screen-space passes (G-buffer/GTAO/contact/SSGI) use the scene's view/proj + the
         // directional light direction (for contact shadows).

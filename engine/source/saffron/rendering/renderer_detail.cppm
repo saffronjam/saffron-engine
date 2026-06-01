@@ -3294,24 +3294,33 @@ export namespace se
     // the split-sum BRDF LUT, and writes the persistent set 3. Synchronous one-time work
     // (own command buffer + waitIdle), like uploadTexture/renderMeshThumbnail. Run once at
     // startup after initDescriptorResources.
-    auto bakeEnvironment(Renderer& renderer) -> Result<void>
+    auto bakeEnvironment(Renderer& renderer, const SkygenParams& sky, bool firstBake) -> Result<void>
     {
         const u32 preMips = IblPrefilterMips;
         vk::Device device = renderer.context.device;
 
-        auto env = newCubeImage(renderer, IblEnvSize, 1, IblColorFormat);
-        if (!env) { return Err(env.error()); }
-        renderer.ibl.envCube = std::move(*env);
-        auto irr = newCubeImage(renderer, IblIrradianceSize, 1, IblColorFormat);
-        if (!irr) { return Err(irr.error()); }
-        renderer.ibl.irradianceCube = std::move(*irr);
-        auto pre = newCubeImage(renderer, IblPrefilterSize, preMips, IblColorFormat);
-        if (!pre) { return Err(pre.error()); }
-        renderer.ibl.prefilteredCube = std::move(*pre);
-        auto lut = newColorImage(renderer, IblLutSize, IblLutSize, IblColorFormat, true);
-        if (!lut) { return Err(lut.error()); }
-        renderer.ibl.brdfLut = std::move(*lut);
-        renderer.ibl.prefilterMips = preMips;
+        if (firstBake)
+        {
+            auto env = newCubeImage(renderer, IblEnvSize, 1, IblColorFormat);
+            if (!env) { return Err(env.error()); }
+            renderer.ibl.envCube = std::move(*env);
+            auto irr = newCubeImage(renderer, IblIrradianceSize, 1, IblColorFormat);
+            if (!irr) { return Err(irr.error()); }
+            renderer.ibl.irradianceCube = std::move(*irr);
+            auto pre = newCubeImage(renderer, IblPrefilterSize, preMips, IblColorFormat);
+            if (!pre) { return Err(pre.error()); }
+            renderer.ibl.prefilteredCube = std::move(*pre);
+            auto lut = newColorImage(renderer, IblLutSize, IblLutSize, IblColorFormat, true);
+            if (!lut) { return Err(lut.error()); }
+            renderer.ibl.brdfLut = std::move(*lut);
+            renderer.ibl.prefilterMips = preMips;
+        }
+        else
+        {
+            // A re-bake overwrites the existing images in place (the Undefined->General barriers
+            // below discard prior contents); drain any in-flight frame still sampling them first.
+            static_cast<void>(device.waitIdle());
+        }
 
         // A transient pool + layouts + sets used only for this bake (freed at the end).
         std::array<vk::DescriptorPoolSize, 2> poolSizes{
@@ -3362,7 +3371,8 @@ export namespace se
             device.destroyDescriptorPool(pool);
         };
 
-        auto skygenP = newComputePipeline(renderer, "shaders/ibl_skygen.spv", layoutA);
+        auto skygenP = newComputePipeline(renderer, "shaders/ibl_skygen.spv", layoutA,
+                                          static_cast<u32>(2 * sizeof(glm::vec4)));
         if (!skygenP) { cleanupLayouts(); return Err(skygenP.error()); }
         auto irrP = newComputePipeline(renderer, "shaders/ibl_irradiance.spv", layoutB);
         if (!irrP) { cleanupLayouts(); return Err(irrP.error()); }
@@ -3482,6 +3492,9 @@ export namespace se
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, 0, 1, 6);
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, skygenP.value()->pipeline);
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, skygenP.value()->layout, 0, skygenSet, {});
+        struct SkyPush { glm::vec4 sunDir; glm::vec4 sunColor; } skyPush{
+            glm::vec4(sky.sunDir, sky.sunIntensity), glm::vec4(sky.sunColor, 1.0f) };
+        cmd.pushConstants(skygenP.value()->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(skyPush), &skyPush);
         cmd.dispatch(group(IblEnvSize), group(IblEnvSize), 6);
         barrier(renderer.ibl.envCube.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal,
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite,
@@ -3541,6 +3554,10 @@ export namespace se
         renderer.ibl.prefilteredCube.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         renderer.ibl.brdfLut.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
+        // Write the persistent descriptor sets only on the first bake — a re-bake reuses the
+        // same images/views (only their contents change), so the sets stay valid.
+        if (firstBake)
+        {
         // Write the persistent set 3 the mesh fragment samples.
         std::array<vk::DescriptorImageInfo, 3> setImages{
             vk::DescriptorImageInfo{ renderer.ibl.sampler, renderer.ibl.irradianceCube.view, vk::ImageLayout::eShaderReadOnlyOptimal },
@@ -3568,6 +3585,7 @@ export namespace se
         skyWrite.setImageInfo(skyImage);
         device.updateDescriptorSets(skyWrite, {});
         renderer.sky.ready = true;
+        }
 
         for (vk::ImageView v : transientViews) { device.destroyImageView(v); }
         cleanupLayouts();

@@ -272,7 +272,7 @@ namespace se
         }
         // Bake the IBL environment (procedural sky -> irradiance + prefiltered + BRDF LUT)
         // once; the mesh ambient samples it via set 3.
-        if (Result<void> baked = bakeEnvironment(renderer); !baked)
+        if (Result<void> baked = bakeEnvironment(renderer, renderer.ibl.bakedParams, true); !baked)
         {
             return Err(baked.error());
         }
@@ -656,6 +656,22 @@ namespace se
 
     void beginFrameGraph(Renderer& renderer)
     {
+        // Re-bake the IBL environment if the sky inputs changed (the directional light moved).
+        // Deferred to here — a GPU-idle point after beginFrame — so the visible sky + IBL relight
+        // together. waitIdle inside the bake stalls; it is an editor-time event, not per-frame hot.
+        if (renderer.ibl.rebakePending)
+        {
+            if (Result<void> r = bakeEnvironment(renderer, renderer.ibl.pendingParams, false); r)
+            {
+                renderer.ibl.bakedParams = renderer.ibl.pendingParams;
+            }
+            else
+            {
+                logError(r.error());
+            }
+            renderer.ibl.rebakePending = false;
+        }
+
         Image& offscreen = renderer.targets.offscreen;
         Image& depth = renderer.targets.depth;
         const u32 f = renderer.frame.index;

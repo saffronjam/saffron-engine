@@ -5,6 +5,14 @@
 [[vk::image_format("rgba16f")]]
 [[vk::binding(0, 0)]] RWTexture2DArray<float4> outCube;
 
+// Sun parameters from the scene's directional light (so the baked sky + IBL follow it).
+struct SkyParams
+{
+    float4 sunDir;    // xyz = direction TO the sun, w = intensity scale
+    float4 sunColor;  // rgb = sun tint, a unused
+};
+[[vk::push_constant]] SkyParams sky;
+
 // Cube face + in-face uv (in [-1,1]) -> world direction (hardware cube convention).
 float3 cubeFaceDir(uint face, float2 uv)
 {
@@ -21,7 +29,9 @@ float3 cubeFaceDir(uint face, float2 uv)
 // An analytic HDR sky: a horizon->zenith gradient over a dim ground + a bright sun disk.
 float3 proceduralSky(float3 dir)
 {
-    const float3 sunDir = normalize(float3(-0.4, 0.7, -0.5));
+    const float3 sunDir = normalize(sky.sunDir.xyz);
+    const float sunI = sky.sunDir.w;
+    const float3 sunTint = sky.sunColor.rgb;
     const float3 zenith = float3(0.10, 0.26, 0.62);
     const float3 horizon = float3(0.62, 0.70, 0.86);
     const float3 ground = float3(0.16, 0.14, 0.12);
@@ -39,8 +49,8 @@ float3 proceduralSky(float3 dir)
     col *= 1.6;
 
     float s = max(dot(normalize(dir), sunDir), 0.0);
-    col += pow(s, 1200.0) * float3(22.0, 20.0, 17.0);
-    col += pow(s, 6.0) * float3(0.30, 0.26, 0.20);
+    col += pow(s, 1200.0) * float3(22.0, 20.0, 17.0) * sunTint * sunI;
+    col += pow(s, 6.0) * float3(0.30, 0.26, 0.20) * sunTint * sunI;
     return col;
 }
 
