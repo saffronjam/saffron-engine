@@ -47,6 +47,8 @@ namespace se
                              { "shadows", shadowsEnabled(ctx.renderer) },
                              { "ibl", iblEnabled(ctx.renderer) },
                              { "ssao", ssaoEnabled(ctx.renderer) },
+                             { "contactShadows", contactShadowsEnabled(ctx.renderer) },
+                             { "ssgi", ssgiEnabled(ctx.renderer) },
                              { "pipelines", pipelineCount(ctx.renderer) },
                              { "hdr", true },
                              { "exposureEv", exposureEv(ctx.renderer) },
@@ -142,6 +144,38 @@ namespace se
                 }
                 setSsao(ctx.renderer, enabled);
                 return json{ { "ssao", ssaoEnabled(ctx.renderer) } };
+            });
+
+        registerCommand(reg, "set-contact-shadows", "set-contact-shadows {0|1} — screen-space contact shadows",
+            [](EngineContext& ctx, const json& params) -> Result<json>
+            {
+                const json value = positionalOr(params, "enabled", 0);
+                bool enabled = true;
+                if (value.is_number()) { enabled = value.get<double>() != 0.0; }
+                else if (value.is_boolean()) { enabled = value.get<bool>(); }
+                else if (value.is_string())
+                {
+                    const std::string s = value.get<std::string>();
+                    enabled = !(s == "0" || s == "false" || s == "off");
+                }
+                setContactShadows(ctx.renderer, enabled);
+                return json{ { "contactShadows", contactShadowsEnabled(ctx.renderer) } };
+            });
+
+        registerCommand(reg, "set-ssgi", "set-ssgi {0|1} — screen-space one-bounce global illumination",
+            [](EngineContext& ctx, const json& params) -> Result<json>
+            {
+                const json value = positionalOr(params, "enabled", 0);
+                bool enabled = true;
+                if (value.is_number()) { enabled = value.get<double>() != 0.0; }
+                else if (value.is_boolean()) { enabled = value.get<bool>(); }
+                else if (value.is_string())
+                {
+                    const std::string s = value.get<std::string>();
+                    enabled = !(s == "0" || s == "false" || s == "off");
+                }
+                setSsgi(ctx.renderer, enabled);
+                return json{ { "ssgi", ssgiEnabled(ctx.renderer) } };
             });
 
         registerCommand(reg, "set-shadows", "set-shadows {0|1} — toggle the directional shadow map",

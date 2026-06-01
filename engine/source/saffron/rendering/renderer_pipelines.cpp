@@ -125,7 +125,7 @@ namespace se
 
         std::array<vk::DescriptorSetLayout, 5> setLayouts{
             renderer.descriptors.bindlessSetLayout, renderer.descriptors.lightSetLayout,
-            renderer.descriptors.instanceSetLayout, renderer.ibl.setLayout, renderer.ssao.aoSetLayout };
+            renderer.descriptors.instanceSetLayout, renderer.ibl.setLayout, renderer.ssao.meshSetLayout };
         vk::PipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.setSetLayouts(setLayouts);
         layoutInfo.setPushConstantRanges(pushConstant);

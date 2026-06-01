@@ -110,10 +110,16 @@ namespace se
         ubo.directionAmbient = glm::vec4(glm::normalize(direction), ambient);
         ubo.colorIntensity = glm::vec4(color, intensity);
         // counts: x = punctual count, y = directional-shadow flag, z = IBL-ambient flag,
-        // w = SSAO flag (the mesh multiplies the AO map into the ambient term).
+        // w = SSAO flag (the mesh multiplies the AO map into the ambient term). screenFlags
+        // x = contact-shadow flag, y = SSGI flag. Driven off the same enable state
+        // beginFrameGraph uses to schedule the passes (set this frame, before this call), so
+        // a flagged map is always produced + valid.
         const u32 iblFlag = (renderer.ibl.useIbl && renderer.ibl.ready) ? 1u : 0u;
         const u32 ssaoFlag = (renderer.ssao.useSsao && renderer.ssao.ready) ? 1u : 0u;
+        const u32 contactFlag = (renderer.ssao.useContact && renderer.ssao.ready) ? 1u : 0u;
+        const u32 ssgiFlag = (renderer.ssao.useSsgi && renderer.ssao.ready) ? 1u : 0u;
         ubo.counts = glm::uvec4(count, renderer.lighting.shadowPending ? 1u : 0u, iblFlag, ssaoFlag);
+        ubo.screenFlags = glm::uvec4(contactFlag, ssgiFlag, 0, 0);
         ubo.eyePosition = glm::vec4(eyePosition, 0.0f);
         ubo.shadowViewProj = renderer.lighting.shadowViewProj;
         ubo.spotShadowViewProj = renderer.lighting.spotShadowViewProj;

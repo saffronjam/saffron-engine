@@ -573,7 +573,9 @@ export namespace se
         setDirectionalShadow(renderer, shadowViewProj, castShadow);
         setSceneLighting(renderer, lightDir, lightColor, lightIntensity, lightAmbient, eyePosition, lights);
         setClusterCamera(renderer, view, proj, camera.nearPlane, camera.farPlane);  // arms the cull dispatch
-        setSsaoCamera(renderer, view, proj);  // G-buffer + GTAO use the scene's view/proj
+        // Screen-space passes (G-buffer/GTAO/contact/SSGI) use the scene's view/proj + the
+        // directional light direction (for contact shadows).
+        setSsaoCamera(renderer, view, proj, lightDir);
 
         submitDrawList(renderer, viewProjection, items);
     }

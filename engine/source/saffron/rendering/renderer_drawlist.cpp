@@ -311,8 +311,9 @@ namespace se
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 1, frameSets, {});
         // Set 3 = IBL (irradiance + prefiltered + BRDF LUT); baked once, always valid.
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 3, renderer.ibl.set, {});
-        // Set 4 = the SSAO map (white when SSAO is off / not yet computed; always valid).
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 4, renderer.ssao.aoSet, {});
+        // Set 4 = screen-space maps (AO + contact + SSGI); each gated by its flag in the
+        // shader, so the bind is always valid even when an effect is off.
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 4, renderer.ssao.meshSet, {});
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &list.viewProj);
         for (const DrawBatch& batch : list.batches)
         {

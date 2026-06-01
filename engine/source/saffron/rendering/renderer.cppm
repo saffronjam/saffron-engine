@@ -272,6 +272,10 @@ namespace se
         renderer.pipelines.pointShadow.reset();
         renderer.pipelines.gbuffer.reset();
         renderer.pipelines.gtao.reset();
+        renderer.pipelines.aoBlur.reset();
+        renderer.pipelines.contact.reset();
+        renderer.pipelines.ssgi.reset();
+        renderer.pipelines.copyColor.reset();
         renderer.pipelines.motion.reset();
         renderer.pipelines.taa.reset();
         for (vk::ImageView& face : renderer.targets.pointShadowFaces)
@@ -291,7 +295,11 @@ namespace se
         renderer.targets.pointShadowDepth.reset();
         renderer.targets.gNormal.reset();
         renderer.targets.gDepth.reset();
+        renderer.targets.aoRaw.reset();
         renderer.targets.aoMap.reset();
+        renderer.targets.contactMap.reset();
+        renderer.targets.ssgiMap.reset();
+        renderer.targets.prevColor.reset();
         renderer.targets.motion.reset();
         renderer.targets.motionDepth.reset();
         renderer.targets.history[0].reset();
@@ -368,13 +376,17 @@ namespace se
         {
             renderer.context.device.destroySampler(renderer.ibl.sampler);
         }
-        if (renderer.ssao.gtaoSetLayout)
+        if (renderer.ssao.compute2Layout)
         {
-            renderer.context.device.destroyDescriptorSetLayout(renderer.ssao.gtaoSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.ssao.compute2Layout);
         }
-        if (renderer.ssao.aoSetLayout)
+        if (renderer.ssao.compute3Layout)
         {
-            renderer.context.device.destroyDescriptorSetLayout(renderer.ssao.aoSetLayout);
+            renderer.context.device.destroyDescriptorSetLayout(renderer.ssao.compute3Layout);
+        }
+        if (renderer.ssao.meshSetLayout)
+        {
+            renderer.context.device.destroyDescriptorSetLayout(renderer.ssao.meshSetLayout);
         }
         if (renderer.ssao.sampler)
         {
@@ -689,21 +701,28 @@ namespace se
             addPass(graph, std::move(depthPass));
         }
 
-        // Screen-space AO: a thin G-buffer prepass (view normal + view-Z) then a GTAO
-        // compute pass writing the AO map, which the scene pass samples into its ambient.
-        // The graph derives the gNormal ColorWrite->SampledReadCompute + aoMap
-        // General<->ShaderReadOnly transitions from the declared usages.
-        const bool doSsao = renderer.ssao.useSsao && renderer.ssao.ready &&
-                            renderer.pipelines.gbuffer && renderer.pipelines.gtao &&
-                            renderer.targets.gNormal.image && renderer.targets.aoMap.image;
-        if (doSsao)
+        // Screen-space effects off a thin G-buffer (view normal + view-Z): GTAO + bilateral
+        // denoise, directional contact shadows, one-bounce SSGI. The G-buffer prepass runs
+        // when ANY of them is on; each effect's compute pass is gated by its toggle. The
+        // scene pass samples whichever maps are produced (flags in the light UBO gate the
+        // shader reads). The graph derives all the ColorWrite/Storage/SampledRead barriers.
+        const bool gbufReady = renderer.ssao.ready && renderer.pipelines.gbuffer &&
+                               renderer.targets.gNormal.image;
+        const bool doSsao = gbufReady && renderer.ssao.useSsao && renderer.pipelines.gtao && renderer.pipelines.aoBlur;
+        const bool doContact = gbufReady && renderer.ssao.useContact && renderer.pipelines.contact;
+        const bool doSsgi = gbufReady && renderer.ssao.useSsgi && renderer.pipelines.ssgi && renderer.pipelines.copyColor;
+        const bool doScreen = doSsao || doContact || doSsgi;
+        const vk::Extent2D ssExtent = offscreen.extent;
+        const auto ssGroups = [](u32 n) -> u32 { return (n + 7) / 8; };
+        renderer.graph.hasAo = false;
+        renderer.graph.hasContact = false;
+        renderer.graph.hasSsgi = false;
+        if (doScreen)
         {
             RgResource gNormalRes = importImage(graph, renderer.targets.gNormal.image, renderer.targets.gNormal.view,
                 vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
             RgResource gDepthRes = importImage(graph, renderer.targets.gDepth.image, renderer.targets.gDepth.view,
                 vk::ImageAspectFlagBits::eDepth, vk::ImageLayout::eUndefined, nullptr);
-            RgResource aoRes = importImage(graph, renderer.targets.aoMap.image, renderer.targets.aoMap.view,
-                vk::ImageAspectFlagBits::eColor, renderer.targets.aoMap.layout, &renderer.targets.aoMap.layout);
 
             RgPass gpass;
             gpass.name = "gbuffer";
@@ -713,42 +732,109 @@ namespace se
             gpass.depth = RgAttachment{ gDepthRes, vk::AttachmentLoadOp::eClear,
                 vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
             gpass.renderArea = offscreen.extent;
-            gpass.execute = [&renderer](vk::CommandBuffer cmd)
-        {
-                recordGbuffer(renderer, cmd);
-            };
+            gpass.execute = [&renderer](vk::CommandBuffer cmd) { recordGbuffer(renderer, cmd); };
             addPass(graph, std::move(gpass));
 
-            RgPass aopass;
-            aopass.name = "gtao";
-            aopass.kind = RgPassKind::Compute;
-            aopass.accesses = { RgAccess{ gNormalRes, RgUsage::SampledReadCompute },
-                                RgAccess{ aoRes, RgUsage::StorageImageRWCompute } };
-            const vk::Extent2D extent = offscreen.extent;
+            const glm::mat4 proj = renderer.ssao.projection;
             const glm::mat4 invProj = renderer.ssao.invProjection;
-            const f32 radius = renderer.ssao.radius;
-            const f32 strength = renderer.ssao.strength;
-            aopass.execute = [&renderer, extent, invProj, radius, strength](vk::CommandBuffer cmd)
+
+            if (doSsao)
+            {
+                RgResource aoRawRes = importImage(graph, renderer.targets.aoRaw.image, renderer.targets.aoRaw.view,
+                    vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
+                RgResource aoRes = importImage(graph, renderer.targets.aoMap.image, renderer.targets.aoMap.view,
+                    vk::ImageAspectFlagBits::eColor, renderer.targets.aoMap.layout, &renderer.targets.aoMap.layout);
+                RgPass aopass;
+                aopass.name = "gtao";
+                aopass.kind = RgPassKind::Compute;
+                aopass.accesses = { RgAccess{ gNormalRes, RgUsage::SampledReadCompute },
+                                    RgAccess{ aoRawRes, RgUsage::StorageImageRWCompute } };
+                const f32 radius = renderer.ssao.radius;
+                const f32 strength = renderer.ssao.strength;
+                aopass.execute = [&renderer, ssExtent, ssGroups, invProj, radius, strength](vk::CommandBuffer cmd)
         {
-                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.gtao->pipeline);
-                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                    renderer.pipelines.gtao->layout, 0, renderer.ssao.gtaoSet, {});
-                struct GtaoPush
-                {
-                    glm::mat4 invProjection;
-                    glm::vec4 params;
-                } push{ invProj, glm::vec4(radius, strength, 0.0f, 0.0f) };
-                cmd.pushConstants(renderer.pipelines.gtao->layout, vk::ShaderStageFlagBits::eCompute,
-                                  0, sizeof(push), &push);
-                cmd.dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
-            };
-            addPass(graph, std::move(aopass));
-            renderer.graph.aoResource = aoRes;
-            renderer.graph.hasAo = true;
-        }
-        else
+                    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.gtao->pipeline);
+                    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.gtao->layout, 0, renderer.ssao.gtaoSet, {});
+                    struct { glm::mat4 invProjection; glm::vec4 params; } push{ invProj, glm::vec4(radius, strength, 0.0f, 0.0f) };
+                    cmd.pushConstants(renderer.pipelines.gtao->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push), &push);
+                    cmd.dispatch(ssGroups(ssExtent.width), ssGroups(ssExtent.height), 1);
+                };
+                addPass(graph, std::move(aopass));
+
+                RgPass blurpass;
+                blurpass.name = "ao-blur";
+                blurpass.kind = RgPassKind::Compute;
+                blurpass.accesses = { RgAccess{ aoRawRes, RgUsage::SampledReadCompute },
+                                      RgAccess{ gNormalRes, RgUsage::SampledReadCompute },
+                                      RgAccess{ aoRes, RgUsage::StorageImageRWCompute } };
+                blurpass.execute = [&renderer, ssExtent, ssGroups](vk::CommandBuffer cmd)
         {
-            renderer.graph.hasAo = false;
+                    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.aoBlur->pipeline);
+                    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.aoBlur->layout, 0, renderer.ssao.aoBlurSet, {});
+                    cmd.dispatch(ssGroups(ssExtent.width), ssGroups(ssExtent.height), 1);
+                };
+                addPass(graph, std::move(blurpass));
+                renderer.graph.aoResource = aoRes;
+                renderer.graph.hasAo = true;
+            }
+
+            if (doContact)
+            {
+                RgResource contactRes = importImage(graph, renderer.targets.contactMap.image, renderer.targets.contactMap.view,
+                    vk::ImageAspectFlagBits::eColor, renderer.targets.contactMap.layout, &renderer.targets.contactMap.layout);
+                RgPass cpass;
+                cpass.name = "contact-shadows";
+                cpass.kind = RgPassKind::Compute;
+                cpass.accesses = { RgAccess{ gNormalRes, RgUsage::SampledReadCompute },
+                                   RgAccess{ contactRes, RgUsage::StorageImageRWCompute } };
+                const glm::vec3 sunView = renderer.ssao.sunDirView;
+                cpass.execute = [&renderer, ssExtent, ssGroups, proj, invProj, sunView](vk::CommandBuffer cmd)
+        {
+                    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.contact->pipeline);
+                    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.contact->layout, 0, renderer.ssao.contactSet, {});
+                    struct { glm::mat4 projection; glm::mat4 invProjection; glm::vec4 lightDirView; glm::vec4 params; }
+                        push{ proj, invProj, glm::vec4(sunView, 0.0f), glm::vec4(0.6f, 12.0f, 0.6f, 0.0f) };
+                    cmd.pushConstants(renderer.pipelines.contact->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push), &push);
+                    cmd.dispatch(ssGroups(ssExtent.width), ssGroups(ssExtent.height), 1);
+                };
+                addPass(graph, std::move(cpass));
+                renderer.graph.contactResource = contactRes;
+                renderer.graph.hasContact = true;
+            }
+
+            if (doSsgi)
+            {
+                // SSGI gathers the PREVIOUS frame's color (prevColor), captured last frame.
+                // Import prevColor ONCE here (read now, written by the copy_color pass after
+                // the scene); aliasing it as a second graph resource would mis-track layout.
+                // prevColor rests in ShaderReadOnly between frames (copy_color leaves it
+                // there); seed that and DON'T write the layout back — the graph internally
+                // transitions General for the copy write then back to ShaderReadOnly.
+                RgResource prevColorRes = importImage(graph, renderer.targets.prevColor.image, renderer.targets.prevColor.view,
+                    vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eShaderReadOnlyOptimal, nullptr);
+                renderer.graph.prevColorResource = prevColorRes;
+                RgResource ssgiRes = importImage(graph, renderer.targets.ssgiMap.image, renderer.targets.ssgiMap.view,
+                    vk::ImageAspectFlagBits::eColor, renderer.targets.ssgiMap.layout, &renderer.targets.ssgiMap.layout);
+                RgPass gipass;
+                gipass.name = "ssgi";
+                gipass.kind = RgPassKind::Compute;
+                gipass.accesses = { RgAccess{ gNormalRes, RgUsage::SampledReadCompute },
+                                    RgAccess{ prevColorRes, RgUsage::SampledReadCompute },
+                                    RgAccess{ ssgiRes, RgUsage::StorageImageRWCompute } };
+                const f32 radius = renderer.ssao.radius;
+                gipass.execute = [&renderer, ssExtent, ssGroups, proj, invProj, radius](vk::CommandBuffer cmd)
+        {
+                    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.ssgi->pipeline);
+                    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.ssgi->layout, 0, renderer.ssao.ssgiSet, {});
+                    struct { glm::mat4 projection; glm::mat4 invProjection; glm::vec4 params; }
+                        push{ proj, invProj, glm::vec4(radius * 2.0f, 1.0f, 8.0f, 0.0f) };
+                    cmd.pushConstants(renderer.pipelines.ssgi->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push), &push);
+                    cmd.dispatch(ssGroups(ssExtent.width), ssGroups(ssExtent.height), 1);
+                };
+                addPass(graph, std::move(gipass));
+                renderer.graph.ssgiResource = ssgiRes;
+                renderer.graph.hasSsgi = true;
+            }
         }
 
         // TAA motion vectors: a depth-tested prepass writing per-pixel screen motion from
@@ -783,9 +869,17 @@ namespace se
         {
             scene.accesses = { RgAccess{ clusterBuffer, RgUsage::StorageReadFragment } };
         }
-        if (doSsao)
+        if (renderer.graph.hasAo)
         {
             scene.accesses.push_back(RgAccess{ renderer.graph.aoResource, RgUsage::SampledRead });
+        }
+        if (renderer.graph.hasContact)
+        {
+            scene.accesses.push_back(RgAccess{ renderer.graph.contactResource, RgUsage::SampledRead });
+        }
+        if (renderer.graph.hasSsgi)
+        {
+            scene.accesses.push_back(RgAccess{ renderer.graph.ssgiResource, RgUsage::SampledRead });
         }
         if (doShadow)
         {
@@ -883,6 +977,41 @@ namespace se
             // Next frame reads this frame's history; mark it valid + flip parity.
             renderer.targets.historyValid = true;
             renderer.targets.historyIndex = 1 - p;
+        }
+
+        // SSGI history capture: copy the scene's resolved LINEAR-HDR color into prevColor
+        // (before the in-place tonemap turns it display-referred) so next frame's SSGI can
+        // gather it. Runs only when SSGI is on; the graph derives the offscreen
+        // SampledRead + prevColor General transitions.
+        if (renderer.graph.hasSsgi)
+        {
+            // Reuse the single prevColor handle imported by the SSGI pass (it was read
+            // there; here it is written) so the graph tracks its layout across both.
+            RgPass copyPass;
+            copyPass.name = "ssgi-history";
+            copyPass.kind = RgPassKind::Compute;
+            copyPass.accesses = { RgAccess{ renderer.graph.sceneColor, RgUsage::SampledReadCompute },
+                                  RgAccess{ renderer.graph.prevColorResource, RgUsage::StorageImageRWCompute } };
+            const vk::Extent2D extent = offscreen.extent;
+            copyPass.execute = [&renderer, extent, ssGroups](vk::CommandBuffer cmd)
+        {
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.copyColor->pipeline);
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                    renderer.pipelines.copyColor->layout, 0, renderer.ssao.copyColorSet, {});
+                cmd.dispatch(ssGroups(extent.width), ssGroups(extent.height), 1);
+            };
+            addPass(graph, std::move(copyPass));
+            // Restore prevColor to ShaderReadOnly (its resting layout) so next frame's SSGI
+            // sampler read + this frame's seed agree. A no-attachment SampledRead pass would
+            // be overkill; instead transition it directly after the graph (it's not used
+            // again this frame). Done via a trailing one-off below in endFrame? No — keep it
+            // local: declare a final compute SampledRead so the graph emits the transition.
+            RgPass restorePass;
+            restorePass.name = "ssgi-history-restore";
+            restorePass.kind = RgPassKind::Compute;
+            restorePass.accesses = { RgAccess{ renderer.graph.prevColorResource, RgUsage::SampledReadCompute } };
+            restorePass.execute = [](vk::CommandBuffer) {};  // barrier-only: General -> ShaderReadOnly
+            addPass(graph, std::move(restorePass));
         }
 
         // HDR offscreen → display: the tonemap is mandatory (the scene wrote linear HDR
@@ -1103,11 +1232,43 @@ namespace se
         return renderer.ssao.useSsao && renderer.ssao.ready;
     }
 
-    void setSsaoCamera(Renderer& renderer, const glm::mat4& view, const glm::mat4& proj)
+    void setContactShadows(Renderer& renderer, bool enabled)
+    {
+        renderer.ssao.useContact = enabled;
+    }
+
+    auto contactShadowsEnabled(const Renderer& renderer) -> bool
+    {
+        return renderer.ssao.useContact && renderer.ssao.ready;
+    }
+
+    void setSsgi(Renderer& renderer, bool enabled)
+    {
+        renderer.ssao.useSsgi = enabled;
+    }
+
+    auto ssgiEnabled(const Renderer& renderer) -> bool
+    {
+        return renderer.ssao.useSsgi && renderer.ssao.ready;
+    }
+
+    auto screenEffectsEnabled(const Renderer& renderer) -> bool
+    {
+        return renderer.ssao.ready &&
+               (renderer.ssao.useSsao || renderer.ssao.useContact || renderer.ssao.useSsgi);
+    }
+
+    void setSsaoCamera(Renderer& renderer, const glm::mat4& view, const glm::mat4& proj,
+                       glm::vec3 sunDirectionWorld)
     {
         renderer.ssao.view = view;
         renderer.ssao.viewProj = proj * view;
+        renderer.ssao.projection = proj;
         renderer.ssao.invProjection = glm::inverse(proj);
+        // Contact shadows march toward the sun; the G-buffer is view space, so transform
+        // the (incoming) light direction into view space. directionWorld points the way the
+        // light travels, so the direction TO the light is its negation.
+        renderer.ssao.sunDirView = glm::normalize(glm::vec3(view * glm::vec4(-sunDirectionWorld, 0.0f)));
     }
 
     void setShadows(Renderer& renderer, bool enabled)

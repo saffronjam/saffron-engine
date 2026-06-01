@@ -51,6 +51,7 @@ struct LightGlobals
     uint4 spotShadow;            // x = shadowed spot's light index, y = enabled (0/1)
     float4 pointShadow;          // xyz = shadowed point light world pos, w = far plane
     uint4 pointShadowMeta;       // x = shadowed point's light index, y = enabled (0/1)
+    uint4 screenFlags;           // x = contact shadows on, y = SSGI on (AO is counts.w)
 };
 [[vk::binding(0, 1)]] ConstantBuffer<LightGlobals> globals;
 
@@ -138,9 +139,13 @@ struct Instance
 [[vk::binding(2, 3)]] Sampler2D brdfLut;
 static const float IblPrefilterMaxMip = 4.0;  // == IblPrefilterMips - 1 (renderer_detail.cppm)
 
-// Set 4: screen-space AO map (factor in [0,1], 1 = open). Sampled by screen UV; modulates
-// the ambient (indirect) term only when globals.counts.w != 0.
+// Set 4: screen-space maps, all sampled by screen UV. AO (factor, 1 = open) modulates the
+// indirect/ambient term (counts.w); contact shadows (factor, 1 = lit) darken the
+// directional direct term (screenFlags.x); SSGI (rgba16f radiance) adds one-bounce indirect
+// (screenFlags.y).
 [[vk::binding(0, 4)]] Sampler2D aoMap;
+[[vk::binding(1, 4)]] Sampler2D contactMap;
+[[vk::binding(2, 4)]] Sampler2D ssgiMap;
 
 float3 fresnelSchlickRoughness(float cosT, float3 F0, float roughness)
 {
@@ -284,13 +289,20 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     float roughness = clamp(input.mr.y, 0.045, 1.0);  // clamp away from 0 (specular singularity)
     float3 v = normalize(globals.eyePosition.xyz - input.worldPos);
 
+    // Screen UV for sampling the screen-space effect maps.
+    float2 screenUv = input.position.xy / float2(clusterParams.screenSize.xy);
+
     // Directional light, evaluated through the same BRDF as the punctual lights, then
-    // attenuated by the shadow map (only the directional light casts shadows in v1).
+    // attenuated by the shadow map + screen-space contact shadows (directional only in v1).
     float3 lDir = -normalize(globals.directionAmbient.xyz);
     float shadow = 1.0;
     if (globals.counts.y != 0)
     {
         shadow = pcfShadow(shadowMap, globals.shadowViewProj, input.worldPos);
+    }
+    if (globals.screenFlags.x != 0)
+    {
+        shadow *= contactMap.SampleLevel(screenUv, 0.0).r;  // fine contact detail
     }
     float3 lo = brdf(n, v, lDir, albedo, metallic, roughness,
                      globals.colorIntensity.rgb * globals.colorIntensity.a) * shadow;
@@ -338,8 +350,15 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     // Screen-space AO darkens only the indirect (ambient) term, sampled at this pixel.
     if (globals.counts.w != 0)
     {
-        float2 screenUv = input.position.xy / float2(clusterParams.screenSize.xy);
         ambient *= aoMap.SampleLevel(screenUv, 0.0).r;
+    }
+    // SSGI adds one-bounce indirect: the gathered radiance acts as extra incoming light on
+    // the diffuse albedo (modulated by AO so occluded creases don't over-bounce).
+    if (globals.screenFlags.y != 0)
+    {
+        float ao = globals.counts.w != 0 ? aoMap.SampleLevel(screenUv, 0.0).r : 1.0;
+        float3 gi = ssgiMap.SampleLevel(screenUv, 0.0).rgb;
+        ambient += gi * albedo * (1.0 - metallic) * ao;
     }
     float3 color = lo + ambient + input.emissive;
     return float4(color, tex.a * input.baseColor.a);

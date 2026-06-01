@@ -683,6 +683,7 @@ export namespace se
         glm::uvec4 spotShadow;          // x = shadowed spot's light index, y = enabled (0/1)
         glm::vec4 pointShadow;          // xyz = shadowed point light world pos, w = far plane
         glm::uvec4 pointShadowMeta;     // x = shadowed point's light index, y = enabled (0/1)
+        glm::uvec4 screenFlags;         // x = contact-shadows on, y = SSGI on (AO is counts.w)
     };
 
     // Shadow-map resolution + slope/constant depth bias (units of D32 depth). Tuned on
@@ -1259,7 +1260,11 @@ export namespace se
         renderer.ssao.ready = false;
         renderer.targets.gNormal.reset();
         renderer.targets.gDepth.reset();
+        renderer.targets.aoRaw.reset();
         renderer.targets.aoMap.reset();
+        renderer.targets.contactMap.reset();
+        renderer.targets.ssgiMap.reset();
+        renderer.targets.prevColor.reset();
         const u32 w = renderer.targets.offscreen.extent.width;
         const u32 h = renderer.targets.offscreen.extent.height;
         if (w == 0 || h == 0)
@@ -1272,13 +1277,25 @@ export namespace se
         auto gDepth = newDepthImage(renderer, w, h);
         if (!gDepth) { logError(gDepth.error()); return; }
         renderer.targets.gDepth = std::move(*gDepth);
-        auto aoMap = newColorImage(renderer, w, h, AoFormat, true);  // storage (GTAO writes it)
+        auto aoRaw = newColorImage(renderer, w, h, AoFormat, true);
+        if (!aoRaw) { logError(aoRaw.error()); return; }
+        renderer.targets.aoRaw = std::move(*aoRaw);
+        auto aoMap = newColorImage(renderer, w, h, AoFormat, true);
         if (!aoMap) { logError(aoMap.error()); return; }
         renderer.targets.aoMap = std::move(*aoMap);
+        auto contactMap = newColorImage(renderer, w, h, AoFormat, true);
+        if (!contactMap) { logError(contactMap.error()); return; }
+        renderer.targets.contactMap = std::move(*contactMap);
+        auto ssgiMap = newColorImage(renderer, w, h, GNormalFormat, true);  // rgba16f radiance
+        if (!ssgiMap) { logError(ssgiMap.error()); return; }
+        renderer.targets.ssgiMap = std::move(*ssgiMap);
+        auto prevColor = newColorImage(renderer, w, h, OffscreenColorFormat, true);
+        if (!prevColor) { logError(prevColor.error()); return; }
+        renderer.targets.prevColor = std::move(*prevColor);
 
-        // Transition the AO map to ShaderReadOnly so the mesh's set-4 sample is valid even
-        // before GTAO first runs. No clear is needed: the shader only samples it when SSAO
-        // is enabled (counts.w), and GTAO writes the whole map earlier in that same frame.
+        // Transition the three mesh-sampled maps to ShaderReadOnly so set 4 is valid even
+        // before the passes first run (each is gated by its enable flag in the shader), and
+        // prevColor (sampled by SSGI) likewise. No clears needed — gated reads.
         {
             vk::CommandBufferAllocateInfo allocInfo{};
             allocInfo.commandPool = renderer.frame.frames[0].commandPool;
@@ -1290,10 +1307,16 @@ export namespace se
             vk::CommandBufferBeginInfo begin{};
             begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
             static_cast<void>(cmd.begin(begin));
-            transitionImage(cmd, renderer.targets.aoMap.image,
-                vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal,
-                vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
-                vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            const std::array<Image*, 4> maps{ &renderer.targets.aoMap, &renderer.targets.contactMap,
+                                              &renderer.targets.ssgiMap, &renderer.targets.prevColor };
+            for (Image* img : maps)
+            {
+                transitionImage(cmd, img->image,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                    vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+                img->layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            }
             static_cast<void>(cmd.end());
             vk::CommandBufferSubmitInfo cmdInfo{};
             cmdInfo.commandBuffer = cmd;
@@ -1302,33 +1325,55 @@ export namespace se
             static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
             static_cast<void>(renderer.context.device.waitIdle());
             renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
-            renderer.targets.aoMap.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
-        // GTAO compute set: g-buffer (sampler) + AO map (storage).
-        vk::DescriptorImageInfo gInfo{ renderer.ssao.sampler, renderer.targets.gNormal.view, vk::ImageLayout::eShaderReadOnlyOptimal };
-        vk::DescriptorImageInfo aoStore{};
-        aoStore.imageView = renderer.targets.aoMap.view;
-        aoStore.imageLayout = vk::ImageLayout::eGeneral;
-        std::array<vk::WriteDescriptorSet, 2> gtaoWrites{};
-        gtaoWrites[0].dstSet = renderer.ssao.gtaoSet;
-        gtaoWrites[0].dstBinding = 0;
-        gtaoWrites[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        gtaoWrites[0].setImageInfo(gInfo);
-        gtaoWrites[1].dstSet = renderer.ssao.gtaoSet;
-        gtaoWrites[1].dstBinding = 1;
-        gtaoWrites[1].descriptorType = vk::DescriptorType::eStorageImage;
-        gtaoWrites[1].setImageInfo(aoStore);
-        renderer.context.device.updateDescriptorSets(gtaoWrites, {});
+        const vk::Sampler nearest = renderer.ssao.sampler;
+        const vk::Sampler linear = renderer.descriptors.linearSampler;
+        auto sampled = [](vk::Sampler s, vk::ImageView v) -> vk::DescriptorImageInfo
+        {
+            return vk::DescriptorImageInfo{ s, v, vk::ImageLayout::eShaderReadOnlyOptimal };
+        };
+        auto storage = [](vk::ImageView v) -> vk::DescriptorImageInfo
+        {
+            vk::DescriptorImageInfo i{};
+            i.imageView = v;
+            i.imageLayout = vk::ImageLayout::eGeneral;
+            return i;
+        };
+        auto write = [&](vk::DescriptorSet set, u32 binding, vk::DescriptorType type, const vk::DescriptorImageInfo& info)
+        {
+            vk::WriteDescriptorSet wr{};
+            wr.dstSet = set;
+            wr.dstBinding = binding;
+            wr.descriptorType = type;
+            wr.setImageInfo(info);
+            renderer.context.device.updateDescriptorSets(wr, {});
+        };
+        const auto S = vk::DescriptorType::eCombinedImageSampler;
+        const auto I = vk::DescriptorType::eStorageImage;
+        const vk::ImageView gv = renderer.targets.gNormal.view;
 
-        // Mesh AO set (set 4): the AO map sampled with the linear sampler.
-        vk::DescriptorImageInfo aoSampled{ renderer.descriptors.linearSampler, renderer.targets.aoMap.view, vk::ImageLayout::eShaderReadOnlyOptimal };
-        vk::WriteDescriptorSet aoWrite{};
-        aoWrite.dstSet = renderer.ssao.aoSet;
-        aoWrite.dstBinding = 0;
-        aoWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        aoWrite.setImageInfo(aoSampled);
-        renderer.context.device.updateDescriptorSets(aoWrite, {});
+        // gtao: gbuffer -> aoRaw
+        write(renderer.ssao.gtaoSet, 0, S, sampled(nearest, gv));
+        write(renderer.ssao.gtaoSet, 1, I, storage(renderer.targets.aoRaw.view));
+        // ao_blur: aoRaw + gbuffer -> aoMap
+        write(renderer.ssao.aoBlurSet, 0, S, sampled(nearest, renderer.targets.aoRaw.view));
+        write(renderer.ssao.aoBlurSet, 1, S, sampled(nearest, gv));
+        write(renderer.ssao.aoBlurSet, 2, I, storage(renderer.targets.aoMap.view));
+        // contact: gbuffer -> contactMap
+        write(renderer.ssao.contactSet, 0, S, sampled(nearest, gv));
+        write(renderer.ssao.contactSet, 1, I, storage(renderer.targets.contactMap.view));
+        // ssgi: gbuffer + prevColor -> ssgiMap
+        write(renderer.ssao.ssgiSet, 0, S, sampled(nearest, gv));
+        write(renderer.ssao.ssgiSet, 1, S, sampled(linear, renderer.targets.prevColor.view));
+        write(renderer.ssao.ssgiSet, 2, I, storage(renderer.targets.ssgiMap.view));
+        // copy_color: offscreen sceneColor + prevColor storage
+        write(renderer.ssao.copyColorSet, 0, S, sampled(linear, renderer.targets.offscreen.view));
+        write(renderer.ssao.copyColorSet, 1, I, storage(renderer.targets.prevColor.view));
+        // mesh set 4: AO + contact + SSGI (all linear-sampled)
+        write(renderer.ssao.meshSet, 0, S, sampled(linear, renderer.targets.aoMap.view));
+        write(renderer.ssao.meshSet, 1, S, sampled(linear, renderer.targets.contactMap.view));
+        write(renderer.ssao.meshSet, 2, S, sampled(linear, renderer.targets.ssgiMap.view));
 
         renderer.ssao.generation = renderer.ssao.generation + 1;
         renderer.ssao.ready = true;
@@ -1839,11 +1884,12 @@ export namespace se
             vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, 1024 },
             vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, 4 * MaxFramesInFlight + 8 },
             vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, 8 * MaxFramesInFlight + 8 },
-            // tonemap(1) + fxaa(1) + gtao(1) + TAA 2 parities x 2 storage = 7; plus headroom.
-            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageImage, 16 } };
+            // tonemap/fxaa/TAA(4) + the screen-space chain (gtao/blur/contact/ssgi/copy storage)
+            // ~= a dozen; plus generous headroom.
+            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageImage, 32 } };
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;  // texture sets freed on Ref drop
-        poolInfo.maxSets = 1024 + 8 * MaxFramesInFlight + 32;
+        poolInfo.maxSets = 1024 + 8 * MaxFramesInFlight + 48;
         poolInfo.setPoolSizes(poolSizes);
         auto pool = checked(renderer.context.device.createDescriptorPool(poolInfo), "descriptorPool");
         if (!pool)
@@ -2147,8 +2193,10 @@ export namespace se
         }
         renderer.ibl.set = (*iblSet)[0];
 
-        // SSAO: a nearest sampler, the GTAO compute set (g-buffer sampler + AO storage), the
-        // mesh-AO set (set 4 = AO map sampler), both pipelines, and the viewport-sized targets.
+        // Screen-space effects (GTAO + denoise, contact shadows, SSGI). A nearest sampler
+        // for the G-buffer; two shared compute set layouts (2-binding sampler+storage,
+        // 3-binding sampler+sampler+storage); a 3-binding mesh set (set 4: AO/contact/SSGI);
+        // the five compute sets + the mesh set; the pipelines; and the viewport targets.
         vk::SamplerCreateInfo ssaoSamplerInfo{};
         ssaoSamplerInfo.magFilter = vk::Filter::eNearest;
         ssaoSamplerInfo.minFilter = vk::Filter::eNearest;
@@ -2163,73 +2211,104 @@ export namespace se
         }
         renderer.ssao.sampler = *ssaoSampler;
 
-        std::array<vk::DescriptorSetLayoutBinding, 2> gtaoBindings{};
-        gtaoBindings[0].binding = 0;  // g-buffer sampler
-        gtaoBindings[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        gtaoBindings[0].descriptorCount = 1;
-        gtaoBindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        gtaoBindings[1].binding = 1;  // AO storage image
-        gtaoBindings[1].descriptorType = vk::DescriptorType::eStorageImage;
-        gtaoBindings[1].descriptorCount = 1;
-        gtaoBindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        vk::DescriptorSetLayoutCreateInfo gtaoLayoutInfo{};
-        gtaoLayoutInfo.setBindings(gtaoBindings);
-        auto gtaoLayout = checked(renderer.context.device.createDescriptorSetLayout(gtaoLayoutInfo), "gtaoSetLayout");
-        if (!gtaoLayout)
+        auto makeComputeLayout = [&](u32 samplerCount, u32 storageCount, const char* name) -> Result<vk::DescriptorSetLayout>
         {
-            return Err(gtaoLayout.error());
-        }
-        renderer.ssao.gtaoSetLayout = *gtaoLayout;
+            std::vector<vk::DescriptorSetLayoutBinding> bindings;
+            for (u32 b = 0; b < samplerCount; b = b + 1)
+            {
+                vk::DescriptorSetLayoutBinding bd{};
+                bd.binding = b;
+                bd.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+                bd.descriptorCount = 1;
+                bd.stageFlags = vk::ShaderStageFlagBits::eCompute;
+                bindings.push_back(bd);
+            }
+            for (u32 b = 0; b < storageCount; b = b + 1)
+            {
+                vk::DescriptorSetLayoutBinding bd{};
+                bd.binding = samplerCount + b;
+                bd.descriptorType = vk::DescriptorType::eStorageImage;
+                bd.descriptorCount = 1;
+                bd.stageFlags = vk::ShaderStageFlagBits::eCompute;
+                bindings.push_back(bd);
+            }
+            vk::DescriptorSetLayoutCreateInfo info{};
+            info.setBindings(bindings);
+            return checked(renderer.context.device.createDescriptorSetLayout(info), name);
+        };
+        auto c2 = makeComputeLayout(1, 1, "compute2Layout");
+        if (!c2) { return Err(c2.error()); }
+        renderer.ssao.compute2Layout = *c2;
+        auto c3 = makeComputeLayout(2, 1, "compute3Layout");
+        if (!c3) { return Err(c3.error()); }
+        renderer.ssao.compute3Layout = *c3;
 
-        vk::DescriptorSetLayoutBinding aoBinding{};
-        aoBinding.binding = 0;  // AO map sampler (mesh fragment set 4)
-        aoBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        aoBinding.descriptorCount = 1;
-        aoBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
-        vk::DescriptorSetLayoutCreateInfo aoLayoutInfo{};
-        aoLayoutInfo.setBindings(aoBinding);
-        auto aoLayout = checked(renderer.context.device.createDescriptorSetLayout(aoLayoutInfo), "aoSetLayout");
-        if (!aoLayout)
+        std::array<vk::DescriptorSetLayoutBinding, 3> meshAoBindings{};
+        for (u32 b = 0; b < 3; b = b + 1)
         {
-            return Err(aoLayout.error());
+            meshAoBindings[b].binding = b;  // 0 = AO, 1 = contact, 2 = SSGI
+            meshAoBindings[b].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            meshAoBindings[b].descriptorCount = 1;
+            meshAoBindings[b].stageFlags = vk::ShaderStageFlagBits::eFragment;
         }
-        renderer.ssao.aoSetLayout = *aoLayout;
+        vk::DescriptorSetLayoutCreateInfo meshAoLayoutInfo{};
+        meshAoLayoutInfo.setBindings(meshAoBindings);
+        auto meshAoLayout = checked(renderer.context.device.createDescriptorSetLayout(meshAoLayoutInfo), "meshAoSetLayout");
+        if (!meshAoLayout)
+        {
+            return Err(meshAoLayout.error());
+        }
+        renderer.ssao.meshSetLayout = *meshAoLayout;
 
-        vk::DescriptorSetAllocateInfo gtaoAlloc{};
-        gtaoAlloc.descriptorPool = renderer.descriptors.descriptorPool;
-        gtaoAlloc.setSetLayouts(renderer.ssao.gtaoSetLayout);
-        auto gtaoSet = checked(renderer.context.device.allocateDescriptorSets(gtaoAlloc), "allocate gtaoSet");
-        if (!gtaoSet)
+        auto allocSet = [&](vk::DescriptorSetLayout layout, const char* name) -> Result<vk::DescriptorSet>
         {
-            return Err(gtaoSet.error());
-        }
-        renderer.ssao.gtaoSet = (*gtaoSet)[0];
-
-        vk::DescriptorSetAllocateInfo aoAlloc{};
-        aoAlloc.descriptorPool = renderer.descriptors.descriptorPool;
-        aoAlloc.setSetLayouts(renderer.ssao.aoSetLayout);
-        auto aoSet = checked(renderer.context.device.allocateDescriptorSets(aoAlloc), "allocate aoSet");
-        if (!aoSet)
-        {
-            return Err(aoSet.error());
-        }
-        renderer.ssao.aoSet = (*aoSet)[0];
+            vk::DescriptorSetAllocateInfo ai{};
+            ai.descriptorPool = renderer.descriptors.descriptorPool;
+            ai.setSetLayouts(layout);
+            auto s = checked(renderer.context.device.allocateDescriptorSets(ai), name);
+            if (!s) { return Err(s.error()); }
+            return (*s)[0];
+        };
+        auto gtaoSet = allocSet(renderer.ssao.compute2Layout, "gtaoSet");
+        if (!gtaoSet) { return Err(gtaoSet.error()); }
+        renderer.ssao.gtaoSet = *gtaoSet;
+        auto aoBlurSet = allocSet(renderer.ssao.compute3Layout, "aoBlurSet");
+        if (!aoBlurSet) { return Err(aoBlurSet.error()); }
+        renderer.ssao.aoBlurSet = *aoBlurSet;
+        auto contactSet = allocSet(renderer.ssao.compute2Layout, "contactSet");
+        if (!contactSet) { return Err(contactSet.error()); }
+        renderer.ssao.contactSet = *contactSet;
+        auto ssgiSet = allocSet(renderer.ssao.compute3Layout, "ssgiSet");
+        if (!ssgiSet) { return Err(ssgiSet.error()); }
+        renderer.ssao.ssgiSet = *ssgiSet;
+        auto copyColorSet = allocSet(renderer.ssao.compute2Layout, "copyColorSet");
+        if (!copyColorSet) { return Err(copyColorSet.error()); }
+        renderer.ssao.copyColorSet = *copyColorSet;
+        auto meshSet = allocSet(renderer.ssao.meshSetLayout, "meshAoSet");
+        if (!meshSet) { return Err(meshSet.error()); }
+        renderer.ssao.meshSet = *meshSet;
 
         Result<Ref<Pipeline>> gbufferPipe = makeGbufferPipeline(renderer, "shaders/gbuffer.spv");
-        if (!gbufferPipe)
-        {
-            return Err(gbufferPipe.error());
-        }
+        if (!gbufferPipe) { return Err(gbufferPipe.error()); }
         renderer.pipelines.gbuffer = *gbufferPipe;
-
-        Result<Ref<Pipeline>> gtaoPipe =
-            newComputePipeline(renderer, "shaders/gtao.spv", renderer.ssao.gtaoSetLayout,
-                               static_cast<u32>(sizeof(glm::mat4) + sizeof(glm::vec4)));
-        if (!gtaoPipe)
-        {
-            return Err(gtaoPipe.error());
-        }
+        // gtao + ssgi + contact use a mat4x2 + vec4 push (160B); ao_blur + copy_color none.
+        const u32 bigPush = static_cast<u32>(2 * sizeof(glm::mat4) + sizeof(glm::vec4) + sizeof(glm::vec4));
+        auto gtaoPipe = newComputePipeline(renderer, "shaders/gtao.spv", renderer.ssao.compute2Layout,
+                                           static_cast<u32>(sizeof(glm::mat4) + sizeof(glm::vec4)));
+        if (!gtaoPipe) { return Err(gtaoPipe.error()); }
         renderer.pipelines.gtao = *gtaoPipe;
+        auto aoBlurPipe = newComputePipeline(renderer, "shaders/ao_blur.spv", renderer.ssao.compute3Layout);
+        if (!aoBlurPipe) { return Err(aoBlurPipe.error()); }
+        renderer.pipelines.aoBlur = *aoBlurPipe;
+        auto contactPipe = newComputePipeline(renderer, "shaders/contact.spv", renderer.ssao.compute2Layout, bigPush);
+        if (!contactPipe) { return Err(contactPipe.error()); }
+        renderer.pipelines.contact = *contactPipe;
+        auto ssgiPipe = newComputePipeline(renderer, "shaders/ssgi.spv", renderer.ssao.compute3Layout, bigPush);
+        if (!ssgiPipe) { return Err(ssgiPipe.error()); }
+        renderer.pipelines.ssgi = *ssgiPipe;
+        auto copyColorPipe = newComputePipeline(renderer, "shaders/copy_color.spv", renderer.ssao.compute2Layout);
+        if (!copyColorPipe) { return Err(copyColorPipe.error()); }
+        renderer.pipelines.copyColor = *copyColorPipe;
 
         recreateSsaoTargets(renderer);
 

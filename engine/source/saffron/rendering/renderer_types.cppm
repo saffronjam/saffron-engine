@@ -582,6 +582,10 @@ export namespace se
         Ref<Pipeline> pointShadow;   // color (distance) + depth pass into a point shadow cube face
         Ref<Pipeline> gbuffer;       // thin G-buffer prepass (view normal + view-Z)
         Ref<Pipeline> gtao;          // compute screen-space AO from the G-buffer
+        Ref<Pipeline> aoBlur;        // bilateral denoise of the raw AO
+        Ref<Pipeline> contact;       // screen-space contact shadows (directional)
+        Ref<Pipeline> ssgi;          // screen-space one-bounce GI
+        Ref<Pipeline> copyColor;     // capture linear-HDR scene color into prevColor
         Ref<Pipeline> motion;        // motion-vector prepass (camera reprojection)
         Ref<Pipeline> taa;           // compute TAA resolve
         Ref<Pipeline> fxaa;          // compute FXAA post-process
@@ -602,11 +606,17 @@ export namespace se
         Image pointShadowCube;
         Image pointShadowDepth;
         std::array<vk::ImageView, 6> pointShadowFaces{};  // per-face render views (freed manually)
-        // Screen-space AO: a thin G-buffer (view normal rgb + view-Z in .a) + its depth
-        // scratch, and the GTAO output (r8). Sized to the viewport, recreated with it.
+        // Screen-space effects: a thin G-buffer (view normal rgb + view-Z in .a) + its depth
+        // scratch; the raw + denoised AO (r8), the contact-shadow map (r8), the SSGI radiance
+        // (rgba16f), and the persistent previous-frame linear-HDR color SSGI gathers from.
+        // All viewport-sized, recreated with it.
         Image gNormal;
         Image gDepth;
+        Image aoRaw;
         Image aoMap;
+        Image contactMap;
+        Image ssgiMap;
+        Image prevColor;
         // TAA: a screen-space motion-vector target (rg16f) + its depth scratch, and two
         // ping-pong history color images. Sized to the viewport, recreated with it.
         Image motion;
@@ -650,20 +660,34 @@ export namespace se
     // Screen-space ambient occlusion (GTAO-lite). When on, a G-buffer prepass + a compute
     // pass produce an AO factor the mesh multiplies into the IBL/flat ambient term. The
     // descriptor sets/layouts are built once; the camera transforms are written per frame.
+    // Screen-space effects driven off the thin G-buffer: ambient occlusion (GTAO +
+    // bilateral denoise), directional contact shadows, and one-bounce SSGI. They share the
+    // G-buffer + the scene's view/proj; the mesh samples their three maps via set 4.
     struct Ssao
     {
-        bool useSsao = true;
+        bool useSsao = true;     // GTAO ambient occlusion
+        bool useContact = true;  // screen-space contact shadows (directional)
+        bool useSsgi = true;     // screen-space one-bounce GI
         bool ready = false;                          // sets/views valid (built after targets exist)
         glm::mat4 view{ 1.0f };                      // world -> view (G-buffer prepass)
         glm::mat4 viewProj{ 1.0f };                  // world -> clip (G-buffer prepass)
-        glm::mat4 invProjection{ 1.0f };             // clip -> view (GTAO reconstruct)
+        glm::mat4 projection{ 1.0f };                // view -> clip (contact/SSGI reproject)
+        glm::mat4 invProjection{ 1.0f };             // clip -> view (reconstruct view pos)
+        glm::vec3 sunDirView{ 0.0f, 1.0f, 0.0f };    // direction TO the sun, view space (contact)
         f32 radius = 1.0f;
         f32 strength = 3.0f;
         vk::Sampler sampler;                         // nearest, clamp — samples the G-buffer
-        vk::DescriptorSetLayout gtaoSetLayout;       // compute set 0: g-buffer sampler + AO storage
-        vk::DescriptorSet gtaoSet;
-        vk::DescriptorSetLayout aoSetLayout;         // set 4 in the mesh pipeline: the AO map sampler
-        vk::DescriptorSet aoSet;
+        // Two compute set layouts shared by the screen-space passes: 2-binding
+        // (sampler + storage) and 3-binding (sampler + sampler + storage).
+        vk::DescriptorSetLayout compute2Layout;
+        vk::DescriptorSetLayout compute3Layout;
+        vk::DescriptorSet gtaoSet;       // gbuffer + aoRaw         (compute2)
+        vk::DescriptorSet aoBlurSet;     // aoRaw + gbuffer + aoMap (compute3)
+        vk::DescriptorSet contactSet;    // gbuffer + contactMap    (compute2)
+        vk::DescriptorSet ssgiSet;       // gbuffer + prevColor + ssgiMap (compute3)
+        vk::DescriptorSet copyColorSet;  // sceneColor + prevColor  (compute2)
+        vk::DescriptorSetLayout meshSetLayout;       // set 4 in the mesh pipeline (AO + contact + SSGI)
+        vk::DescriptorSet meshSet;
         u32 generation = 0;                          // bumped when targets recreate (sets refreshed)
     };
 
@@ -673,8 +697,13 @@ export namespace se
         RenderGraph current;
         RgResource sceneColor;  // the offscreen color handle, for app-authored passes
         RgResource swapImage;
-        RgResource aoResource;  // the AO map handle when SSAO ran this frame
+        RgResource aoResource;        // the AO map handle when SSAO ran this frame
+        RgResource contactResource;   // contact-shadow map handle when contact ran
+        RgResource ssgiResource;      // SSGI radiance handle when SSGI ran
+        RgResource prevColorResource; // prevColor handle (imported once; read by SSGI, written by copy)
         bool hasAo = false;
+        bool hasContact = false;
+        bool hasSsgi = false;
     };
 
     struct Renderer
@@ -810,14 +839,22 @@ export namespace se
     // Image-based lighting: toggle split-sum IBL ambient vs the flat scalar fallback.
     void setIbl(Renderer& renderer, bool enabled);
     auto iblEnabled(const Renderer& renderer) -> bool;
-    // Screen-space ambient occlusion (GTAO): toggle; AO modulates the ambient term only.
+    // Screen-space effects off the thin G-buffer. AO darkens indirect; contact shadows
+    // darken the directional direct term; SSGI adds one-bounce indirect. Each toggleable.
     void setSsao(Renderer& renderer, bool enabled);
     auto ssaoEnabled(const Renderer& renderer) -> bool;
-    // Records the G-buffer prepass (view normal + view-Z) for the SSAO pass body.
+    void setContactShadows(Renderer& renderer, bool enabled);
+    auto contactShadowsEnabled(const Renderer& renderer) -> bool;
+    void setSsgi(Renderer& renderer, bool enabled);
+    auto ssgiEnabled(const Renderer& renderer) -> bool;
+    // True if any screen-space effect is on (so the G-buffer prepass is worth running).
+    auto screenEffectsEnabled(const Renderer& renderer) -> bool;
+    // Records the G-buffer prepass (view normal + view-Z) for the screen-space pass bodies.
     void recordGbuffer(Renderer& renderer, vk::CommandBuffer cmd);
-    // Feeds the camera transforms the SSAO G-buffer + GTAO passes need (view, proj). The
-    // proj is the SAME Y-flipped projection the scene renders with (so the AO map aligns).
-    void setSsaoCamera(Renderer& renderer, const glm::mat4& view, const glm::mat4& proj);
+    // Feeds the camera the screen-space passes need: view, proj (SAME Y-flipped projection
+    // the scene renders with, so the maps align), and the world-space sun direction.
+    void setSsaoCamera(Renderer& renderer, const glm::mat4& view, const glm::mat4& proj,
+                       glm::vec3 sunDirectionWorld);
     // Directional shadow map: toggle + the per-frame light-space transform. renderScene
     // fits the transform to the scene each frame; beginFrameGraph runs the depth pass.
     void setShadows(Renderer& renderer, bool enabled);
