@@ -115,6 +115,9 @@ namespace se
         ubo.counts = glm::uvec4(count, renderer.lighting.shadowPending ? 1u : 0u, iblFlag, 0);
         ubo.eyePosition = glm::vec4(eyePosition, 0.0f);
         ubo.shadowViewProj = renderer.lighting.shadowViewProj;
+        ubo.spotShadowViewProj = renderer.lighting.spotShadowViewProj;
+        ubo.spotShadow = glm::uvec4(renderer.lighting.spotShadowLightIndex,
+                                    renderer.lighting.spotShadowPending ? 1u : 0u, 0, 0);
         std::memcpy(renderer.lighting.lightMapped[frame], &ubo, sizeof(ubo));
         vmaFlushAllocation(renderer.context.allocator, renderer.lighting.lightAllocs[frame], 0, sizeof(ubo));
         renderer.lighting.frameLightCount = count;

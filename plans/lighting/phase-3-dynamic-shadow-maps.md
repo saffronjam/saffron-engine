@@ -23,8 +23,26 @@ headless weston Wayland display in the toolbox):
   shadow onto a ground slab (shadows on vs off differ; changed region darker by mean ~47
   luminance, 84% of changed pixels darker).
 
+DONE 2026-06-01 (spot-light shadow — the first punctual shadow, separate dedicated map):
+- A second persistent 2048² D32 sampled depth map (Targets::spotShadowMap) + light-set
+  binding 5 (same shadowSampler). Both maps pre-transitioned to ShaderReadOnly at init.
+- A second graph "spot-shadow" depth pass in beginFrameGraph, reusing the shadowDepth PSO
+  + recordShadowDepth with the spot's perspective light-space transform; the scene pass
+  declares SampledRead on it too, so the graph derives the transitions.
+- renderScene picks the FIRST SpotLight as the shadow caster: a perspective frustum down
+  the cone (fov = 2*outerAngle + pad, near 0.05, far = range) + its index in the light
+  list. setSpotShadow arms it. LightUbo gained spotShadowViewProj + spotShadow.xy
+  (caster light index, enabled). mesh.slang: factored pcfShadow(map, viewProj, worldPos)
+  shared by the directional + spot paths; punctual() takes the light index and applies the
+  spot shadow only to the matching shadowed spot.
+- Verified: an overhead spot over a caster cube casts a clear ground shadow (no directional
+  light, IBL off to isolate it); shadows on vs off differ (5.6% px, 100% darker), VAL=0.
+  Directional path unchanged (now also via pcfShadow).
+
 REMAINING (later increments, then flip to COMPLETED):
-- Spot-light shadows (atlas tile + per-light shadowViewProj/atlasRect in GpuLight).
+- Multiple shadowed spots/points via a shadow ATLAS (currently one dedicated map per the
+  single shadowed spot + the directional); pack tiles by screen importance, per-light
+  shadowViewProj/atlasRect in GpuLight.
 - Directional CSM cascades (3-4 frustum-fit slices, texel snap, seam blend).
 - Point cube / 6-tile omnidirectional shadows (reuse phase-2 cubemap Image).
 - Depth-bias tuning per light; enabling back-face cull for the main pass.

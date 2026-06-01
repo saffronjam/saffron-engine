@@ -580,11 +580,13 @@ export namespace se
     // Matches the shader's set 1 light uniform (std140).
     struct LightUbo
     {
-        glm::vec4 directionAmbient;  // xyz direction, w ambient
-        glm::vec4 colorIntensity;    // rgb color, a intensity
-        glm::uvec4 counts;           // x = punctual count, y = directional-shadow enabled (0/1)
-        glm::vec4 eyePosition;       // xyz world-space camera position
-        glm::mat4 shadowViewProj;    // directional light-space transform (world -> shadow clip)
+        glm::vec4 directionAmbient;     // xyz direction, w ambient
+        glm::vec4 colorIntensity;       // rgb color, a intensity
+        glm::uvec4 counts;              // x=punctual count, y=dir shadow on, z=IBL on
+        glm::vec4 eyePosition;          // xyz world-space camera position
+        glm::mat4 shadowViewProj;       // directional light-space transform (world -> shadow clip)
+        glm::mat4 spotShadowViewProj;   // shadowed spot light-space transform (perspective)
+        glm::uvec4 spotShadow;          // x = shadowed spot's light index, y = enabled (0/1)
     };
 
     // Shadow-map resolution + slope/constant depth bias (units of D32 depth). Tuned on
@@ -1023,15 +1025,21 @@ export namespace se
         }
         renderer.descriptors.shadowSampler = *shadowSampler;
 
-        // The directional shadow map: a single persistent sampled depth target. Transition
-        // it once to ShaderReadOnly so its descriptor layout is valid even on frames where
-        // the shadow pass doesn't run (shadows toggled off) — the shader gates the sample.
+        // Directional + spot shadow maps: persistent sampled depth targets. Transition both
+        // once to ShaderReadOnly so their descriptors are valid even on frames where a
+        // shadow pass doesn't run (toggled off / no caster) — the shader gates the sample.
         auto shadowMap = newDepthImage(renderer, ShadowMapSize, ShadowMapSize, vk::SampleCountFlagBits::e1, true);
         if (!shadowMap)
         {
             return Err(shadowMap.error());
         }
         renderer.targets.shadowMap = std::move(*shadowMap);
+        auto spotShadowMap = newDepthImage(renderer, ShadowMapSize, ShadowMapSize, vk::SampleCountFlagBits::e1, true);
+        if (!spotShadowMap)
+        {
+            return Err(spotShadowMap.error());
+        }
+        renderer.targets.spotShadowMap = std::move(*spotShadowMap);
         {
             vk::CommandBufferAllocateInfo allocInfo{};
             allocInfo.commandPool = renderer.frame.frames[0].commandPool;
@@ -1046,11 +1054,14 @@ export namespace se
             vk::CommandBufferBeginInfo begin{};
             begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
             static_cast<void>(cmd.begin(begin));
-            transitionImage(cmd, renderer.targets.shadowMap.image,
-                vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal,
-                vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
-                vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
-                vk::ImageAspectFlagBits::eDepth);
+            for (vk::Image map : { renderer.targets.shadowMap.image, renderer.targets.spotShadowMap.image })
+            {
+                transitionImage(cmd, map,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                    vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+                    vk::ImageAspectFlagBits::eDepth);
+            }
             static_cast<void>(cmd.end());
             vk::CommandBufferSubmitInfo cmdInfo{};
             cmdInfo.commandBuffer = cmd;
@@ -1060,6 +1071,7 @@ export namespace se
             static_cast<void>(renderer.context.device.waitIdle());
             renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
             renderer.targets.shadowMap.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            renderer.targets.spotShadowMap.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
         // Set 0 is the bindless albedo array: a runtime-sized combined-image-sampler
@@ -1085,7 +1097,7 @@ export namespace se
         }
         renderer.descriptors.bindlessSetLayout = *materialLayout;
 
-        std::array<vk::DescriptorSetLayoutBinding, 5> lightBindings{};
+        std::array<vk::DescriptorSetLayoutBinding, 6> lightBindings{};
         lightBindings[0].binding = 0;  // directional + ambient + counts UBO
         lightBindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
         lightBindings[0].descriptorCount = 1;
@@ -1106,6 +1118,10 @@ export namespace se
         lightBindings[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
         lightBindings[4].descriptorCount = 1;
         lightBindings[4].stageFlags = vk::ShaderStageFlagBits::eFragment;
+        lightBindings[5].binding = 5;  // spot shadow map (depth-compare sampler)
+        lightBindings[5].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        lightBindings[5].descriptorCount = 1;
+        lightBindings[5].stageFlags = vk::ShaderStageFlagBits::eFragment;
         vk::DescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.setBindings(lightBindings);
         auto lightLayout = checked(renderer.context.device.createDescriptorSetLayout(lightLayoutInfo), "lightSetLayout");
@@ -1255,16 +1271,22 @@ export namespace se
             lightWrite.setBufferInfo(lightBufferInfo);
             renderer.context.device.updateDescriptorSets(lightWrite, {});
 
-            // Bind the shadow map (compare sampler) at binding 4. The graph guarantees the
-            // map is in ShaderReadOnly when the scene pass samples it.
+            // Bind the directional (binding 4) + spot (binding 5) shadow maps with the
+            // compare sampler. The graph guarantees ShaderReadOnly when the scene samples.
             vk::DescriptorImageInfo shadowInfo{ renderer.descriptors.shadowSampler,
                 renderer.targets.shadowMap.view, vk::ImageLayout::eShaderReadOnlyOptimal };
-            vk::WriteDescriptorSet shadowWrite{};
-            shadowWrite.dstSet = renderer.lighting.lightSets[i];
-            shadowWrite.dstBinding = 4;
-            shadowWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            shadowWrite.setImageInfo(shadowInfo);
-            renderer.context.device.updateDescriptorSets(shadowWrite, {});
+            vk::DescriptorImageInfo spotShadowInfo{ renderer.descriptors.shadowSampler,
+                renderer.targets.spotShadowMap.view, vk::ImageLayout::eShaderReadOnlyOptimal };
+            std::array<vk::WriteDescriptorSet, 2> shadowWrites{};
+            shadowWrites[0].dstSet = renderer.lighting.lightSets[i];
+            shadowWrites[0].dstBinding = 4;
+            shadowWrites[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            shadowWrites[0].setImageInfo(shadowInfo);
+            shadowWrites[1].dstSet = renderer.lighting.lightSets[i];
+            shadowWrites[1].dstBinding = 5;
+            shadowWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            shadowWrites[1].setImageInfo(spotShadowInfo);
+            renderer.context.device.updateDescriptorSets(shadowWrites, {});
 
             // The punctual-light buffer starts at LightListInitial capacity and is
             // grown by ensureLightCapacity; bind it now so the set is complete.

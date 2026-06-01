@@ -545,6 +545,11 @@ export namespace se
         bool useShadows = true;          // master toggle (se set-shadows)
         bool shadowPending = false;      // a shadow-casting directional light is present this frame
         glm::mat4 shadowViewProj{ 1.0f };
+        // Spot shadow: the first shadow-casting spot light gets a dedicated depth map. Its
+        // perspective light-space transform + its index in the per-frame light list.
+        bool spotShadowPending = false;
+        glm::mat4 spotShadowViewProj{ 1.0f };
+        u32 spotShadowLightIndex = 0;
     };
 
     // Per-frame instance storage buffer + set. Grown on demand (never shrunk);
@@ -572,9 +577,10 @@ export namespace se
     // The offscreen render targets + the AA state that decides which targets exist.
     struct Targets
     {
-        Image offscreen;  // scene render target shown in the Viewport panel
-        Image depth;      // depth buffer for the scene pass, sized to the viewport
-        Image shadowMap;  // directional-light depth map (sampled with the compare sampler)
+        Image offscreen;     // scene render target shown in the Viewport panel
+        Image depth;         // depth buffer for the scene pass, sized to the viewport
+        Image shadowMap;     // directional-light depth map (sampled with the compare sampler)
+        Image spotShadowMap; // first shadow-casting spot light's depth map (same compare sampler)
         // MSAA: when sampleCount > 1 the scene renders to these multisampled targets and
         // resolves color into offscreen. Sized to the viewport, recreated with it.
         Image msaaColor;
@@ -750,6 +756,9 @@ export namespace se
     void setShadows(Renderer& renderer, bool enabled);
     auto shadowsEnabled(const Renderer& renderer) -> bool;
     void setDirectionalShadow(Renderer& renderer, const glm::mat4& lightViewProj, bool casting);
+    // Arms the spot shadow depth pass for the first shadow-casting spot light: its
+    // perspective light-space transform + its index in the frame's punctual light list.
+    void setSpotShadow(Renderer& renderer, const glm::mat4& lightViewProj, u32 lightIndex, bool casting);
     // Record the scene geometry depth-only from the light's point of view (shadow pass body).
     void recordShadowDepth(Renderer& renderer, vk::CommandBuffer cmd, const glm::mat4& lightViewProj);
     void setDepthPrepass(Renderer& renderer, bool enabled);

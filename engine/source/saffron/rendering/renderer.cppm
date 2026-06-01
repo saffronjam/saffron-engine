@@ -273,6 +273,7 @@ namespace se
         renderer.targets.offscreen.reset();  // free before the allocator/device
         renderer.targets.depth.reset();
         renderer.targets.shadowMap.reset();
+        renderer.targets.spotShadowMap.reset();
         renderer.ibl.envCube.reset();
         renderer.ibl.irradianceCube.reset();
         renderer.ibl.prefilteredCube.reset();
@@ -558,6 +559,30 @@ namespace se
             addPass(graph, std::move(shadowPass));
         }
 
+        // Spot shadow: the first shadow-casting spot light gets its own depth pass into the
+        // spot shadow map, with the spot's perspective light-space transform.
+        const bool doSpotShadow = renderer.lighting.spotShadowPending && renderer.pipelines.shadowDepth &&
+                                  renderer.targets.spotShadowMap.image;
+        RgResource spotShadowRes{};
+        if (doSpotShadow)
+        {
+            Image& spotMap = renderer.targets.spotShadowMap;
+            spotShadowRes = importImage(graph, spotMap.image, spotMap.view,
+                vk::ImageAspectFlagBits::eDepth, spotMap.layout, &spotMap.layout);
+            RgPass spotPass;
+            spotPass.name = "spot-shadow";
+            spotPass.kind = RgPassKind::Graphics;
+            spotPass.depth = RgAttachment{ spotShadowRes, vk::AttachmentLoadOp::eClear,
+                vk::AttachmentStoreOp::eStore, vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
+            spotPass.renderArea = spotMap.extent;
+            const glm::mat4 spotViewProj = renderer.lighting.spotShadowViewProj;
+            spotPass.execute = [&renderer, spotViewProj](vk::CommandBuffer cmd)
+        {
+                recordShadowDepth(renderer, cmd, spotViewProj);
+            };
+            addPass(graph, std::move(spotPass));
+        }
+
         // Clustered forward: a compute pass culls the punctual lights into the froxel
         // grid; the scene fragment reads the result (the graph emits the compute→
         // fragment barrier from these declared usages).
@@ -610,6 +635,10 @@ namespace se
         if (doShadow)
         {
             scene.accesses.push_back(RgAccess{ shadowRes, RgUsage::SampledRead });
+        }
+        if (doSpotShadow)
+        {
+            scene.accesses.push_back(RgAccess{ spotShadowRes, RgUsage::SampledRead });
         }
         // MSAA: render to the multisampled color, resolve into the offscreen (don't store
         // the multisampled samples). Otherwise render straight into the offscreen.
@@ -873,6 +902,13 @@ namespace se
     {
         renderer.lighting.shadowViewProj = lightViewProj;
         renderer.lighting.shadowPending = casting && renderer.lighting.useShadows;
+    }
+
+    void setSpotShadow(Renderer& renderer, const glm::mat4& lightViewProj, u32 lightIndex, bool casting)
+    {
+        renderer.lighting.spotShadowViewProj = lightViewProj;
+        renderer.lighting.spotShadowLightIndex = lightIndex;
+        renderer.lighting.spotShadowPending = casting && renderer.lighting.useShadows;
     }
 
     void waitGpuIdle(Renderer& renderer)

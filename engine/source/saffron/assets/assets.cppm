@@ -433,7 +433,9 @@ export namespace se
             haveLight = true;
         });
 
-        // Gather punctual (point + spot) lights, positioned by their Transform.
+        // Gather punctual (point + spot) lights, positioned by their Transform. Track the
+        // first spot light's index + its perspective light-space transform so it can cast
+        // a shadow (the one shadowed spot in v1).
         std::vector<GpuLight> lights;
         forEach<TransformComponent, PointLightComponent>(scene,
             [&](Entity, TransformComponent& transform, PointLightComponent& light)
@@ -445,6 +447,9 @@ export namespace se
                 gpu.spotCos = glm::vec4(0.0f);
                 lights.push_back(gpu);
             });
+        bool haveSpotShadow = false;
+        glm::mat4 spotShadowViewProj{ 1.0f };
+        u32 spotShadowIndex = 0;
         forEach<TransformComponent, SpotLightComponent>(scene,
             [&](Entity, TransformComponent& transform, SpotLightComponent& light)
         {
@@ -455,8 +460,22 @@ export namespace se
                 gpu.directionType = glm::vec4(dir, 1.0f);  // type 1 = spot
                 gpu.spotCos = glm::vec4(glm::cos(glm::radians(light.innerAngle)),
                                         glm::cos(glm::radians(light.outerAngle)), 0.0f, 0.0f);
+                if (!haveSpotShadow)
+                {
+                    // A perspective frustum down the spot cone: fov = 2 x outer angle (a
+                    // small pad so the penumbra is inside the map), aspect 1, near/far from range.
+                    const f32 fov = glm::radians(glm::min(2.0f * light.outerAngle + 2.0f, 179.0f));
+                    const glm::vec3 up = glm::abs(dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+                    const glm::mat4 lightView = glm::lookAt(transform.translation, transform.translation + dir, up);
+                    // GLM_FORCE_DEPTH_ZERO_TO_ONE => Vulkan [0,1] clip depth.
+                    const glm::mat4 lightProj = glm::perspective(fov, 1.0f, 0.05f, glm::max(light.range, 0.1f));
+                    spotShadowViewProj = lightProj * lightView;
+                    spotShadowIndex = static_cast<u32>(lights.size());
+                    haveSpotShadow = true;
+                }
                 lights.push_back(gpu);
             });
+        setSpotShadow(renderer, spotShadowViewProj, spotShadowIndex, haveSpotShadow);
         // The camera world position is the inverse-view translation; the BRDF needs it
         // as the view-vector origin for specular. The lighting upload happens after the
         // draw loop, once the scene AABB (hence the shadow frustum) is known.

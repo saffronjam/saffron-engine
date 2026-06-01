@@ -42,11 +42,13 @@ struct Camera
 
 struct LightGlobals
 {
-    float4 directionAmbient;  // xyz = travel direction, w = ambient
-    float4 colorIntensity;    // rgb = color, a = intensity
-    uint4 counts;             // x = punctual count, y = directional shadow on, z = IBL ambient on
-    float4 eyePosition;       // xyz = world-space camera position (for the view vector)
-    float4x4 shadowViewProj;  // world -> directional light clip space
+    float4 directionAmbient;     // xyz = travel direction, w = ambient
+    float4 colorIntensity;       // rgb = color, a = intensity
+    uint4 counts;                // x = punctual count, y = directional shadow on, z = IBL ambient on
+    float4 eyePosition;          // xyz = world-space camera position (for the view vector)
+    float4x4 shadowViewProj;     // world -> directional light clip space
+    float4x4 spotShadowViewProj; // world -> shadowed spot light clip space (perspective)
+    uint4 spotShadow;            // x = shadowed spot's light index, y = enabled (0/1)
 };
 [[vk::binding(0, 1)]] ConstantBuffer<LightGlobals> globals;
 
@@ -76,17 +78,18 @@ struct ClusterParams
 };
 [[vk::binding(3, 1)]] ConstantBuffer<ClusterParams> clusterParams;
 
-// Directional shadow map: a depth texture sampled with a comparison (PCF) sampler.
+// Directional + spot shadow maps: depth textures sampled with a comparison (PCF) sampler.
 [[vk::binding(4, 1)]] Sampler2DShadow shadowMap;
+[[vk::binding(5, 1)]] Sampler2DShadow spotShadowMap;
 
-// PCF visibility for the directional light (1 = lit, 0 = fully shadowed). Off-map and
-// beyond-far-plane samples are treated as lit.
-float directionalShadow(float3 worldPos)
+// 3x3 PCF visibility for a light-space projection (1 = lit, 0 = shadowed). Off-map and
+// beyond-far-plane samples are treated as lit. `map` selects which shadow texture.
+float pcfShadow(Sampler2DShadow map, float4x4 viewProj, float3 worldPos)
 {
-    float4 clip = mul(globals.shadowViewProj, float4(worldPos, 1.0));
+    float4 clip = mul(viewProj, float4(worldPos, 1.0));
     float3 ndc = clip.xyz / clip.w;
     float2 uv = ndc.xy * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0)
+    if (clip.w <= 0.0 || uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0)
     {
         return 1.0;
     }
@@ -96,7 +99,7 @@ float directionalShadow(float3 worldPos)
     {
         for (int y = -1; y <= 1; y = y + 1)
         {
-            sum += shadowMap.SampleCmp(uv + float2(x, y) * texel, ndc.z);
+            sum += map.SampleCmp(uv + float2(x, y) * texel, ndc.z);
         }
     }
     return sum / 9.0;
@@ -193,7 +196,8 @@ float3 brdf(float3 n, float3 v, float3 l, float3 albedo, float metallic, float r
 }
 
 // One punctual light's Cook-Torrance contribution at a world-space surface point.
-float3 punctual(GpuLight lt, float3 worldPos, float3 n, float3 v,
+// `lightIndex` lets the shadowed spot light apply its shadow-map visibility.
+float3 punctual(GpuLight lt, uint lightIndex, float3 worldPos, float3 n, float3 v,
                 float3 albedo, float metallic, float roughness)
 {
     float3 toLight = lt.positionRange.xyz - worldPos;
@@ -206,13 +210,18 @@ float3 punctual(GpuLight lt, float3 worldPos, float3 n, float3 v,
     float attenuation = distanceAttenuation(dist, lt.positionRange.w);
 
     float cone = 1.0;
+    float shadow = 1.0;
     if (lt.directionType.w > 0.5)
     {
         float3 spotDir = normalize(lt.directionType.xyz);
         float cosAngle = dot(spotDir, -l);
         cone = smoothstep(lt.spotCos.y, lt.spotCos.x, cosAngle);
+        if (globals.spotShadow.y != 0 && lightIndex == globals.spotShadow.x)
+        {
+            shadow = pcfShadow(spotShadowMap, globals.spotShadowViewProj, worldPos);
+        }
     }
-    float3 radiance = lt.colorIntensity.rgb * lt.colorIntensity.a * attenuation * cone;
+    float3 radiance = lt.colorIntensity.rgb * lt.colorIntensity.a * attenuation * cone * shadow;
     return brdf(n, v, l, albedo, metallic, roughness, radiance);
 }
 
@@ -258,7 +267,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     float shadow = 1.0;
     if (globals.counts.y != 0)
     {
-        shadow = directionalShadow(input.worldPos);
+        shadow = pcfShadow(shadowMap, globals.shadowViewProj, input.worldPos);
     }
     float3 lo = brdf(n, v, lDir, albedo, metallic, roughness,
                      globals.colorIntensity.rgb * globals.colorIntensity.a) * shadow;
@@ -271,15 +280,15 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         uint count = clusters[clusterIndex].count;
         for (uint i = 0; i < count; i = i + 1)
         {
-            lo += punctual(lights[clusters[clusterIndex].indices[i]], input.worldPos, n, v,
-                           albedo, metallic, roughness);
+            uint li = clusters[clusterIndex].indices[i];
+            lo += punctual(lights[li], li, input.worldPos, n, v, albedo, metallic, roughness);
         }
     }
     else
     {
         for (uint i = 0; i < globals.counts.x; i = i + 1)
         {
-            lo += punctual(lights[i], input.worldPos, n, v, albedo, metallic, roughness);
+            lo += punctual(lights[i], i, input.worldPos, n, v, albedo, metallic, roughness);
         }
     }
 
