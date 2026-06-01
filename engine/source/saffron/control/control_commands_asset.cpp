@@ -6,6 +6,7 @@ module;
 #include <cstdlib>
 #include <format>
 #include <string>
+#include <vector>
 
 module Saffron.Control;
 
@@ -18,6 +19,57 @@ import Saffron.Assets;
 
 namespace se
 {
+    namespace
+    {
+        // Resolves {asset:id|name, size?} to a base64 PNG preview (mesh = framed 3D render,
+        // texture = the image read back). Shared by get-thumbnail (128) + view-asset (512).
+        auto thumbnailResult(EngineContext& ctx, const json& params, u32 defaultSize) -> Result<json>
+        {
+            // The selector may arrive as a name (string), a numeric-string uuid, or — when
+            // the CLI coerces a bare numeric arg — a JSON number; accept all three.
+            const json sel = positionalOr(params, "asset", 0);
+            std::string selector = sel.is_string() ? sel.get<std::string>() : std::string{};
+            u64 byId = 0;
+            if (sel.is_number_unsigned()) { byId = sel.get<u64>(); }
+            else if (sel.is_number_integer()) { const i64 v = sel.get<i64>(); if (v >= 0) { byId = static_cast<u64>(v); } }
+            else { byId = std::strtoull(selector.c_str(), nullptr, 10); }
+            const AssetEntry* match = nullptr;
+            for (const AssetEntry& entry : ctx.assets.catalog.entries)
+            {
+                if (entry.id.value == byId || entry.name == selector) { match = &entry; }
+            }
+            if (match == nullptr) { return Err(std::format("no asset '{}'", selector)); }
+            u32 size = defaultSize;
+            const json sz = positionalOr(params, "size", 1);
+            if (sz.is_number()) { size = static_cast<u32>(sz.get<double>()); }
+
+            std::vector<u8> png;
+            if (match->type == AssetType::Mesh)
+            {
+                auto mesh = loadMeshAsset(ctx.assets, ctx.renderer, match->id);
+                if (!mesh) { return Err(std::string{ "mesh failed to load" }); }
+                auto bytes = encodeAssetThumbnailPng(ctx.renderer, mesh, size);
+                if (!bytes) { return Err(bytes.error()); }
+                png = std::move(*bytes);
+            }
+            else if (match->type == AssetType::Texture)
+            {
+                auto tex = loadTextureAsset(ctx.assets, ctx.renderer, match->id);
+                if (!tex) { return Err(std::string{ "texture failed to load" }); }
+                auto bytes = encodeTextureThumbnailPng(ctx.renderer, tex, size);
+                if (!bytes) { return Err(bytes.error()); }
+                png = std::move(*bytes);
+            }
+            else
+            {
+                return Err(std::string{ "asset has no thumbnail" });
+            }
+            return json{ { "id", match->id.value }, { "format", "png" },
+                         { "width", size }, { "height", size },
+                         { "base64", base64Encode(png) } };
+        }
+    }
+
     void registerAssetCommands(CommandRegistry& reg)
     {
         // Imports + bakes a model, then spawns an entity carrying it (selected).
@@ -170,6 +222,7 @@ namespace se
                     return Err(result.error());
                 }
                 ctx.editor.scenePath = path;
+                ctx.editor.sceneVersion += 1;
                 setSelection(ctx.editor, Entity{ entt::null });
                 return json{ { "path", path } };
             });
@@ -198,6 +251,7 @@ namespace se
                     return Err(result.error());
                 }
                 ctx.editor.scenePath = path;
+                ctx.editor.sceneVersion += 1;
                 setSelection(ctx.editor, Entity{ entt::null });
                 return json{ { "path", path } };
             });
@@ -231,6 +285,18 @@ namespace se
                     return json{ { "target", target }, { "path", path }, { "pending", true } };
                 }
                 return Err(std::format("unknown target '{}' (viewport|window)", target));
+            });
+
+        registerCommand(reg, "get-thumbnail", "get-thumbnail {asset:id|name, size=128} — base64 PNG preview",
+            [](EngineContext& ctx, const json& params) -> Result<json>
+            {
+                return thumbnailResult(ctx, params, 128);
+            });
+
+        registerCommand(reg, "view-asset", "view-asset {asset:id|name, size=512} — larger base64 PNG preview",
+            [](EngineContext& ctx, const json& params) -> Result<json>
+            {
+                return thumbnailResult(ctx, params, 512);
             });
 
         registerCommand(reg, "quit", "close the running app",
