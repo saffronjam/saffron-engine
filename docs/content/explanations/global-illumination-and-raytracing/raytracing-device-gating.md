@@ -6,7 +6,7 @@ weight = 7
 # RT device gating
 
 Ray tracing is optional. The KHR acceleration-structure and ray-query extensions aren't on every
-device, and the engine targets Vulkan 1.3 with mostly static dispatch — but the extension entry
+device, and the engine targets Vulkan 1.4 with mostly static dispatch — but the extension entry
 points aren't statically exported by the loader. So RT support is *detected* at device bring-up,
 the extensions and features are enabled only when present, and the few AS entry points are resolved
 manually through `vkGetDeviceProcAddr`. Everything keys off one flag: `rtSupported`.

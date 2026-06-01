@@ -9,11 +9,11 @@ Bringing up Vulkan means picking an instance, a physical device, a logical devic
 
 ## Instance and surface
 
-`vkb::InstanceBuilder` sets the app/engine names, requires API version 1.3, turns on validation layers, and installs the default debug messenger. SDL3 supplies the platform surface extensions via `SDL_Vulkan_GetInstanceExtensions`. The window surface comes from SDL directly — `SDL_Vulkan_CreateSurface` produces a raw `VkSurfaceKHR` wrapped as `vk::SurfaceKHR`.
+`vkb::InstanceBuilder` sets the app/engine names, requires API version 1.4, turns on validation layers, and installs the default debug messenger. SDL3 supplies the platform surface extensions via `SDL_Vulkan_GetInstanceExtensions`. The window surface comes from SDL directly — `SDL_Vulkan_CreateSurface` produces a raw `VkSurfaceKHR` wrapped as `vk::SurfaceKHR`.
 
 ## Feature negotiation
 
-The engine doesn't want a bare 1.3 device. It needs specific feature bits across three feature structs, declared before selection and required during it:
+The engine doesn't want a bare 1.4 device. It needs specific feature bits across three feature structs, declared before selection and required during it:
 
 - **1.3:** `dynamicRendering` and `synchronization2` — the two pillars the whole renderer is built on (see [dynamic rendering](../dynamic-rendering/) and [barriers](../synchronization2-and-barriers/)). No render-pass objects, no legacy barriers.
 - **1.2:** descriptor-indexing bits for [bindless textures](../../materials-and-pipelines/bindless-textures/) (`runtimeDescriptorArray`, `descriptorBindingPartiallyBound`, `descriptorBindingSampledImageUpdateAfterBind`, `shaderSampledImageArrayNonUniformIndexing`) plus `bufferDeviceAddress` (needed by KHR acceleration structures).
@@ -39,7 +39,7 @@ The KHR AS/ray-query entry points aren't statically exported by the loader, so w
 
 ```mermaid
 flowchart TD
-    A[InstanceBuilder: 1.3 + validation + SDL exts] --> B[SDL_Vulkan_CreateSurface]
+    A[InstanceBuilder: 1.4 + validation + SDL exts] --> B[SDL_Vulkan_CreateSurface]
     B --> C[PhysicalDeviceSelector<br/>require 1.1/1.2/1.3 features + surface]
     C --> D{AS + ray-query<br/>present?}
     D -- yes --> E[query + chain RT features]

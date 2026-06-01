@@ -92,7 +92,7 @@ in one `pipelineBarrier2`, then runs the body. A graphics pass first opens a dyn
 scope from the tracked image views (`beginRendering`, a full-area viewport and scissor) and
 closes it after; a compute pass just runs.
 
-There are no `VkRenderPass` or `VkFramebuffer` objects here. The engine targets Vulkan 1.3, so
+There are no `VkRenderPass` or `VkFramebuffer` objects here. The engine targets Vulkan 1.4, so
 attachments bind per-pass through dynamic rendering, which is exactly what a per-frame graph
 wants.
 

@@ -5,7 +5,7 @@ weight = 5
 
 # Dynamic rendering
 
-Classic Vulkan binds attachments through `VkRenderPass` and `VkFramebuffer` objects you build up front and match against your pipelines. The engine has none. It targets Vulkan 1.3 and binds attachments per pass at record time with `beginRendering` / `endRendering`. There is not a single render-pass or framebuffer object anywhere.
+Classic Vulkan binds attachments through `VkRenderPass` and `VkFramebuffer` objects you build up front and match against your pipelines. The engine has none. It targets Vulkan 1.4 and binds attachments per pass at record time with `beginRendering` / `endRendering`. There is not a single render-pass or framebuffer object anywhere.
 
 The reason is that the pass set changes per frame. Shadows, G-buffer, AO, SSGI, DDGI, and ReSTIR passes all come and go with toggles. A render-pass renderer would have to declare attachment formats and subpass dependencies up front, build framebuffers bound to specific image views, and keep pipelines compatible with the pass they run in — a lot of static plumbing for a moving target. Dynamic rendering makes a pass just a closure plus a list of image views.
 

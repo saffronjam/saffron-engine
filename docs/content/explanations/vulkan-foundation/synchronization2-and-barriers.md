@@ -49,7 +49,7 @@ A write after any prior touch is a hazard (WAW or WAR); a read after a write is 
 
 ## Why synchronization2
 
-The original barriers split stage and access into separate top-level fields and couldn't express per-barrier stage masks cleanly. `synchronization2` folds stage+access into one scope per side, lets image and buffer barriers share a `DependencyInfo`, and pairs with [dynamic rendering](../dynamic-rendering/) — both are Vulkan 1.3 core. Targeting 1.3 means the engine can assume them and carry no fallback path.
+The original barriers split stage and access into separate top-level fields and couldn't express per-barrier stage masks cleanly. `synchronization2` folds stage+access into one scope per side, lets image and buffer barriers share a `DependencyInfo`, and pairs with [dynamic rendering](../dynamic-rendering/) — both are Vulkan 1.3 core. Targeting 1.4 means the engine can assume them and carry no fallback path.
 
 ## In the code
 
