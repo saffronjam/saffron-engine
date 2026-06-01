@@ -1,7 +1,38 @@
 # Phase 4: Screen-Space GI / AO (GTAO, SSGI, SSR)
 
-**Status:** IN PROGRESS
+**Status:** COMPLETED
 <!-- Flip to COMPLETED when the "Done when" checklist passes, validation-clean. Delete this file only after COMPLETED + merged. -->
+
+<!--
+COMPLETED 2026-06-01 (commits 22e53fc MRT, c241947 GTAO, 8814c04 denoise+contact+SSGI),
+validation-clean under headless weston across the full screen-space chain.
+- MRT infra: RgPass.color -> RgPass.colors vector (executeRenderGraph loops; per-attachment
+  MSAA resolve). Reused by phase 5 TAA.
+- Thin G-buffer: a prepass (gbuffer.slang) writes view-space normal (rgb) + view-Z (a) into
+  one rgba16f target + its own depth; runs when ANY screen effect is on.
+- GTAO + denoise: gtao.slang (HBAO-style hemisphere, r8) then ao_blur.slang (depth-aware 5x5
+  bilateral). AO multiplies the INDIRECT/ambient term only.
+- Contact shadows: contact.slang marches a short ray toward the sun (view space) vs the
+  G-buffer depth; darkens the DIRECTIONAL direct term (a fine-detail supplement to phase-3
+  shadow maps).
+- SSGI: ssgi.slang marches cosine-hemisphere rays vs depth, gathers the PREVIOUS frame's
+  linear-HDR color (copy_color.slang captures it into a persistent prevColor before the
+  in-place tonemap), adds one bounce into the indirect term (x albedo x AO).
+- Mesh set 4 widened to {AO, contact, SSGI}; light-UBO counts.w + screenFlags.xy gate each.
+  Two shared compute set layouts (2- and 3-binding) back the passes. Targets recreate with
+  the viewport (recreateSsaoTargets).
+- se set-ssao / set-contact-shadows / set-ssgi; render-stats reports all three.
+- KEY BUG FIXED: prevColor is read by SSGI + written by copy_color in the same frame; it
+  must be imported ONCE (a 2nd import mis-tracks layout -> VUID-vkCmdDispatch-imageLayout-00344)
+  and rest in ShaderReadOnly between frames (a trailing barrier-only "restore" pass).
+- Verified: AO darkens creases (14% px); SSGI bounces red from a wall onto a white box
+  (left-face R-G -11 -> -8); VAL=0.
+
+NOT done (deliberately): SSR (Step 5) — the plan marks it OPTIONAL; needs a Hi-Z pyramid +
+cubemap fallback, a separate effort. SSGI-result denoise (bilateral/temporal) is a noted
+refinement (current SSGI has mild noise) — phase 5's history could feed it later.
+-->
+
 
 <!--
 DONE 2026-06-01 (the MRT infra + thin G-buffer + GTAO ambient-occlusion slice;
