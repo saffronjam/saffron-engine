@@ -265,6 +265,21 @@ Working and verified (validation-clean) in the toolbox:
   into the offscreen via a graph resolve attachment; PSOs bake the sample count) for clean geometry edges, and
   **FXAA** (a compute post-process on a 1x scratch → offscreen) as the cheap alternative. Default off; `render-stats`
   reports `aa`.
+- ✅ **Skybox + scene environment** (`plans/skybox/` phases 1-5; `se get/set-environment`): a
+  `SceneEnvironment` on `Scene` (`SkyMode {Color,Texture,Procedural}`, clear/sky/ambient fields;
+  `SceneVersion` 1→2 migration) drives a fullscreen visible-sky pass (`sky.slang`) drawn before the
+  scene pass into the AA-chosen color target (loadOp flips Clear→Load). **Procedural reuses the baked
+  IBL `envCube`**, so background and lighting share one source; the procedural sun follows the scene's
+  directional light via an on-demand IBL re-bake (`requestEnvBake`, dirty-gated, consumed GPU-idle in
+  `beginFrameGraph`). **HDR**: `.hdr` panoramas decode (`stbi_loadf`) + upload as **rgba16f** via
+  `uploadTextureFloat` into the same bindless array (per-asset `AssetEntry.hdr`, no version bump);
+  a `SkyMode::Texture` HDR panorama drives both the visible sky and the IBL through
+  `ibl_equirect.slang` (`EnvSource::Equirect`). DDGI reads the scene sky color. Two gotchas: sample
+  the equirect panorama through the **eRepeat** `linearSampler` (not the eClampToEdge `ibl.sampler`,
+  which seams the meridian); `destroyRenderer` must `ibl.envPanorama.reset()` before
+  `vmaDestroyAllocator`. In Texture mode the baked IBL ignores `skyRotation`/`skyIntensity` (applied
+  by the sky pass only) — a documented future seam. Phases 6-8 (reflection probes, procedural
+  atmosphere, clouds/time-of-day) are roadmap.
 
 Not done yet (planned):
 - **PBR** (metallic/roughness/normal maps — tangents + `materialSlot` per-submesh multi-material are reserved),
