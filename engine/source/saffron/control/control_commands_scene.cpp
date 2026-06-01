@@ -360,5 +360,40 @@ namespace se
                 ctx.editor.camera.position = target - editorCameraForward(ctx.editor.camera) * 5.0f;
                 return entityRef(ctx.editor.scene, *entity);
             });
+
+        registerCommand(reg, "get-environment", "get-environment — dump the scene sky/environment settings",
+            [](EngineContext& ctx, const json&) -> Result<json>
+            {
+                return environmentToJson(ctx.editor.scene.environment);
+            });
+
+        // Merges the provided fields over the current environment (same wire shape as the
+        // scene file's "environment" block) so unspecified fields are preserved. Pass a typed
+        // object via --json for numeric/bool fields; individual named flags also overlay.
+        registerCommand(reg, "set-environment",
+            "set-environment {--json {...} | skyMode?:color|texture|procedural, clearColor?:{x,y,z}, "
+            "skyTexture?:uuid, skyIntensity?, skyRotation?, visible?:bool, useSkyForAmbient?:bool, "
+            "ambientColor?:{x,y,z}, ambientIntensity?}",
+            [](EngineContext& ctx, const json& params) -> Result<json>
+            {
+                json body = environmentToJson(ctx.editor.scene.environment);
+                const json blob = positionalOr(params, "json", 0);
+                if (blob.is_object())
+                {
+                    for (auto it = blob.begin(); it != blob.end(); ++it) { body[it.key()] = it.value(); }
+                }
+                if (params.contains("skyMode")) { body["skyMode"] = params["skyMode"]; }
+                if (params.contains("clearColor")) { body["clearColor"] = params["clearColor"]; }
+                if (params.contains("skyTexture")) { body["skyTexture"] = params["skyTexture"]; }
+                if (params.contains("skyIntensity")) { body["skyIntensity"] = params["skyIntensity"]; }
+                if (params.contains("skyRotation")) { body["skyRotation"] = params["skyRotation"]; }
+                if (params.contains("exposure")) { body["exposure"] = params["exposure"]; }
+                if (params.contains("visible")) { body["visible"] = params["visible"]; }
+                if (params.contains("useSkyForAmbient")) { body["useSkyForAmbient"] = params["useSkyForAmbient"]; }
+                if (params.contains("ambientColor")) { body["ambientColor"] = params["ambientColor"]; }
+                if (params.contains("ambientIntensity")) { body["ambientIntensity"] = params["ambientIntensity"]; }
+                ctx.editor.scene.environment = environmentFromJson(body);
+                return environmentToJson(ctx.editor.scene.environment);
+            });
     }
 }

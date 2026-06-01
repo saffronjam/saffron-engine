@@ -105,6 +105,11 @@ export namespace se
     /// and must unregister it when `open` transitions from true to false.
     void viewerPanel(bool& open, const char* title, ImTextureID previewId);
 
+    /// Scene environment / sky settings panel — edits ctx.scene.environment in place.
+    /// `thumbnailFor` lets the Texture-mode sky picker show asset thumbnails.
+    void environmentPanel(EditorContext& ctx,
+                          const std::function<ImTextureID(const AssetEntry&)>& thumbnailFor);
+
     void drawEditorMenuBar(EditorContext& ctx);
 
     // The editor camera's forward (world space) from its yaw/pitch.

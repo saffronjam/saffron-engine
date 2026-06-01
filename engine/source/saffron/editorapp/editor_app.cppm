@@ -341,6 +341,7 @@ export namespace se
                 }
 
                 se::hierarchyPanel(*state->editor);
+                se::environmentPanel(*state->editor, thumbnailFor);
                 se::assetCatalogPanel(*state->editor, &state->assets.catalog, thumbnailFor,
                                       onView, state->eyeIcon.id);
                 {

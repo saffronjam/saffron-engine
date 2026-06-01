@@ -195,9 +195,37 @@ export namespace se
         }
     }
 
+    // How the visible sky background is produced. Color = a flat fill; Texture = an
+    // equirectangular panorama asset; Procedural = the renderer's baked procedural-sky
+    // environment cube (the same cube that feeds IBL, so background and lighting match).
+    enum class SkyMode
+    {
+        Color,
+        Texture,
+        Procedural,
+    };
+
+    // Scene-wide environment / sky state. Global frame state (no transform, not picked,
+    // not in the hierarchy), so it lives on the Scene rather than as an entity component.
+    // The renderer resolves it into a SkyRenderSettings each frame (see renderScene).
+    struct SceneEnvironment
+    {
+        SkyMode skyMode = SkyMode::Procedural;
+        glm::vec3 clearColor{ 0.05f, 0.06f, 0.08f };  // Color mode + clear fallback
+        Uuid skyTexture;                              // Texture mode panorama; 0 = none
+        f32 skyIntensity = 1.0f;
+        f32 skyRotation = 0.0f;                       // yaw radians applied to the sky lookup
+        f32 exposure = 1.0f;                          // reserved; tonemap exposure is set via the renderer
+        bool visible = true;
+        bool useSkyForAmbient = true;                 // drive fallback ambient from ambientColor below
+        glm::vec3 ambientColor{ 1.0f };               // non-IBL fallback ambient tint
+        f32 ambientIntensity = 0.15f;
+    };
+
     struct Scene
     {
         entt::registry registry;
+        SceneEnvironment environment;
         const AssetCatalog* catalog = nullptr;  // borrowed; set per-frame by the client, not owned or serialized
     };
 
@@ -330,9 +358,70 @@ export namespace se
                           jsonF32Or(j, "z", 1.0f), jsonF32Or(j, "w", 1.0f) };
     }
 
+    auto skyModeName(SkyMode mode) -> const char*
+    {
+        switch (mode)
+        {
+            case SkyMode::Color: return "color";
+            case SkyMode::Texture: return "texture";
+            case SkyMode::Procedural: return "procedural";
+        }
+        return "procedural";
+    }
+
+    auto skyModeFromName(const std::string& name) -> SkyMode
+    {
+        if (name == "color") { return SkyMode::Color; }
+        if (name == "texture") { return SkyMode::Texture; }
+        if (name == "procedural") { return SkyMode::Procedural; }
+        logWarn(std::format("unknown sky mode '{}', defaulting to procedural", name));
+        return SkyMode::Procedural;
+    }
+
+    auto environmentToJson(const SceneEnvironment& env) -> nlohmann::json
+    {
+        return nlohmann::json{
+            { "skyMode", skyModeName(env.skyMode) },
+            { "clearColor", vec3ToJson(env.clearColor) },
+            { "skyTexture", env.skyTexture.value },
+            { "skyIntensity", env.skyIntensity },
+            { "skyRotation", env.skyRotation },
+            { "exposure", env.exposure },
+            { "visible", env.visible },
+            { "useSkyForAmbient", env.useSkyForAmbient },
+            { "ambientColor", vec3ToJson(env.ambientColor) },
+            { "ambientIntensity", env.ambientIntensity },
+        };
+    }
+
+    // Reads an environment block, filling defaults for any missing field (so a partial or
+    // absent block — e.g. a migrated v1 scene — yields a sensible default environment).
+    auto environmentFromJson(const nlohmann::json& j) -> SceneEnvironment
+    {
+        SceneEnvironment env;
+        if (!j.is_object())
+        {
+            return env;
+        }
+        env.skyMode = skyModeFromName(jsonStringOr(j, "skyMode", "procedural"));
+        if (j.contains("clearColor")) { env.clearColor = vec3FromJson(j["clearColor"]); }
+        env.skyTexture = Uuid{ jsonU64Or(j, "skyTexture", 0) };
+        env.skyIntensity = jsonF32Or(j, "skyIntensity", 1.0f);
+        env.skyRotation = jsonF32Or(j, "skyRotation", 0.0f);
+        env.exposure = jsonF32Or(j, "exposure", 1.0f);
+        env.visible = jsonBoolOr(j, "visible", true);
+        env.useSkyForAmbient = jsonBoolOr(j, "useSkyForAmbient", true);
+        if (j.contains("ambientColor")) { env.ambientColor = vec3FromJson(j["ambientColor"]); }
+        env.ambientIntensity = jsonF32Or(j, "ambientIntensity", 0.15f);
+        return env;
+    }
+
     // ComponentTraits is a struct of std::function fields (a Go-interface itable);
     // every cross-cutting feature dispatches through it instead of a switch.
-    inline constexpr int SceneVersion = 1;
+    //
+    // Version history: 1 = entities only; 2 = adds the top-level "environment" block.
+    // sceneFromJson migrates a v1 document by defaulting the environment.
+    inline constexpr int SceneVersion = 2;
 
     struct ComponentTraits
     {
@@ -466,6 +555,7 @@ export namespace se
     {
         nlohmann::json doc;
         doc["version"] = SceneVersion;
+        doc["environment"] = environmentToJson(scene.environment);
         doc["entities"] = nlohmann::json::array();
         forEach<IdComponent>(scene, [&](Entity entity, IdComponent& id)
         {
@@ -485,7 +575,7 @@ export namespace se
             return Err(std::string{ "scene root is not an object" });
         }
         const int version = static_cast<int>(jsonU64Or(doc, "version", 0));
-        if (version != SceneVersion)
+        if (version < 1 || version > SceneVersion)
         {
             return Err(std::format("unsupported scene version {}", version));
         }
@@ -493,6 +583,9 @@ export namespace se
         {
             return Err(std::string{ "scene missing 'entities' array" });
         }
+
+        // v1 has no "environment" block; environmentFromJson defaults it. v2+ carries one.
+        scene.environment = environmentFromJson(doc.contains("environment") ? doc["environment"] : nlohmann::json{});
 
         scene.registry.clear();
         std::unordered_map<u64, entt::entity> uuidToHandle;

@@ -571,6 +571,7 @@ namespace se
                 const ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, nullptr, nullptr);
                 ImGui::DockBuilderDockWindow("Hierarchy", left);
                 ImGui::DockBuilderDockWindow("Inspector", leftBottom);
+                ImGui::DockBuilderDockWindow("Environment", leftBottom);
                 ImGui::DockBuilderDockWindow("Assets", bottom);
                 ImGui::DockBuilderDockWindow("Viewport", center);
                 ImGui::DockBuilderFinish(dockId);

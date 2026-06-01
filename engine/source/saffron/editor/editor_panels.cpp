@@ -188,6 +188,41 @@ namespace se
         }
     }
 
+    void environmentPanel(EditorContext& ctx,
+                          const std::function<ImTextureID(const AssetEntry&)>& thumbnailFor)
+    {
+        if (ImGui::Begin("Environment"))
+        {
+            SceneEnvironment& env = ctx.scene.environment;
+
+            const char* modes[] = { "Color", "Texture", "Procedural" };
+            int modeIndex = static_cast<int>(env.skyMode);
+            if (ImGui::Combo("Sky Mode", &modeIndex, modes, 3))
+            {
+                env.skyMode = static_cast<SkyMode>(modeIndex);
+            }
+
+            if (env.skyMode == SkyMode::Color)
+            {
+                ImGui::ColorEdit3("Clear Color", &env.clearColor.x);
+            }
+            else if (env.skyMode == SkyMode::Texture)
+            {
+                drawAssetPicker(ctx.scene, AssetType::Texture, "Sky Texture", env.skyTexture, thumbnailFor);
+            }
+
+            ImGui::DragFloat("Intensity", &env.skyIntensity, 0.01f, 0.0f, 100.0f);
+            ImGui::DragFloat("Rotation", &env.skyRotation, 0.01f, -6.2831855f, 6.2831855f);
+            ImGui::Checkbox("Visible", &env.visible);
+
+            ImGui::Separator();
+            ImGui::Checkbox("Use Sky For Ambient", &env.useSkyForAmbient);
+            ImGui::ColorEdit3("Ambient Color", &env.ambientColor.x);
+            ImGui::DragFloat("Ambient Intensity", &env.ambientIntensity, 0.005f, 0.0f, 10.0f);
+        }
+        ImGui::End();
+    }
+
     void assetCatalogPanel(EditorContext& ctx, AssetCatalog* catalog,
                            const std::function<ImTextureID(const AssetEntry&)>& thumbnailFor,
                            const std::function<void(const AssetEntry&)>& onView,
