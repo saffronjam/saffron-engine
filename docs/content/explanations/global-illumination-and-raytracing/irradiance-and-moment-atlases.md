@@ -1,0 +1,99 @@
++++
+title = 'Probe atlases'
+weight = 5
+math = true
++++
+
+# Probe atlases
+
+The traced rays are raw radiance samples; they have to become something the mesh fragment can read
+with one filtered lookup. DDGI keeps two octahedral atlases per probe volume: an **irradiance**
+atlas (directional incoming light) and a **moment** atlas (mean and mean-squared hit distance, for
+the Chebyshev visibility test). Both are integrated from the ray image, blended temporally, and
+gutter-fixed so bilinear sampling never reads across a tile edge.
+
+Each probe occupies one tile in each atlas. A tile is an `interior × interior` block of octahedral
+texels plus a one-texel gutter on every side, so its full size is `interior + 2`. The irradiance
+atlas uses an 8×8 interior (`DdgiIrrInterior`); the moment atlas uses 16×16 (`DdgiDistInterior`),
+since distance needs more directional resolution to localize occluders.
+
+## Integrating rays into a texel
+
+`ddgi_blend_irradiance.slang` runs one thread per interior texel. The texel maps back to a
+direction $\mathbf{d}_\text{texel}$ via octahedral *decode*, and the shader integrates every ray
+weighted by the clamped cosine between the texel direction and the ray direction:
+
+$$
+E(\mathbf{d}_\text{texel}) = \frac{\sum_r \max(0,\ \mathbf{d}_\text{texel}\cdot\mathbf{d}_r)\; L_r}
+{\sum_r \max(0,\ \mathbf{d}_\text{texel}\cdot\mathbf{d}_r)}
+$$
+
+This is a cosine-weighted hemispherical gather — exactly the irradiance a Lambertian surface facing
+$\mathbf{d}_\text{texel}$ would receive. The shader rebuilds each ray's direction with the same
+Fibonacci formula the trace used.
+
+## The moment atlas
+
+`ddgi_blend_distance.slang` is the same gather, but it stores distance moments with a much sharper
+weight. For each texel it accumulates the mean and mean-squared hit distance:
+
+$$
+\overline{r} = \frac{\sum_r w_r\, d_r}{\sum_r w_r}, \qquad
+\overline{r^2} = \frac{\sum_r w_r\, d_r^2}{\sum_r w_r}, \qquad
+w_r = \max(0,\ \mathbf{d}_\text{texel}\cdot\mathbf{d}_r)^{50}
+$$
+
+The power-50 cosine makes each texel pull almost entirely from rays aligned with it, so a distance
+texel localizes the occluder in *its* direction rather than averaging the whole hemisphere. Those
+two moments ($\overline{r}$, $\overline{r^2}$) are stored in an `rg16f` texel and are what
+[probe sampling](../probe-volume-and-sampling/) reads back for the Chebyshev variance bound.
+
+## Temporal hysteresis
+
+Neither atlas is overwritten outright. The new integral is lerped against the previous frame's
+value with a high history weight ($\alpha = 0.95$, `DdgiHysteresis`):
+
+$$
+A_t = \operatorname{lerp}(A_\text{new},\ A_{t-1},\ \alpha)
+$$
+
+so each frame nudges the atlas 5% toward the new estimate. That suppresses the noise of only 64
+rays per frame — over ~20 frames the volume converges to a smooth, many-sample result. On the first
+frame after enable or resize, `firstFrame` forces $\alpha = 0$ so there's no stale history to blend
+in.
+
+## The octahedral border wrap
+
+Hardware bilinear filtering across a tile's interior samples its edge texels, which on an
+octahedral map have to wrap to the *opposite* fold of the octahedron, not to the neighbouring tile.
+`ddgi_border.slang` runs after the irradiance blend and copies each gutter texel from its mirrored
+interior source:
+
+- **Corner** texels copy from the diagonally-opposite interior corner.
+- **Edge** texels copy from the same edge with the run reversed (the octahedron's fold mirrors the
+  coordinate: $\text{src} = \text{last} - (\ell - 1)$).
+
+Without this, a probe lit from one direction would show a dark seam where bilinear sampling crossed
+the tile edge into the gutter. The blend passes early-out on the gutter texels, leaving the border
+pass as their sole writer.
+
+## In the code
+
+| What | File | Symbols |
+|---|---|---|
+| Irradiance integration + blend | `ddgi_blend_irradiance.slang` | `computeMain`, `octDecode` |
+| Distance moments + sharp weight | `ddgi_blend_distance.slang` | `computeMain`, the `pow(..., 50.0)` weight |
+| Octahedral gutter wrap | `ddgi_border.slang` | `computeMain` (corner / edge cases) |
+| Tile sizes + hysteresis | `renderer_detail.cppm` | `DdgiIrrInterior`, `DdgiDistInterior`, `DdgiHysteresis` |
+| Blend/border graph passes | `renderer.cppm` | `ddgi-blend-irr`, `ddgi-blend-dist`, `ddgi-border` |
+
+> [!NOTE]
+> The border pass only fixes the *irradiance* atlas. The moment atlas's Chebyshev read in
+> `mesh.slang` samples interior texels directly via `ddgiAtlasUv`, so it tolerates its gutter being
+> unwrapped — the distance term is robust to the small bilinear error at tile edges.
+
+## Related
+
+- [Probe sampling](../probe-volume-and-sampling/) — how the atlases are read back, with the Chebyshev math
+- [Software ray trace](../software-ray-trace/) — produces the ray radiance + distance these integrate
+- [DDGI overview](../ddgi-overview/) — where the blend/border passes sit in the frame

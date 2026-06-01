@@ -1,0 +1,74 @@
++++
+title = 'IBL overview'
+weight = 1
+math = true
++++
+
+# IBL overview
+
+[Direct lighting](../../lighting-and-brdf/cook-torrance-brdf/) only accounts for the sun and the punctual lights. Everything else a surface sees — the sky, the bounce off nearby geometry, the general fill of a room — is the indirect, or *ambient*, term. Image-based lighting computes that term by treating an environment as a light source and integrating the [Cook-Torrance BRDF](../../lighting-and-brdf/cook-torrance-brdf/) against it.
+
+That integral is too expensive to evaluate per pixel per frame. So the engine precomputes three small textures from the environment once at startup, then the mesh shader samples them.
+
+## Split-sum approximation
+
+Reflected radiance from an environment is the BRDF integrated over the hemisphere:
+
+$$
+L_o(v) = \int_\Omega f(l, v)\, L_i(l)\, (n \cdot l)\, dl
+$$
+
+There is no closed form, and Monte-Carlo sampling it per fragment is far too slow for real time. The split-sum approximation (Karis, *Real Shading in Unreal Engine 4*) factors the specular part into two integrals that each precompute into a lookup:
+
+$$
+\int_\Omega f\, L_i\, (n\cdot l)\, dl \;\approx\;
+\underbrace{\left(\frac{1}{N}\sum L_i(l_k)\right)}_{\text{prefiltered env}}
+\;\cdot\;
+\underbrace{\int_\Omega f\,(n\cdot l)\, dl}_{\text{BRDF LUT}}
+$$
+
+The first factor is the environment prefiltered by roughness: a cubemap whose mip chain holds progressively blurrier reflections. The second depends only on $n\cdot v$, roughness, and $F_0$. Since it is environment-independent, it bakes into a single 2D table reused across scenes. Diffuse is handled separately by a cosine-weighted irradiance convolution.
+
+## Three baked textures
+
+The engine bakes one environment (a procedural sky) into:
+
+| Texture | What it holds | Page |
+|---|---|---|
+| Irradiance cube | cosine-weighted diffuse over the hemisphere | [Diffuse irradiance](../diffuse-irradiance/) |
+| Prefiltered cube | GGX-blurred specular, one mip per roughness | [Specular prefilter](../specular-prefilter/) |
+| BRDF LUT | the Fresnel scale/bias split-sum factor | [BRDF LUT](../brdf-lut/) |
+
+All three are baked once by [the bake pass](../ibl-bake-pass/) and bound as set 3 in the mesh pipeline.
+
+## How the mesh shader uses them
+
+The ambient block in `fragmentMain` reads all three and assembles diffuse plus specular. Diffuse samples the irradiance cube along the normal $n$ and scales by the energy-conservation factor $k_d$, computed with `fresnelSchlickRoughness` so rough surfaces don't over-reflect at grazing angles. Specular samples the prefiltered cube along the reflection vector $R$ at a mip chosen by roughness, then applies the LUT — `F0 * ab.x + ab.y` is the split-sum scale and bias.
+
+```hlsl
+float3 diffuseIBL  = kd * irradianceMap.SampleLevel(n, 0.0).rgb * albedo;
+float3 prefiltered = prefilteredMap.SampleLevel(R, roughness * IblPrefilterMaxMip).rgb;
+float2 ab          = brdfLut.SampleLevel(float2(ndotv, roughness), 0.0).rg;
+ambient = diffuseIBL + prefiltered * (F0 * ab.x + ab.y);
+```
+
+## When it replaces flat ambient
+
+IBL is the default. It runs whenever `globals.counts.z != 0`, which is `useIbl && ibl.ready`. Disabling it (`se set-ibl 0`) falls back to a flat scalar — `albedo * (1 - metallic) * ambient` — that the directional-light setup carries. The flat version has no directionality and no specular reflection, which is exactly what IBL adds.
+
+## In the code
+
+| What | File | Symbols |
+|---|---|---|
+| Ambient assembly + set-3 bindings | `mesh.slang` | `fragmentMain` ambient block, `irradianceMap`, `prefilteredMap`, `brdfLut`, `IblPrefilterMaxMip` |
+| IBL-on flag | `renderer_lighting.cpp` | `iblFlag` → `counts.z` |
+| Toggle + default | `renderer.cppm` | `setIbl`, `useIbl` (default `true`) |
+| Control command | `control_commands_render.cpp` | `set-ibl` |
+
+## Related
+
+- [Cook-Torrance BRDF](../../lighting-and-brdf/cook-torrance-brdf/) — the BRDF this integrates
+- [Diffuse irradiance](../diffuse-irradiance/) — the diffuse cube
+- [Specular prefilter](../specular-prefilter/) — the roughness-mipped specular cube
+- [BRDF LUT](../brdf-lut/) — the split-sum scale/bias table
+- [HDR and exposure](../../lighting-and-brdf/hdr-and-exposure/) — the linear radiance space

@@ -1,0 +1,72 @@
++++
+title = 'Brute-force fallback'
+weight = 7
++++
+
+# Brute-force fallback
+
+The fragment shader can loop every light instead of just its froxel's. That brute-force path
+is the reference: simpler, slower, and the ground truth the [clustered](../clustered-forward/)
+path is validated against. `se set-clustered 0` flips to it at runtime.
+
+## One flag, two loops
+
+The flag rides in the cluster params (`screenSize.z`), set from `useClustered` in
+`setClusterCamera`. When it is zero there is no cluster lookup at all, and the loop runs over
+the full light count from the lighting UBO:
+
+```hlsl
+else
+{
+    for (uint i = 0; i < globals.counts.x; i = i + 1)
+    {
+        lo += punctual(lights[i], i, input.worldPos, n, v, albedo, metallic, roughness);
+    }
+}
+```
+
+The body is the same `punctual(...)` call the clustered loop makes; only the iteration set
+differs. When the flag is off, `clusterDispatchPending` is never set, so the
+[cull pass](../clustered-forward/) is not even added to the render graph that frame.
+
+## Why the two paths match
+
+The clustered and brute-force paths produce pixel-identical images, by construction. Both
+call the same `punctual` → `brdf` functions, so a given light shades a fragment the same way
+either way. And a light is added to a froxel only when its `range` sphere overlaps, while
+punctual [attenuation](../punctual-lights-and-attenuation/) is windowed to reach exactly zero
+at `range`. So any light the clustered loop skips would have contributed exactly zero anyway.
+
+Summing a set of lights where the omitted ones are all zero gives the same result as summing
+all of them. Float summation order can differ, but every dropped term is a hard zero, so
+there is nothing to perturb the result. Toggling `se set-clustered` between 1 and 0
+reproduces the same frame.
+
+## What it is for
+
+Cluster culling has several places to get a sign or a slice boundary wrong: the exponential Z
+mapping, the AABB construction, the flat index encoding. Diffing a clustered frame against the
+brute-force frame is the cheapest way to catch those. It is also the safe default when the
+light count is small enough that culling is not worth the compute dispatch.
+
+## In the code
+
+| What | File | Symbols |
+|---|---|---|
+| The two loops | `mesh.slang` | `fragmentMain` — `clusterParams.screenSize.z` branch |
+| Shared per-light body | `mesh.slang` | `punctual`, `brdf` |
+| The flag | `renderer_lighting.cpp` | `setClustered`, `clusteredEnabled` |
+| Skipping the cull pass | `renderer_lighting.cpp` | `clusterDispatchPending` |
+
+> [!TIP]
+> The brute-force loop reads `globals.counts.x` (the full count); the clustered loop reads a
+> per-froxel `count` bounded by [the 64-light cap](../per-cluster-cap/). With more than 64
+> lights overlapping a froxel the two paths can diverge — the brute-force loop sees every
+> light, the clustered one drops the overflow. Pixel-identity holds below the cap.
+
+## Related
+
+- [Clustered forward](../clustered-forward/) — the optimized path this validates
+- [Cluster indexing](../cluster-indexing/) — what the clustered branch does instead
+- [Per-cluster cap](../per-cluster-cap/) — the one case where the paths can differ
+- [Punctual lights and attenuation](../punctual-lights-and-attenuation/) — the body both loops share

@@ -1,0 +1,94 @@
++++
+title = 'Acceleration structures'
+weight = 6
++++
+
+# Acceleration structures
+
+The hardware ray-tracing path traces real triangles, not the voxel proxy. It needs two
+acceleration structures: a per-mesh **BLAS** (bottom-level, the triangles) built once on upload,
+and a per-frame **TLAS** (top-level, the scene's instances) rebuilt every frame. The TLAS lets a
+ray query the whole scene by walking instances down into their meshes' triangles. Both are owned as
+RAII meta-layer resources and fed buffer device addresses.
+
+> [!NOTE]
+> The RT path is feature-gated (see [device gating](../raytracing-device-gating/)). On the
+> software dev GPU it runs at roughly 1 FPS, so it's correctness-validated and waits on real
+> ray-tracing hardware.
+
+## The acceleration-structure resource
+
+A BLAS and a TLAS are the same `AccelerationStructure` type: a move-only wrapper owning the
+`vk::AccelerationStructureKHR` handle, its backing device buffer, and its device address. Like
+every [meta-layer resource](../../vulkan-foundation/) it frees itself in order (handle, then
+buffer) before the allocator. It destroys through a resolved function pointer because the destroy
+entry point isn't statically exported.
+
+`createAccelStructure` is the shared constructor: it allocates the storage buffer (with
+`ACCELERATION_STRUCTURE_STORAGE` + `SHADER_DEVICE_ADDRESS` usage), calls
+`vkCreateAccelerationStructureKHR`, then fetches the AS device address. The caller records the
+build separately.
+
+## One BLAS per mesh, built on upload
+
+`buildBlas` builds a bottom-level AS over a `GpuMesh`'s whole vertex/index buffer as a single
+triangles geometry. The vertex and index data are passed by *device address* — which is why those
+buffers, and BDA on the allocator, are enabled when RT is supported.
+
+The build queries its sizes (`getBuildSizes`), allocates the AS plus a scratch buffer, and records
+the build on a one-off command buffer with a `waitIdle` — the same synchronous shape as mesh
+upload, since it happens once at load. It uses `PREFER_FAST_TRACE` and no compaction (correctness
+first for v1). The result is stored as `GpuMesh::blas`, a `Ref` that's null when RT is unsupported.
+
+## One TLAS per frame, over the instances
+
+The TLAS references the BLASes by their device address, one `VkAccelerationStructureInstanceKHR`
+per drawn mesh instance. `renderScene` hands the frame's model matrices and meshes to `setRtScene`,
+and a graph compute pass calls `buildTlas`, which packs the instances and records the build into
+the frame's command buffer:
+
+```cpp
+VkAccelerationStructureInstanceKHR inst{};
+// VkTransformMatrixKHR is row-major 3x4; glm is column-major — transpose into rows.
+for (u32 r = 0; r < 3; r++) for (u32 c = 0; c < 4; c++)
+    inst.transform.matrix[r][c] = m[c][r];
+inst.mask = 0xFF;
+inst.accelerationStructureReference = meshes[i]->blas->address;
+```
+
+The instance buffer is host-visible, ping-ponged per in-flight frame, and grown to the next power
+of two when the instance count outgrows it. The TLAS and its scratch are (re)created only when
+capacity changes; otherwise the same TLAS is rebuilt in place. After the build, `recordTlasBuild`
+writes the new TLAS into the frame's descriptor set (set 6) and emits the AS-build→fragment-shader
+barrier itself.
+
+## The empty-TLAS seed
+
+The mesh fragment statically references the TLAS in set 6 regardless of the runtime flag, so the
+descriptor must always point at a valid AS. `seedEmptyTlas` builds a zero-instance TLAS at init and
+writes it into every frame's set. The first real per-frame build overwrites a slot on demand; until
+then, ray queries against the empty TLAS simply miss.
+
+## In the code
+
+| What | File | Symbols |
+|---|---|---|
+| The AS resource | `renderer_types.cppm` | `AccelerationStructure`, `Rt` |
+| Create / size / address | `renderer_detail.cppm` | `createAccelStructure`, `makeRtBuffer`, `bufferDeviceAddress` |
+| Per-mesh BLAS | `renderer_detail.cppm` | `buildBlas` |
+| Per-frame TLAS | `renderer_detail.cppm` | `recordTlasBuild`, `ensureTlasCapacity`, `seedEmptyTlas` |
+| Frame instance capture + build | `renderer.cppm` | `setRtScene`, `buildTlas`; `assets.cppm` · `renderScene` |
+| TLAS-build graph pass | `renderer.cppm` | `tlas-build` pass |
+
+> [!WARNING]
+> `VkTransformMatrixKHR` is a row-major 3×4; GLM is column-major. `buildTlas` transposes each model
+> matrix into rows when packing instances — skip that and instances render at the wrong transform
+> (or mirrored). The BLAS build is also a synchronous `waitIdle` per mesh, fine for load-time upload
+> but a stall if ever called per frame.
+
+## Related
+
+- [RT device gating](../raytracing-device-gating/) — how RT support is detected and the entry points resolved
+- [Ray-query shadows](../ray-query-shadows/) — the first consumer of the TLAS
+- [ReSTIR](../restir-overview/) — the second, for its one visibility ray
+- [Software ray trace](../software-ray-trace/) — the DDGI path that needs none of this

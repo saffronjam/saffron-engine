@@ -1,0 +1,84 @@
++++
+title = 'Voxel proxy'
+weight = 2
++++
+
+# Voxel proxy
+
+DDGI rays don't trace real triangles. They march through a coarse voxel copy of the scene that's
+rebuilt every frame: a 32³ 3D image where each occupied voxel stores the albedo of whatever fills
+it. Because it's a software grid, the whole DDGI trace runs on any GPU with no ray-tracing
+hardware.
+
+## The 3D image
+
+The proxy is an `Image3D` — a VMA-allocated 3D image, kept separate from the 2D `Image` type. It
+is created once at `DdgiVoxelRes`³ (32³) in `rgba16f`, with storage *and* sampled usage so the
+same image can be written by the voxelize pass and read by the trace (`newImage3D`, type `e3D`,
+usage `Storage | Sampled`).
+
+## Rasterizing AABBs, not triangles
+
+`ddgi_voxelize.slang` runs one thread per voxel (a 4×4×4 thread group over the 32³ grid). Each
+thread computes its voxel's world-space center and tests it against a small SSBO of per-draw world
+AABBs. Inside any box, the voxel stores that box's albedo with occupancy `a = 1`; otherwise it
+clears to `a = 0`.
+
+The trade is exactness for cost. A box voxelizes perfectly; an arbitrary mesh gets a coarse AABB
+fill that's too solid (a sphere becomes a cube). For a *global* diffuse GI proxy that's fine — the
+indirect bounce is low-frequency and the surface itself is shaded with real geometry. Conservative
+triangle rasterization into the grid would cost far more for a term that's blurred across probes
+anyway.
+
+## Where the boxes come from
+
+`renderScene` walks the scene's `TransformComponent` + `MeshComponent` entities and, for each,
+transforms the mesh's local AABB corners into world space to get a world AABB plus the material
+base color. Those go into three parallel arrays handed to `setDdgiScene`, which interleaves them
+`[min, max, albedo]` into the mapped box SSBO and flushes it.
+
+## Fitting the volume
+
+`setDdgiScene` also receives a volume placement, computed in `renderScene` from the scene's
+overall world AABB padded by one unit:
+
+```cpp
+const glm::vec3 volMin = sceneMin - glm::vec3{ 1.0f };
+const glm::vec3 volExt = (sceneMax + glm::vec3{ 1.0f }) - volMin;
+```
+
+The 32³ voxels and the 8×4×8 probes both span this volume, so a voxel's world size is
+`volumeExtent / 32` and probe spacing is `volumeExtent / probeCount`. Move the scene and the
+volume re-fits next frame — the proxy is never stale because it's never cached.
+
+## Layout in the graph
+
+The voxelize pass declares the 3D image as `StorageImageRWCompute` (written in `GENERAL`). The
+trace pass reads it through the *same* RW-storage usage rather than a sampled read, deliberately:
+the graph's `StorageReadCompute` usage is modeled for buffers (layout `Undefined`) and would
+mis-transition a 3D image, so the voxels stay in `GENERAL` across both passes and the
+[render graph](../../frame-and-render-graph/render-graph-overview/) inserts a plain write→read
+memory barrier.
+
+## In the code
+
+| What | File | Symbols |
+|---|---|---|
+| Voxelize shader | `ddgi_voxelize.slang` | `computeMain`, `Box`, the AABB test |
+| 3D image type | `renderer_types.cppm` | `Image3D` |
+| 3D image allocation | `renderer_detail.cppm` | `newImage3D` |
+| Box upload + volume fit | `renderer.cppm` | `setDdgiScene` |
+| World AABBs from the scene | `assets.cppm` | `renderScene` (corner-transform loop) |
+| Voxelize graph pass | `renderer.cppm` | `ddgi-voxelize` pass (the `doDdgi` block) |
+
+> [!WARNING]
+> The voxelize loop is `O(voxels × boxes)` — every voxel tests every box linearly, with no spatial
+> acceleration. At 32³ voxels that's fine for a few dozen draws. The box SSBO is capped at
+> `boxCapacity`; extra draws past the cap are dropped from the proxy (they still shade normally,
+> they just don't contribute indirect bounce).
+
+## Related
+
+- [DDGI overview](../ddgi-overview/) — where the proxy sits in the per-frame pipeline
+- [Software ray trace](../software-ray-trace/) — what marches through these voxels
+- [Render graph](../../frame-and-render-graph/render-graph-overview/) — how the 3D-image barriers are derived
