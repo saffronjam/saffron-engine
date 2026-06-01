@@ -60,6 +60,42 @@ export namespace se
         return Uuid{ distribution(engine) };
     }
 
+    // Standard table-based base64 (RFC 4648) of a byte buffer. Used to ship small binary
+    // blobs (e.g. thumbnail PNGs) over the JSON control protocol.
+    auto base64Encode(const std::vector<u8>& bytes) -> std::string
+    {
+        static constexpr char table[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        out.reserve(((bytes.size() + 2) / 3) * 4);
+        std::size_t i = 0;
+        for (; i + 3 <= bytes.size(); i += 3)
+        {
+            const u32 n = (u32(bytes[i]) << 16) | (u32(bytes[i + 1]) << 8) | u32(bytes[i + 2]);
+            out.push_back(table[(n >> 18) & 0x3F]);
+            out.push_back(table[(n >> 12) & 0x3F]);
+            out.push_back(table[(n >> 6) & 0x3F]);
+            out.push_back(table[n & 0x3F]);
+        }
+        if (const std::size_t rem = bytes.size() - i; rem == 1)
+        {
+            const u32 n = u32(bytes[i]) << 16;
+            out.push_back(table[(n >> 18) & 0x3F]);
+            out.push_back(table[(n >> 12) & 0x3F]);
+            out.push_back('=');
+            out.push_back('=');
+        }
+        else if (rem == 2)
+        {
+            const u32 n = (u32(bytes[i]) << 16) | (u32(bytes[i + 1]) << 8);
+            out.push_back(table[(n >> 18) & 0x3F]);
+            out.push_back(table[(n >> 12) & 0x3F]);
+            out.push_back(table[(n >> 6) & 0x3F]);
+            out.push_back('=');
+        }
+        return out;
+    }
+
     void logInfo(std::string_view message)
     {
         std::println("[saffron] {}", message);

@@ -975,8 +975,10 @@ export namespace se
 
     // Writes a PNG. 8-bit sources reorder BGRA->RGB; the HDR (RGBA16F) offscreen is
     // already tonemapped to display range, so its half floats are clamped to [0,1]*255.
-    auto writeBufferToPng(
-        const unsigned char* pixels, u32 width, u32 height, vk::Format format, const std::string& path) -> Result<void>
+    // Converts a captured framebuffer to a tightly-packed 3-channel RGB buffer (one
+    // conversion path shared by the file + in-memory encoders below).
+    auto convertToRgb(const unsigned char* pixels, u32 width, u32 height, vk::Format format)
+        -> std::vector<unsigned char>
     {
         std::vector<unsigned char> rgb(static_cast<std::size_t>(width) * height * 3);
         if (format == vk::Format::eR16G16B16A16Sfloat)
@@ -1013,6 +1015,15 @@ export namespace se
                 rgb[i * 3 + 2] = pixels[b];
             }
         }
+        return rgb;
+    }
+
+    // Writes a PNG file. 8-bit sources reorder BGRA->RGB; the HDR (RGBA16F) offscreen is
+    // already tonemapped to display range, so its half floats are clamped to [0,1]*255.
+    auto writeBufferToPng(
+        const unsigned char* pixels, u32 width, u32 height, vk::Format format, const std::string& path) -> Result<void>
+    {
+        const std::vector<unsigned char> rgb = convertToRgb(pixels, width, height, format);
         const int ok = stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height),
                                       3, rgb.data(), static_cast<int>(width) * 3);
         if (ok == 0)
@@ -1020,6 +1031,28 @@ export namespace se
             return Err(std::format("stbi_write_png failed for '{}'", path));
         }
         return {};
+    }
+
+    // Encodes a captured framebuffer to PNG bytes in memory (no file). Used for thumbnails
+    // shipped over the JSON control protocol as base64.
+    auto encodeBufferToPng(const unsigned char* pixels, u32 width, u32 height, vk::Format format)
+        -> Result<std::vector<u8>>
+    {
+        const std::vector<unsigned char> rgb = convertToRgb(pixels, width, height, format);
+        std::vector<u8> out;
+        const auto append = [](void* context, void* data, int size)
+        {
+            auto& buffer = *static_cast<std::vector<u8>*>(context);
+            const u8* bytes = static_cast<const u8*>(data);
+            buffer.insert(buffer.end(), bytes, bytes + size);
+        };
+        const int ok = stbi_write_png_to_func(append, &out, static_cast<int>(width), static_cast<int>(height),
+                                              3, rgb.data(), static_cast<int>(width) * 3);
+        if (ok == 0)
+        {
+            return Err(std::string{ "stbi_write_png_to_func failed" });
+        }
+        return out;
     }
 
     // Matches the shader's set 1 light uniform (std140).
@@ -2749,6 +2782,15 @@ export namespace se
             return Err(pointShadow.error());
         }
         renderer.pipelines.pointShadow = *pointShadow;
+
+        // Editor overlay: screen-space gizmo handles + entity billboards drawn over the
+        // tonemapped scene color (so they show under present-only, where ImGui is skipped).
+        Result<Ref<Pipeline>> overlay = newOverlayPipeline(renderer);
+        if (!overlay)
+        {
+            return Err(overlay.error());
+        }
+        renderer.pipelines.overlay = *overlay;
 
         // IBL set (set 3 in the mesh pipeline): irradiance cube + prefiltered cube + BRDF
         // LUT, all sampled in the fragment. Created here so the mesh PSO layout + the bind

@@ -270,4 +270,84 @@ namespace se
         color.alloc = nullptr;
         return std::make_shared<GpuTexture>(std::move(texture));
     }
+
+    auto encodeTextureThumbnailPng(Renderer& renderer, const Ref<GpuTexture>& texture, u32 size)
+        -> Result<std::vector<u8>>
+    {
+        static_cast<void>(size);  // textures read back at their native extent (size is a hint)
+        if (!texture)
+        {
+            return Err(std::string{ "encodeTextureThumbnailPng: null texture" });
+        }
+        const u32 width = texture->extent.width;
+        const u32 height = texture->extent.height;
+        const vk::DeviceSize bytes =
+            static_cast<vk::DeviceSize>(width) * height * formatPixelBytes(texture->format);
+
+        static_cast<void>(renderer.context.device.waitIdle());
+
+        VkBuffer rawBuffer = VK_NULL_HANDLE;
+        VmaAllocation alloc = nullptr;
+        VmaAllocationInfo info{};
+        if (auto created = newHostCaptureBuffer(renderer, bytes, rawBuffer, alloc, info); !created)
+        {
+            return Err(created.error());
+        }
+
+        vk::CommandBufferAllocateInfo allocInfo{};
+        allocInfo.commandPool = renderer.frame.frames[0].commandPool;
+        allocInfo.level = vk::CommandBufferLevel::ePrimary;
+        allocInfo.commandBufferCount = 1;
+        auto cmds = checked(renderer.context.device.allocateCommandBuffers(allocInfo),
+                            "encodeTextureThumbnailPng: allocateCommandBuffers");
+        if (!cmds)
+        {
+            vmaDestroyBuffer(renderer.context.allocator, rawBuffer, alloc);
+            return Err(cmds.error());
+        }
+        vk::CommandBuffer cmd = (*cmds)[0];
+        vk::CommandBufferBeginInfo begin{};
+        begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        static_cast<void>(cmd.begin(begin));
+        // Bindless + thumbnail textures live in eShaderReadOnlyOptimal; read back and restore
+        // that layout so the bindless array stays valid.
+        captureImageToBuffer(
+            cmd, texture->image, texture->extent,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+            vk::Buffer{ rawBuffer });
+        static_cast<void>(cmd.end());
+
+        vk::CommandBufferSubmitInfo cmdInfo{};
+        cmdInfo.commandBuffer = cmd;
+        vk::SubmitInfo2 submitInfo{};
+        submitInfo.setCommandBufferInfos(cmdInfo);
+        static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.context.device.waitIdle());
+        renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
+        vmaInvalidateAllocation(renderer.context.allocator, alloc, 0, VK_WHOLE_SIZE);
+
+        auto png = encodeBufferToPng(
+            static_cast<const unsigned char*>(info.pMappedData), width, height, texture->format);
+        vmaDestroyBuffer(renderer.context.allocator, rawBuffer, alloc);
+        if (!png)
+        {
+            return Err(png.error());
+        }
+        return png;
+    }
+
+    auto encodeAssetThumbnailPng(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size)
+        -> Result<std::vector<u8>>
+    {
+        // Render the framed mesh to a size×size texture, then read that texture back.
+        auto tex = renderMeshThumbnail(renderer, mesh, size);
+        if (!tex)
+        {
+            return Err(tex.error());
+        }
+        return encodeTextureThumbnailPng(renderer, *tex, size);
+    }
 }
