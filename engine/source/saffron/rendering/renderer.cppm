@@ -269,11 +269,22 @@ namespace se
         renderer.pipelines.fxaa.reset();
         renderer.pipelines.depthPrepass.reset();
         renderer.pipelines.shadowDepth.reset();
+        renderer.pipelines.pointShadow.reset();
+        for (vk::ImageView& face : renderer.targets.pointShadowFaces)
+        {
+            if (face)
+            {
+                renderer.context.device.destroyImageView(face);
+                face = nullptr;
+            }
+        }
 
         renderer.targets.offscreen.reset();  // free before the allocator/device
         renderer.targets.depth.reset();
         renderer.targets.shadowMap.reset();
         renderer.targets.spotShadowMap.reset();
+        renderer.targets.pointShadowCube.reset();
+        renderer.targets.pointShadowDepth.reset();
         renderer.ibl.envCube.reset();
         renderer.ibl.irradianceCube.reset();
         renderer.ibl.prefilteredCube.reset();
@@ -581,6 +592,26 @@ namespace se
                 recordShadowDepth(renderer, cmd, spotViewProj);
             };
             addPass(graph, std::move(spotPass));
+        }
+
+        // Point shadow: the omnidirectional distance cube can't be a graph attachment (its
+        // 6 layers exceed the graph's single-layer barrier), so it runs as a Compute-kind
+        // pass whose body opens its own 6 face rendering scopes + manages the cube's
+        // layout, ending ShaderReadOnly with a fragment-shader barrier for the scene sample.
+        const bool doPointShadow = renderer.lighting.pointShadowPending && renderer.pipelines.pointShadow &&
+                                   renderer.targets.pointShadowCube.image;
+        if (doPointShadow)
+        {
+            RgPass pointPass;
+            pointPass.name = "point-shadow";
+            pointPass.kind = RgPassKind::Compute;
+            const glm::vec3 lightPos = renderer.lighting.pointShadowPos;
+            const f32 farPlane = renderer.lighting.pointShadowFar;
+            pointPass.execute = [&renderer, lightPos, farPlane](vk::CommandBuffer cmd)
+        {
+                recordPointShadow(renderer, cmd, lightPos, farPlane);
+            };
+            addPass(graph, std::move(pointPass));
         }
 
         // Clustered forward: a compute pass culls the punctual lights into the froxel
@@ -909,6 +940,14 @@ namespace se
         renderer.lighting.spotShadowViewProj = lightViewProj;
         renderer.lighting.spotShadowLightIndex = lightIndex;
         renderer.lighting.spotShadowPending = casting && renderer.lighting.useShadows;
+    }
+
+    void setPointShadow(Renderer& renderer, glm::vec3 lightPos, f32 farPlane, u32 lightIndex, bool casting)
+    {
+        renderer.lighting.pointShadowPos = lightPos;
+        renderer.lighting.pointShadowFar = farPlane;
+        renderer.lighting.pointShadowLightIndex = lightIndex;
+        renderer.lighting.pointShadowPending = casting && renderer.lighting.useShadows;
     }
 
     void waitGpuIdle(Renderer& renderer)

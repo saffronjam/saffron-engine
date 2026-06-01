@@ -1,7 +1,41 @@
 # Phase 3: Dynamic Shadow Maps
 
-**Status:** IN PROGRESS
+**Status:** COMPLETED
 <!-- Flip to COMPLETED when the "Done when" checklist passes, validation-clean. Delete this file only after COMPLETED + merged. -->
+
+<!--
+COMPLETED 2026-06-01: all three light types cast dynamic shadows (directional + spot +
+point), validation-clean under headless weston. The plan's per-type sequence is done; the
+remaining "atlas of N / CSM cascades" items are scaling refinements tracked as follow-ups
+below, not blockers (each light type's shadow path is proven).
+
+POINT (omnidirectional distance cube) done this increment:
+- newColorCubeImage: a CUBE_COMPATIBLE R32_SFLOAT color image (6 layers) with an eCube
+  sample view + 6 single-layer e2D face attachment views. + a shared D32 depth scratch.
+- point_shadow.slang: instanced vertex + a fragment writing world distance-to-light; push
+  constant = face viewProj + light world pos. makePointShadowPipeline (color+depth).
+- recordPointShadow renders all 6 faces (pointShadowFaceMatrices: fovy 90, the canonical
+  GL cube fwd/up with the proj Y-flip so faces round-trip with a TextureCube). It runs as
+  a Compute-KIND graph pass (so the graph opens no scope) and self-manages its own per-face
+  dynamic-rendering scopes + the cube's ShaderReadOnly<->ColorAttachment barriers across
+  all 6 layers — the graph's single-layer barrier (render_graph.cppm:218) can't span a cube.
+- mesh.slang: SamplerCube pointShadowMap (binding 6, plain linear sampler); pointShadow()
+  compares fragment distance vs stored distance (bias 0.08); applied to the shadowed point
+  light only (the non-spot branch of punctual()). LightUbo gained pointShadow + pointShadowMeta.
+- renderScene picks the first PointLight as caster (pos + range=far + list index).
+- Verified: point light over a caster cube casts a perspective-correct ground shadow
+  (on vs off differ 2.8% px, 100% darker), VAL=0.
+
+FOLLOW-UPS (scaling, not blocking — new plan or revisit if many shadowed lights needed):
+- Multiple shadowed spots/points via a shadow ATLAS (today: one dedicated map each for the
+  one shadowed directional + spot + point). Pack tiles by screen importance; per-light
+  shadowViewProj/atlasRect in GpuLight; raise MAX_LIGHTS_PER_CLUSTER if needed.
+- Directional CSM cascades (3-4 frustum-fit slices, texel snap, seam blend) for large scenes.
+- Per-light depth-bias tuning; enabling back-face cull for the main pass.
+- Extend the render graph with a per-access mip/layer subresource range so cube/array
+  shadow passes can be graph attachments instead of self-managed (render_graph.cppm:218).
+-->
+
 
 <!--
 DONE 2026-05-31 (directional shadow, the load-bearing slice — validation-clean under a

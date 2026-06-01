@@ -409,6 +409,95 @@ export namespace se
         return result;
     }
 
+    // A cube-compatible COLOR image (6 layers) usable as a sampled cubemap (the eCube view
+    // in `out`) and rendered face-by-face (the 6 single-layer e2D attachment views in
+    // `outFaces`). Used for the point-light distance shadow cube.
+    auto newColorCubeImage(Renderer& renderer, u32 size, vk::Format format,
+                           Image& out, std::array<vk::ImageView, 6>& outFaces) -> Result<void>
+    {
+        VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        imageInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = static_cast<VkFormat>(format);
+        imageInfo.extent = VkExtent3D{ size, size, 1 };
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 6;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VmaAllocationCreateInfo allocInfo{};
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        VkImage rawImage = VK_NULL_HANDLE;
+        VmaAllocation allocation = nullptr;
+        if (vmaCreateImage(renderer.context.allocator, &imageInfo, &allocInfo, &rawImage, &allocation, nullptr) != VK_SUCCESS)
+        {
+            return Err(std::string{ "vmaCreateImage failed for color cube" });
+        }
+
+        vk::ImageViewCreateInfo cubeView{};
+        cubeView.image = vk::Image{ rawImage };
+        cubeView.viewType = vk::ImageViewType::eCube;
+        cubeView.format = format;
+        cubeView.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 6 };
+        vk::ResultValue<vk::ImageView> sampleView = renderer.context.device.createImageView(cubeView);
+        if (sampleView.result != vk::Result::eSuccess)
+        {
+            vmaDestroyImage(renderer.context.allocator, rawImage, allocation);
+            return Err(std::format("createImageView (color cube): {}", vk::to_string(sampleView.result)));
+        }
+
+        for (u32 face = 0; face < 6; face = face + 1)
+        {
+            vk::ImageViewCreateInfo faceView{};
+            faceView.image = vk::Image{ rawImage };
+            faceView.viewType = vk::ImageViewType::e2D;
+            faceView.format = format;
+            faceView.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, face, 1 };
+            vk::ResultValue<vk::ImageView> fv = renderer.context.device.createImageView(faceView);
+            if (fv.result != vk::Result::eSuccess)
+            {
+                renderer.context.device.destroyImageView(sampleView.value);
+                for (u32 f = 0; f < face; f = f + 1) { renderer.context.device.destroyImageView(outFaces[f]); }
+                vmaDestroyImage(renderer.context.allocator, rawImage, allocation);
+                return Err(std::format("createImageView (cube face): {}", vk::to_string(fv.result)));
+            }
+            outFaces[face] = fv.value;
+        }
+
+        out.device = renderer.context.device;
+        out.allocator = renderer.context.allocator;
+        out.image = vk::Image{ rawImage };
+        out.view = sampleView.value;
+        out.alloc = allocation;
+        out.extent = vk::Extent2D{ size, size };
+        out.format = format;
+        out.layout = vk::ImageLayout::eUndefined;
+        return {};
+    }
+
+    // The 6 cube-face world->clip matrices for a point light at `pos` (fovy 90, aspect 1).
+    // GL/Vulkan cube convention; the Y flip is folded into the projection so the rendered
+    // faces round-trip with a TextureCube sampled by world direction.
+    auto pointShadowFaceMatrices(glm::vec3 pos, f32 farPlane) -> std::array<glm::mat4, 6>
+    {
+        glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.05f, glm::max(farPlane, 0.1f));
+        proj[1][1] *= -1.0f;  // Vulkan framebuffer Y is down; flip so faces match cube sampling
+        const std::array<glm::vec3, 6> fwd{
+            glm::vec3( 1, 0, 0), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
+            glm::vec3( 0,-1, 0), glm::vec3( 0, 0, 1), glm::vec3(0, 0,-1) };
+        const std::array<glm::vec3, 6> up{
+            glm::vec3(0,-1, 0), glm::vec3(0,-1, 0), glm::vec3(0, 0, 1),
+            glm::vec3(0, 0,-1), glm::vec3(0,-1, 0), glm::vec3(0,-1, 0) };
+        std::array<glm::mat4, 6> result;
+        for (u32 i = 0; i < 6; i = i + 1)
+        {
+            result[i] = proj * glm::lookAt(pos, pos + fwd[i], up[i]);
+        }
+        return result;
+    }
+
     // (Re)create the multisampled scene color + depth targets at the offscreen extent
     // when MSAA is on; drop them when off. Called after the offscreen is sized + on a
     // sample-count change. The caller has already idled the GPU.
@@ -587,6 +676,8 @@ export namespace se
         glm::mat4 shadowViewProj;       // directional light-space transform (world -> shadow clip)
         glm::mat4 spotShadowViewProj;   // shadowed spot light-space transform (perspective)
         glm::uvec4 spotShadow;          // x = shadowed spot's light index, y = enabled (0/1)
+        glm::vec4 pointShadow;          // xyz = shadowed point light world pos, w = far plane
+        glm::uvec4 pointShadowMeta;     // x = shadowed point's light index, y = enabled (0/1)
     };
 
     // Shadow-map resolution + slope/constant depth bias (units of D32 depth). Tuned on
@@ -594,6 +685,12 @@ export namespace se
     inline constexpr u32 ShadowMapSize = 2048;
     inline constexpr f32 ShadowDepthBiasConstant = 1.25f;
     inline constexpr f32 ShadowDepthBiasSlope = 2.0f;
+
+    // Point shadow: per-face resolution of the omnidirectional distance cube + the
+    // world-space distance bias used when comparing in the mesh fragment.
+    inline constexpr u32 PointShadowSize = 512;
+    inline constexpr vk::Format PointShadowColorFormat = vk::Format::eR32Sfloat;
+    inline constexpr f32 PointShadowDistanceBias = 0.08f;
 
     // IBL bake sizes. The environment is a procedural HDR sky; it is convolved into a
     // small diffuse-irradiance cube + a roughness-mipped prefiltered specular cube, plus
@@ -929,6 +1026,111 @@ export namespace se
         return std::make_shared<Pipeline>(std::move(pipeline));
     }
 
+    // A color+depth pipeline that renders world-space distance-to-light into one point
+    // shadow cube face. Reuses point_shadow.slang (instanced vertex + distance fragment);
+    // push constant = face viewProj (mat4) + light world pos (vec4). Layout uses only the
+    // instance set (set 2), like the depth pre-pass.
+    auto makePointShadowPipeline(Renderer& renderer, std::string_view shaderName) -> Result<Ref<Pipeline>>
+    {
+        auto moduleResult = loadShaderModule(renderer.context.device, assetPath(shaderName));
+        if (!moduleResult)
+        {
+            return Err(moduleResult.error());
+        }
+        vk::ShaderModule shaderModule = *moduleResult;
+
+        std::array<vk::PipelineShaderStageCreateInfo, 2> stages{};
+        stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+        stages[0].module = shaderModule;
+        stages[0].pName = "vertexMain";
+        stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+        stages[1].module = shaderModule;
+        stages[1].pName = "fragmentMain";
+
+        vk::VertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(Vertex);
+        binding.inputRate = vk::VertexInputRate::eVertex;
+        std::array<vk::VertexInputAttributeDescription, 3> attributes{
+            vk::VertexInputAttributeDescription{ 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position) },
+            vk::VertexInputAttributeDescription{ 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal) },
+            vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uv0) } };
+        vk::PipelineVertexInputStateCreateInfo vertexInput{};
+        vertexInput.setVertexBindingDescriptions(binding);
+        vertexInput.setVertexAttributeDescriptions(attributes);
+
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+        vk::PipelineViewportStateCreateInfo viewportState{};
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+        vk::PipelineRasterizationStateCreateInfo raster{};
+        raster.polygonMode = vk::PolygonMode::eFill;
+        raster.cullMode = vk::CullModeFlagBits::eNone;
+        raster.frontFace = vk::FrontFace::eCounterClockwise;
+        raster.lineWidth = 1.0f;
+        vk::PipelineMultisampleStateCreateInfo multisample{};
+        multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = vk::CompareOp::eLess;
+        vk::PipelineColorBlendAttachmentState blendAttachment{};
+        blendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                         vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        vk::PipelineColorBlendStateCreateInfo colorBlend{};
+        colorBlend.setAttachments(blendAttachment);
+        std::array<vk::DynamicState, 2> dynamicStates{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamic{};
+        dynamic.setDynamicStates(dynamicStates);
+
+        vk::PipelineRenderingCreateInfo renderingInfo{};
+        renderingInfo.setColorAttachmentFormats(PointShadowColorFormat);
+        renderingInfo.depthAttachmentFormat = DepthFormat;
+
+        vk::PushConstantRange pushConstant{};
+        pushConstant.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+        pushConstant.offset = 0;
+        pushConstant.size = sizeof(glm::mat4) + sizeof(glm::vec4);
+        std::array<vk::DescriptorSetLayout, 3> setLayouts{
+            renderer.descriptors.bindlessSetLayout, renderer.descriptors.lightSetLayout, renderer.descriptors.instanceSetLayout };
+        vk::PipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.setSetLayouts(setLayouts);
+        layoutInfo.setPushConstantRanges(pushConstant);
+        auto layoutResult = checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (point-shadow)");
+        if (!layoutResult)
+        {
+            renderer.context.device.destroyShaderModule(shaderModule);
+            return Err(layoutResult.error());
+        }
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.pNext = &renderingInfo;
+        pipelineInfo.setStages(stages);
+        pipelineInfo.pVertexInputState = &vertexInput;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &raster;
+        pipelineInfo.pMultisampleState = &multisample;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlend;
+        pipelineInfo.pDynamicState = &dynamic;
+        pipelineInfo.layout = *layoutResult;
+
+        vk::ResultValue<vk::Pipeline> created = renderer.context.device.createGraphicsPipeline(nullptr, pipelineInfo);
+        renderer.context.device.destroyShaderModule(shaderModule);
+        if (created.result != vk::Result::eSuccess)
+        {
+            renderer.context.device.destroyPipelineLayout(*layoutResult);
+            return Err(std::format("createGraphicsPipeline (point-shadow): {}", vk::to_string(created.result)));
+        }
+        Pipeline pipeline;
+        pipeline.device = renderer.context.device;
+        pipeline.pipeline = created.value;
+        pipeline.layout = *layoutResult;
+        return std::make_shared<Pipeline>(std::move(pipeline));
+    }
+
     // Write a texture into the bindless array at the given slot (set 0, binding 0).
     // update-after-bind: safe to write a live set between draws.
     void writeBindlessTexture(Renderer& renderer, vk::ImageView view, u32 index)
@@ -1040,6 +1242,19 @@ export namespace se
             return Err(spotShadowMap.error());
         }
         renderer.targets.spotShadowMap = std::move(*spotShadowMap);
+
+        // Point shadow: a color distance cube (+ per-face render views) + a depth scratch.
+        if (Result<void> cube = newColorCubeImage(renderer, PointShadowSize, PointShadowColorFormat,
+                                                  renderer.targets.pointShadowCube, renderer.targets.pointShadowFaces); !cube)
+        {
+            return Err(cube.error());
+        }
+        auto pointDepth = newDepthImage(renderer, PointShadowSize, PointShadowSize);
+        if (!pointDepth)
+        {
+            return Err(pointDepth.error());
+        }
+        renderer.targets.pointShadowDepth = std::move(*pointDepth);
         {
             vk::CommandBufferAllocateInfo allocInfo{};
             allocInfo.commandPool = renderer.frame.frames[0].commandPool;
@@ -1062,6 +1277,20 @@ export namespace se
                     vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
                     vk::ImageAspectFlagBits::eDepth);
             }
+            // The point distance cube starts ShaderReadOnly too (all 6 layers).
+            {
+                vk::ImageMemoryBarrier2 b{};
+                b.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+                b.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+                b.dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead;
+                b.oldLayout = vk::ImageLayout::eUndefined;
+                b.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                b.image = renderer.targets.pointShadowCube.image;
+                b.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 6 };
+                vk::DependencyInfo d{};
+                d.setImageMemoryBarriers(b);
+                cmd.pipelineBarrier2(d);
+            }
             static_cast<void>(cmd.end());
             vk::CommandBufferSubmitInfo cmdInfo{};
             cmdInfo.commandBuffer = cmd;
@@ -1072,6 +1301,7 @@ export namespace se
             renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
             renderer.targets.shadowMap.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
             renderer.targets.spotShadowMap.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            renderer.targets.pointShadowCube.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
         // Set 0 is the bindless albedo array: a runtime-sized combined-image-sampler
@@ -1097,7 +1327,7 @@ export namespace se
         }
         renderer.descriptors.bindlessSetLayout = *materialLayout;
 
-        std::array<vk::DescriptorSetLayoutBinding, 6> lightBindings{};
+        std::array<vk::DescriptorSetLayoutBinding, 7> lightBindings{};
         lightBindings[0].binding = 0;  // directional + ambient + counts UBO
         lightBindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
         lightBindings[0].descriptorCount = 1;
@@ -1122,6 +1352,10 @@ export namespace se
         lightBindings[5].descriptorType = vk::DescriptorType::eCombinedImageSampler;
         lightBindings[5].descriptorCount = 1;
         lightBindings[5].stageFlags = vk::ShaderStageFlagBits::eFragment;
+        lightBindings[6].binding = 6;  // point shadow distance cube (linear sampler)
+        lightBindings[6].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        lightBindings[6].descriptorCount = 1;
+        lightBindings[6].stageFlags = vk::ShaderStageFlagBits::eFragment;
         vk::DescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.setBindings(lightBindings);
         auto lightLayout = checked(renderer.context.device.createDescriptorSetLayout(lightLayoutInfo), "lightSetLayout");
@@ -1277,7 +1511,10 @@ export namespace se
                 renderer.targets.shadowMap.view, vk::ImageLayout::eShaderReadOnlyOptimal };
             vk::DescriptorImageInfo spotShadowInfo{ renderer.descriptors.shadowSampler,
                 renderer.targets.spotShadowMap.view, vk::ImageLayout::eShaderReadOnlyOptimal };
-            std::array<vk::WriteDescriptorSet, 2> shadowWrites{};
+            // The point distance cube samples with the plain linear sampler (no compare).
+            vk::DescriptorImageInfo pointShadowInfo{ renderer.descriptors.linearSampler,
+                renderer.targets.pointShadowCube.view, vk::ImageLayout::eShaderReadOnlyOptimal };
+            std::array<vk::WriteDescriptorSet, 3> shadowWrites{};
             shadowWrites[0].dstSet = renderer.lighting.lightSets[i];
             shadowWrites[0].dstBinding = 4;
             shadowWrites[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
@@ -1286,6 +1523,10 @@ export namespace se
             shadowWrites[1].dstBinding = 5;
             shadowWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
             shadowWrites[1].setImageInfo(spotShadowInfo);
+            shadowWrites[2].dstSet = renderer.lighting.lightSets[i];
+            shadowWrites[2].dstBinding = 6;
+            shadowWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            shadowWrites[2].setImageInfo(pointShadowInfo);
             renderer.context.device.updateDescriptorSets(shadowWrites, {});
 
             // The punctual-light buffer starts at LightListInitial capacity and is
@@ -1449,6 +1690,14 @@ export namespace se
             return Err(shadowDepth.error());
         }
         renderer.pipelines.shadowDepth = *shadowDepth;
+
+        // Point shadow pass: color (distance) + depth, instanced.
+        Result<Ref<Pipeline>> pointShadow = makePointShadowPipeline(renderer, "shaders/point_shadow.spv");
+        if (!pointShadow)
+        {
+            return Err(pointShadow.error());
+        }
+        renderer.pipelines.pointShadow = *pointShadow;
 
         // IBL set (set 3 in the mesh pipeline): irradiance cube + prefiltered cube + BRDF
         // LUT, all sampled in the fragment. Created here so the mesh PSO layout + the bind

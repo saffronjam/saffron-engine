@@ -550,6 +550,12 @@ export namespace se
         bool spotShadowPending = false;
         glm::mat4 spotShadowViewProj{ 1.0f };
         u32 spotShadowLightIndex = 0;
+        // Point shadow: the first point light gets an omnidirectional distance cubemap. Its
+        // world position + far plane + index in the per-frame light list.
+        bool pointShadowPending = false;
+        glm::vec3 pointShadowPos{ 0.0f };
+        f32 pointShadowFar = 1.0f;
+        u32 pointShadowLightIndex = 0;
     };
 
     // Per-frame instance storage buffer + set. Grown on demand (never shrunk);
@@ -569,6 +575,7 @@ export namespace se
         Ref<Pipeline> tonemap;       // in-place compute tonemap (post-process)
         Ref<Pipeline> depthPrepass;  // vertex-only depth pre-pass
         Ref<Pipeline> shadowDepth;   // vertex-only depth pass into the shadow map (depth-biased)
+        Ref<Pipeline> pointShadow;   // color (distance) + depth pass into a point shadow cube face
         Ref<Pipeline> fxaa;          // compute FXAA post-process
         Ref<Pipeline> cull;          // compute light-cull (clustered forward)
         std::unordered_map<std::string, Ref<Pipeline>> cache;
@@ -581,6 +588,12 @@ export namespace se
         Image depth;         // depth buffer for the scene pass, sized to the viewport
         Image shadowMap;     // directional-light depth map (sampled with the compare sampler)
         Image spotShadowMap; // first shadow-casting spot light's depth map (same compare sampler)
+        // First shadow-casting point light's omnidirectional distance cubemap: a color cube
+        // (R32_SFLOAT = world distance to the nearest occluder) rendered face-by-face with a
+        // shared depth scratch; the mesh samples it by direction and compares linear distance.
+        Image pointShadowCube;
+        Image pointShadowDepth;
+        std::array<vk::ImageView, 6> pointShadowFaces{};  // per-face render views (freed manually)
         // MSAA: when sampleCount > 1 the scene renders to these multisampled targets and
         // resolves color into offscreen. Sized to the viewport, recreated with it.
         Image msaaColor;
@@ -759,8 +772,13 @@ export namespace se
     // Arms the spot shadow depth pass for the first shadow-casting spot light: its
     // perspective light-space transform + its index in the frame's punctual light list.
     void setSpotShadow(Renderer& renderer, const glm::mat4& lightViewProj, u32 lightIndex, bool casting);
+    // Arms the omnidirectional point shadow pass for the first point light: its world
+    // position + far plane + index in the frame's punctual light list.
+    void setPointShadow(Renderer& renderer, glm::vec3 lightPos, f32 farPlane, u32 lightIndex, bool casting);
     // Record the scene geometry depth-only from the light's point of view (shadow pass body).
     void recordShadowDepth(Renderer& renderer, vk::CommandBuffer cmd, const glm::mat4& lightViewProj);
+    // Record the 6 cube faces of the point shadow distance map (its own rendering scopes).
+    void recordPointShadow(Renderer& renderer, vk::CommandBuffer cmd, glm::vec3 lightPos, f32 farPlane);
     void setDepthPrepass(Renderer& renderer, bool enabled);
     auto depthPrepassEnabled(const Renderer& renderer) -> bool;
     // Anti-aliasing: msaaSamples is 1 (off) / 2 / 4 / 8 (clamped to the device cap); fxaa

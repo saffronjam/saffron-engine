@@ -437,6 +437,10 @@ export namespace se
         // first spot light's index + its perspective light-space transform so it can cast
         // a shadow (the one shadowed spot in v1).
         std::vector<GpuLight> lights;
+        bool havePointShadow = false;
+        glm::vec3 pointShadowPos{ 0.0f };
+        f32 pointShadowFar = 1.0f;
+        u32 pointShadowIndex = 0;
         forEach<TransformComponent, PointLightComponent>(scene,
             [&](Entity, TransformComponent& transform, PointLightComponent& light)
         {
@@ -445,6 +449,13 @@ export namespace se
                 gpu.colorIntensity = glm::vec4(light.color, light.intensity);
                 gpu.directionType = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);  // type 0 = point
                 gpu.spotCos = glm::vec4(0.0f);
+                if (!havePointShadow)
+                {
+                    pointShadowPos = transform.translation;
+                    pointShadowFar = glm::max(light.range, 0.1f);
+                    pointShadowIndex = static_cast<u32>(lights.size());
+                    havePointShadow = true;
+                }
                 lights.push_back(gpu);
             });
         bool haveSpotShadow = false;
@@ -476,6 +487,7 @@ export namespace se
                 lights.push_back(gpu);
             });
         setSpotShadow(renderer, spotShadowViewProj, spotShadowIndex, haveSpotShadow);
+        setPointShadow(renderer, pointShadowPos, pointShadowFar, pointShadowIndex, havePointShadow);
         // The camera world position is the inverse-view translation; the BRDF needs it
         // as the view-vector origin for specular. The lighting upload happens after the
         // draw loop, once the scene AABB (hence the shadow frustum) is known.

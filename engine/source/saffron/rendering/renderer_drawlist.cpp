@@ -377,4 +377,114 @@ namespace se
             }
         }
     }
+
+    // Renders world distance-to-light into the 6 faces of the point shadow cube. Runs as a
+    // Compute-kind graph pass body (so the graph opens no rendering scope); this opens its
+    // own per-face dynamic-rendering scope + transitions the cube General<->ShaderReadOnly,
+    // since the graph's single-layer barrier can't span the 6-layer cube.
+    void recordPointShadow(Renderer& renderer, vk::CommandBuffer cmd, glm::vec3 lightPos, f32 farPlane)
+    {
+        SceneDrawList& list = renderer.frame.sceneDrawList;
+        if (!list.valid || !renderer.pipelines.pointShadow)
+        {
+            return;
+        }
+        Targets& targets = renderer.targets;
+        const std::array<glm::mat4, 6> faces = pointShadowFaceMatrices(lightPos, farPlane);
+        vk::PipelineLayout layout = renderer.pipelines.pointShadow->layout;
+        const vk::Extent2D extent = targets.pointShadowCube.extent;
+
+        // All 6 cube layers: ShaderReadOnly (entry) -> ColorAttachment for rendering.
+        auto cubeBarrier = [&](vk::ImageLayout oldL, vk::ImageLayout newL,
+                               vk::PipelineStageFlags2 srcS, vk::AccessFlags2 srcA,
+                               vk::PipelineStageFlags2 dstS, vk::AccessFlags2 dstA)
+        {
+            vk::ImageMemoryBarrier2 b{};
+            b.srcStageMask = srcS;
+            b.srcAccessMask = srcA;
+            b.dstStageMask = dstS;
+            b.dstAccessMask = dstA;
+            b.oldLayout = oldL;
+            b.newLayout = newL;
+            b.image = targets.pointShadowCube.image;
+            b.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 6 };
+            vk::DependencyInfo d{};
+            d.setImageMemoryBarriers(b);
+            cmd.pipelineBarrier2(d);
+        };
+        cubeBarrier(vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal,
+            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
+        // The shared depth scratch: Undefined -> DepthAttachment (cleared each face).
+        transitionImage(cmd, targets.pointShadowDepth.image,
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
+            vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+            vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+            vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::ImageAspectFlagBits::eDepth);
+
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.pointShadow->pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 2, list.instanceSet, {});
+        vk::Viewport viewport{ 0.0f, 0.0f, static_cast<f32>(extent.width), static_cast<f32>(extent.height), 0.0f, 1.0f };
+        vk::Rect2D scissor{ vk::Offset2D{ 0, 0 }, extent };
+
+        for (u32 face = 0; face < 6; face = face + 1)
+        {
+            vk::RenderingAttachmentInfo colorAttach{};
+            colorAttach.imageView = targets.pointShadowFaces[face];
+            colorAttach.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            colorAttach.loadOp = vk::AttachmentLoadOp::eClear;
+            colorAttach.storeOp = vk::AttachmentStoreOp::eStore;
+            // Clear to far distance so untouched texels read "no occluder".
+            colorAttach.clearValue = vk::ClearValue{ vk::ClearColorValue{ std::array<f32, 4>{ farPlane * 2.0f, 0.0f, 0.0f, 0.0f } } };
+            vk::RenderingAttachmentInfo depthAttach{};
+            depthAttach.imageView = targets.pointShadowDepth.view;
+            depthAttach.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+            depthAttach.loadOp = vk::AttachmentLoadOp::eClear;
+            depthAttach.storeOp = vk::AttachmentStoreOp::eDontCare;
+            depthAttach.clearValue = vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } };
+            vk::RenderingInfo rendering{};
+            rendering.renderArea = scissor;
+            rendering.layerCount = 1;
+            rendering.setColorAttachments(colorAttach);
+            rendering.setPDepthAttachment(&depthAttach);
+
+            // The depth scratch is reused across faces; barrier write->write between faces.
+            if (face > 0)
+            {
+                transitionImage(cmd, targets.pointShadowDepth.image,
+                    vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eDepthAttachmentOptimal,
+                    vk::PipelineStageFlagBits2::eLateFragmentTests, vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                    vk::PipelineStageFlagBits2::eEarlyFragmentTests, vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                    vk::ImageAspectFlagBits::eDepth);
+            }
+            cmd.beginRendering(rendering);
+            cmd.setViewport(0, viewport);
+            cmd.setScissor(0, scissor);
+            struct PointPush
+            {
+                glm::mat4 viewProj;
+                glm::vec4 lightPos;
+            } push{ faces[face], glm::vec4(lightPos, farPlane) };
+            cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+                              0, sizeof(push), &push);
+            for (const DrawBatch& batch : list.batches)
+            {
+                vk::DeviceSize offset = 0;
+                cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
+                cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+                for (const Submesh& submesh : batch.mesh->submeshes)
+                {
+                    cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex,
+                                    submesh.vertexOffset, batch.baseInstance);
+                }
+            }
+            cmd.endRendering();
+        }
+
+        // All 6 layers back to ShaderReadOnly for the scene pass to sample.
+        cubeBarrier(vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        targets.pointShadowCube.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    }
 }

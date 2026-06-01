@@ -49,6 +49,8 @@ struct LightGlobals
     float4x4 shadowViewProj;     // world -> directional light clip space
     float4x4 spotShadowViewProj; // world -> shadowed spot light clip space (perspective)
     uint4 spotShadow;            // x = shadowed spot's light index, y = enabled (0/1)
+    float4 pointShadow;          // xyz = shadowed point light world pos, w = far plane
+    uint4 pointShadowMeta;       // x = shadowed point's light index, y = enabled (0/1)
 };
 [[vk::binding(0, 1)]] ConstantBuffer<LightGlobals> globals;
 
@@ -81,6 +83,19 @@ struct ClusterParams
 // Directional + spot shadow maps: depth textures sampled with a comparison (PCF) sampler.
 [[vk::binding(4, 1)]] Sampler2DShadow shadowMap;
 [[vk::binding(5, 1)]] Sampler2DShadow spotShadowMap;
+// Point shadow: an omnidirectional cube of world distance-to-light (linear sampler).
+[[vk::binding(6, 1)]] SamplerCube pointShadowMap;
+
+// Visibility for the shadowed point light: compare the fragment's distance to the light
+// against the nearest occluder distance stored in the cube (sampled by light->frag dir).
+float pointShadow(float3 worldPos)
+{
+    float3 toFrag = worldPos - globals.pointShadow.xyz;
+    float dist = length(toFrag);
+    float stored = pointShadowMap.SampleLevel(normalize(toFrag), 0.0).r;
+    const float bias = 0.08;  // matches PointShadowDistanceBias (renderer_detail.cppm)
+    return dist - bias <= stored ? 1.0 : 0.0;
+}
 
 // 3x3 PCF visibility for a light-space projection (1 = lit, 0 = shadowed). Off-map and
 // beyond-far-plane samples are treated as lit. `map` selects which shadow texture.
@@ -220,6 +235,10 @@ float3 punctual(GpuLight lt, uint lightIndex, float3 worldPos, float3 n, float3 
         {
             shadow = pcfShadow(spotShadowMap, globals.spotShadowViewProj, worldPos);
         }
+    }
+    else if (globals.pointShadowMeta.y != 0 && lightIndex == globals.pointShadowMeta.x)
+    {
+        shadow = pointShadow(worldPos);
     }
     float3 radiance = lt.colorIntensity.rgb * lt.colorIntensity.a * attenuation * cone * shadow;
     return brdf(n, v, l, albedo, metallic, roughness, radiance);
