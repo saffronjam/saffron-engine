@@ -14,6 +14,7 @@ module;
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -180,6 +181,163 @@ namespace se
         }
 
         // Claim a bindless slot and write the texture into the global array.
+        const u32 index = renderer.descriptors.nextBindlessIndex;
+        renderer.descriptors.nextBindlessIndex = renderer.descriptors.nextBindlessIndex + 1;
+        writeBindlessTexture(renderer, *view, index);
+
+        GpuTexture texture;
+        texture.device = renderer.context.device;
+        texture.allocator = renderer.context.allocator;
+        texture.image = vk::Image{ rawImage };
+        texture.view = *view;
+        texture.alloc = imageAllocation;
+        texture.extent = vk::Extent2D{ width, height };
+        texture.format = format;
+        texture.bindlessIndex = index;
+        return std::make_shared<GpuTexture>(std::move(texture));
+    }
+
+    // Narrows one finite f32 to an IEEE binary16 (round-to-nearest-even). Subnormals are
+    // flushed; finite magnitudes above the f16 max (65504) saturate to +/-inf, matching what
+    // the GPU produces sampling an f16 texture.
+    static auto floatToHalf(f32 value) -> u16
+    {
+        u32 bits = std::bit_cast<u32>(value);
+        const u32 sign = (bits >> 16) & 0x8000u;
+        bits = bits & 0x7fffffffu;
+        if (bits >= 0x7f800000u)
+        {
+            // inf / nan: keep nan non-zero so it stays nan
+            u16 mant = static_cast<u16>(0);
+            if (bits > 0x7f800000u)
+            {
+                mant = static_cast<u16>(0x0200u);
+            }
+            return static_cast<u16>(sign | 0x7c00u | mant);
+        }
+        if (bits >= 0x47800000u)
+        {
+            return static_cast<u16>(sign | 0x7c00u);  // overflow -> inf
+        }
+        if (bits < 0x38800000u)
+        {
+            // subnormal/zero in f16: round the value scaled into the denormal range
+            const u32 mant = (bits & 0x7fffffu) | 0x800000u;
+            const int shift = 113 - static_cast<int>(bits >> 23);
+            u32 rounded = 0u;
+            if (shift < 24)
+            {
+                rounded = mant >> shift;
+            }
+            const u32 half = (rounded + 0x00000fffu + ((rounded >> 13) & 1u)) >> 13;
+            return static_cast<u16>(sign | half);
+        }
+        const u32 rebiased = bits + 0xc8000000u;  // exponent rebias (127 -> 15)
+        const u32 rounded = (rebiased + 0x00000fffu + ((rebiased >> 13) & 1u)) >> 13;
+        return static_cast<u16>(sign | rounded);
+    }
+
+    auto uploadTextureFloat(Renderer& renderer, const f32* rgba, u32 width, u32 height) -> Result<Ref<GpuTexture>>
+    {
+        if (width == 0 || height == 0)
+        {
+            return Err(std::string{ "uploadTextureFloat: zero-sized image" });
+        }
+        const std::size_t texels = static_cast<std::size_t>(width) * height * 4;
+        std::vector<u16> halfRgba(texels);
+        for (std::size_t i = 0; i < texels; i = i + 1)
+        {
+            halfRgba[i] = floatToHalf(rgba[i]);
+        }
+        const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(texels) * sizeof(u16);
+
+        VkBufferCreateInfo stagingInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        stagingInfo.size = bytes;
+        stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VmaAllocationCreateInfo stagingAlloc{};
+        stagingAlloc.usage = VMA_MEMORY_USAGE_AUTO;
+        stagingAlloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VkBuffer staging = VK_NULL_HANDLE;
+        VmaAllocation stagingAllocation = nullptr;
+        VmaAllocationInfo stagingMapped{};
+        if (vmaCreateBuffer(renderer.context.allocator, &stagingInfo, &stagingAlloc, &staging, &stagingAllocation, &stagingMapped) != VK_SUCCESS)
+        {
+            return Err(std::string{ "uploadTextureFloat: staging vmaCreateBuffer failed" });
+        }
+        std::memcpy(stagingMapped.pMappedData, halfRgba.data(), bytes);
+        vmaFlushAllocation(renderer.context.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
+
+        const vk::Format format = vk::Format::eR16G16B16A16Sfloat;
+        VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = static_cast<VkFormat>(format);
+        imageInfo.extent = VkExtent3D{ width, height, 1 };
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VmaAllocationCreateInfo imageAlloc{};
+        imageAlloc.usage = VMA_MEMORY_USAGE_AUTO;
+        imageAlloc.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        VkImage rawImage = VK_NULL_HANDLE;
+        VmaAllocation imageAllocation = nullptr;
+        if (vmaCreateImage(renderer.context.allocator, &imageInfo, &imageAlloc, &rawImage, &imageAllocation, nullptr) != VK_SUCCESS)
+        {
+            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
+            return Err(std::string{ "uploadTextureFloat: vmaCreateImage failed" });
+        }
+
+        vk::CommandBufferAllocateInfo cmdAlloc{};
+        cmdAlloc.commandPool = renderer.frame.frames[0].commandPool;
+        cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
+        cmdAlloc.commandBufferCount = 1;
+        auto cmds = checked(renderer.context.device.allocateCommandBuffers(cmdAlloc), "uploadTextureFloat: allocateCommandBuffers");
+        if (!cmds)
+        {
+            vmaDestroyImage(renderer.context.allocator, rawImage, imageAllocation);
+            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
+            return Err(cmds.error());
+        }
+        vk::CommandBuffer cmd = (*cmds)[0];
+        vk::CommandBufferBeginInfo begin{};
+        begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        static_cast<void>(cmd.begin(begin));
+        transitionImage(cmd, vk::Image{ rawImage },
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+            vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite);
+        vk::BufferImageCopy region{};
+        region.imageSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+        region.imageExtent = vk::Extent3D{ width, height, 1 };
+        cmd.copyBufferToImage(vk::Buffer{ staging }, vk::Image{ rawImage }, vk::ImageLayout::eTransferDstOptimal, region);
+        transitionImage(cmd, vk::Image{ rawImage },
+            vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite,
+            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        static_cast<void>(cmd.end());
+        vk::CommandBufferSubmitInfo cmdInfo{};
+        cmdInfo.commandBuffer = cmd;
+        vk::SubmitInfo2 submitInfo{};
+        submitInfo.setCommandBufferInfos(cmdInfo);
+        static_cast<void>(renderer.context.graphicsQueue.submit2(submitInfo, nullptr));
+        static_cast<void>(renderer.context.device.waitIdle());
+        renderer.context.device.freeCommandBuffers(renderer.frame.frames[0].commandPool, cmd);
+        vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
+
+        vk::ImageViewCreateInfo viewInfo{};
+        viewInfo.image = vk::Image{ rawImage };
+        viewInfo.viewType = vk::ImageViewType::e2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+        auto view = checked(renderer.context.device.createImageView(viewInfo), "uploadTextureFloat: createImageView");
+        if (!view)
+        {
+            vmaDestroyImage(renderer.context.allocator, rawImage, imageAllocation);
+            return Err(view.error());
+        }
+
         const u32 index = renderer.descriptors.nextBindlessIndex;
         renderer.descriptors.nextBindlessIndex = renderer.descriptors.nextBindlessIndex + 1;
         writeBindlessTexture(renderer, *view, index);

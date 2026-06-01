@@ -121,6 +121,7 @@ export namespace se
         std::string name;
         AssetType type = AssetType::Mesh;
         std::string path;  // relative to the asset root
+        bool hdr = false;  // texture: decode as linear float (.hdr); else sRGB RGBA8
     };
 
     struct AssetCatalog

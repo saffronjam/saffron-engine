@@ -75,6 +75,15 @@ export namespace se
         u32 height = 0;
     };
 
+    // Decoded linear float RGBA, tightly packed (width*height*4 floats). From .hdr/.exr-class
+    // sources; values are real radiance (may exceed 1.0), never sRGB-encoded.
+    struct DecodedImageFloat
+    {
+        std::vector<f32> rgba;
+        u32 width = 0;
+        u32 height = 0;
+    };
+
     auto importGltf(const std::string& path) -> Result<Mesh>;
     auto importObj(const std::string& path) -> Result<Mesh>;
     auto importModelFile(const std::string& path) -> Result<Mesh>;  // dispatch by extension
@@ -82,6 +91,9 @@ export namespace se
     auto importModelWithMaterial(const std::string& path) -> Result<ImportedModel>;
     auto decodeImage(const std::string& path) -> Result<DecodedImage>;
     auto decodeImageFromMemory(const std::vector<u8>& encoded) -> Result<DecodedImage>;
+
+    auto decodeImageHdr(const std::string& path) -> Result<DecodedImageFloat>;
+    auto decodeImageFromMemoryHdr(const std::vector<u8>& encoded) -> Result<DecodedImageFloat>;
 
     auto saveMesh(const Mesh& mesh, const std::string& path) -> Result<void>;  // baked .smesh
     auto loadMesh(const std::string& path) -> Result<Mesh>;
@@ -595,6 +607,43 @@ namespace se
             return Err(std::string{ "cannot decode image from memory" });
         }
         DecodedImage image;
+        image.width = static_cast<u32>(width);
+        image.height = static_cast<u32>(height);
+        image.rgba.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
+        stbi_image_free(pixels);
+        return image;
+    }
+
+    auto decodeImageHdr(const std::string& path) -> Result<DecodedImageFloat>
+    {
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        float* pixels = stbi_loadf(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+        if (pixels == nullptr)
+        {
+            return Err(std::format("cannot decode HDR image '{}'", path));
+        }
+        DecodedImageFloat image;
+        image.width = static_cast<u32>(width);
+        image.height = static_cast<u32>(height);
+        image.rgba.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
+        stbi_image_free(pixels);
+        return image;
+    }
+
+    auto decodeImageFromMemoryHdr(const std::vector<u8>& encoded) -> Result<DecodedImageFloat>
+    {
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        float* pixels = stbi_loadf_from_memory(encoded.data(), static_cast<int>(encoded.size()),
+                                               &width, &height, &channels, STBI_rgb_alpha);
+        if (pixels == nullptr)
+        {
+            return Err(std::string{ "cannot decode HDR image from memory" });
+        }
+        DecodedImageFloat image;
         image.width = static_cast<u32>(width);
         image.height = static_cast<u32>(height);
         image.rgba.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);

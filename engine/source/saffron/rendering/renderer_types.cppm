@@ -1034,6 +1034,10 @@ export namespace se
     auto pipelineCount(const Renderer& renderer) -> u32;
     auto uploadMesh(Renderer& renderer, const Mesh& mesh) -> Result<Ref<GpuMesh>>;
     auto uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb) -> Result<Ref<GpuTexture>>;
+    /// Uploads tightly-packed linear float RGBA (width*height*4 floats) as a half-float
+    /// (eR16G16B16A16Sfloat) sampled texture in the bindless array. For HDR panoramas /
+    /// environment sources; no sRGB encoding. Narrows f32 -> f16 on the CPU before staging.
+    auto uploadTextureFloat(Renderer& renderer, const f32* rgba, u32 width, u32 height) -> Result<Ref<GpuTexture>>;
 
     // Rasterizes an SVG to a square RGBA icon (tint multiplied in) and uploads it as a
     // GPU texture — used for asset-browser type icons. "currentColor" maps to white.

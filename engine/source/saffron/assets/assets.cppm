@@ -66,7 +66,8 @@ export namespace se
         for (const AssetEntry& entry : catalog.entries)
         {
             assets.push_back(nlohmann::json{ { "id", entry.id.value }, { "name", entry.name },
-                                             { "type", assetTypeName(entry.type) }, { "path", entry.path } });
+                                             { "type", assetTypeName(entry.type) }, { "path", entry.path },
+                                             { "hdr", entry.hdr } });
         }
         return assets;
     }
@@ -90,6 +91,7 @@ export namespace se
             parsed.name = jsonStringOr(entry, "name", std::string{});
             parsed.type = assetTypeFromName(jsonStringOr(entry, "type", std::string{ "mesh" }));
             parsed.path = jsonStringOr(entry, "path", std::string{});
+            parsed.hdr = jsonBoolOr(entry, "hdr", false);
             if (parsed.id.value != 0)
             {
                 putAsset(catalog, std::move(parsed));
@@ -238,6 +240,39 @@ export namespace se
         return id;
     }
 
+    // Writes encoded HDR bytes into assets/textures/<uuid>.hdr, decodes + uploads them as a
+    // linear float texture, and adds a Texture entry with hdr=true. Returns the id.
+    auto registerHdrTextureBytes(AssetServer& assets, Renderer& renderer,
+                                                             const std::vector<u8>& encoded,
+                                                             const std::string& name) -> Result<Uuid>
+    {
+        auto decoded = decodeImageFromMemoryHdr(encoded);
+        if (!decoded)
+        {
+            return Err(decoded.error());
+        }
+        auto texture = uploadTextureFloat(renderer, decoded->rgba.data(), decoded->width, decoded->height);
+        if (!texture)
+        {
+            return Err(texture.error());
+        }
+        const Uuid id = newUuid();
+        const std::string relativePath = "textures/" + std::to_string(id.value) + ".hdr";
+        std::ofstream out(assets.root + "/" + relativePath, std::ios::binary);
+        if (!out)
+        {
+            return Err(std::format("cannot write texture '{}'", relativePath));
+        }
+        out.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
+        if (!out)
+        {
+            return Err(std::format("write failed for texture '{}'", relativePath));
+        }
+        putAsset(assets.catalog, AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath, true });
+        assets.textureRefByUuid[id.value] = *texture;
+        return id;
+    }
+
     // Imports an external image file into the asset dir + catalog (name = filename stem).
     auto importTexture(AssetServer& assets, Renderer& renderer, const std::string& path) -> Result<Uuid>
     {
@@ -260,6 +295,18 @@ export namespace se
         {
             ext.erase(0, 1);
         }
+        std::string extLower = ext;
+        for (char& c : extLower)
+        {
+            if (c >= 'A' && c <= 'Z')
+            {
+                c = static_cast<char>(c - 'A' + 'a');
+            }
+        }
+        if (extLower == "hdr")
+        {
+            return registerHdrTextureBytes(assets, renderer, encoded, fsPath.stem().string());
+        }
         return registerTextureBytes(assets, renderer, encoded, ext, fsPath.stem().string());
     }
 
@@ -278,7 +325,28 @@ export namespace se
         {
             return nullptr;
         }
-        auto decoded = decodeImage(assets.root + "/" + entry->path);
+        const std::string fullPath = assets.root + "/" + entry->path;
+        if (entry->hdr)
+        {
+            auto decoded = decodeImageHdr(fullPath);
+            if (decoded)
+            {
+                auto texture = uploadTextureFloat(renderer, decoded->rgba.data(), decoded->width, decoded->height);
+                if (texture)
+                {
+                    assets.textureRefByUuid[id.value] = *texture;
+                    return *texture;
+                }
+                logWarn(std::format("texture {}: {}", id.value, texture.error()));
+            }
+            else
+            {
+                logWarn(std::format("texture {}: {}", id.value, decoded.error()));
+            }
+            assets.textureRefByUuid[id.value] = nullptr;  // negative-cache the failure
+            return nullptr;
+        }
+        auto decoded = decodeImage(fullPath);
         if (decoded)
         {
             auto texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
