@@ -1,7 +1,46 @@
 # Phase 7: Ray-Tracing Foundation + Ray-Query Shadows
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 <!-- Flip to COMPLETED when the "Done when" checklist passes, validation-clean. Delete this file only after COMPLETED + merged. -->
+
+<!--
+COMPLETED 2026-06-01 (commit ffe5a8e), validation-clean on llvmpipe (full KHR RT stack, ~1 FPS).
+- Device bring-up GATED: features12.bufferDeviceAddress + VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT
+  always; the AS + ray_query + deferred-host-ops extensions via enable_extension_if_present
+  (vk-bootstrap has no "desired extension" on the selector — enable post-select), feature
+  structs queried via vkGetPhysicalDeviceFeatures2 + chained into device create only when
+  both present → context.rtSupported. Engine still starts on a non-RT GPU.
+- DISPATCH: the AS entry points are NOT statically exported by the loader (verified: only
+  vkGetBufferDeviceAddress is). Resolved 5 fns via vkGetDeviceProcAddr into RtDispatch +
+  called through the C API; the engine otherwise uses Vulkan-Hpp STATIC dispatch. (volk /
+  HPP dynamic dispatcher avoided — minimal footprint.)
+- AccelerationStructure RAII (handle + backing AS-storage buffer, destroyed via the resolved
+  destroyFn then the buffer, before the allocator). createAccelStructure / makeRtBuffer /
+  bufferDeviceAddress helpers in :Detail.
+- BLAS per mesh in uploadMesh (vertex/index buffers get eShaderDeviceAddress +
+  eAccelerationStructureBuildInputReadOnly; PREFER_FAST_TRACE, no compaction v1). Per-frame
+  TLAS (PREFER_FAST_BUILD) as a Compute-kind graph "tlas-build" pass; recordTlasBuild
+  self-emits the AS-build→fragment barrier + writes the TLAS into the frame's set 6. An
+  empty (0-instance) seed TLAS is built at init + written to all frame sets so set 6 is
+  ALWAYS valid (the fragment statically references rtScene regardless of the runtime flag —
+  an unwritten descriptor = VUID-vkCmdDrawIndexed-None-08114).
+- Mesh PSO: set 6 (TLAS) appended to the layout ONLY when rtSupported; mesh.slang
+  rayQueryShadow() (TerminateOnFirstHit) gated by pointShadowMeta.z, applied to the
+  directional + EVERY punctual light (vs the map paths' one-spot/one-point limit).
+  setRtScene captures the frame instances; the TLAS-build pass consumes them.
+- se set-rt-shadows {0|1} (guarded on rtSupported); render-stats reports rtSupported/
+  rtShadows/blasCount.
+- Verified: rtSupported true on llvmpipe, BLAS built, RT shadow matches the phase-3 shadow
+  map to 0.11% of pixels (penumbra edge only), VAL=0.
+
+NOT done (noted seams, non-blocking): swap phase-6 DDGI's software trace for a ray_query
+trace behind rtSupported (the proxy/sampling are unchanged); BLAS compaction; a non-RT-GPU
+mesh-shader PERMUTATION (today the mesh SPIR-V always carries the RayQueryKHR capability, so
+on a device without ray_query the mesh PSO would fail to create — fine for the llvmpipe
+target + any RT GPU, but a permutation/specialization is needed for true non-RT hardware).
+The RT-pipeline + SBT (vs inline ray-query) is phase-8 territory.
+-->
+
 
 ## Goal
 

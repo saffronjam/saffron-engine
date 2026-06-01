@@ -46,7 +46,7 @@ here is `COMPLETED` and deleted, delete the folder.
 | 4 | Screen-space GI / AO ✅ COMPLETED (SSR opt. skipped) | `phase-4-screen-space-gi-ao.md` | 1, 2, (5 for SSGI) | ✅ low budget |
 | 5 | Temporal AA + history + motion vectors ✅ COMPLETED | `phase-5-temporal-aa-history.md` | 4's thin G-buffer | ✅ |
 | 6 | DDGI probe GI (software voxel trace) ✅ COMPLETED | `phase-6-ddgi-probe-gi.md` | 1, 2, 5 | ✅ sample side; slow update |
-| 7 | Ray-tracing foundation + ray-query shadows | `phase-7-raytracing-foundation.md` | 1–3 | ⚠️ builds+validates ~1 FPS |
+| 7 | Ray-tracing foundation + ray-query shadows ✅ COMPLETED | `phase-7-raytracing-foundation.md` | 1–3 | ⚠️ builds+validates ~1 FPS |
 | 8 | ReSTIR many-light + RT-GI capstone | `phase-8-restir-many-light.md` | 5, 7 | ⚠️ ~1 FPS |
 
 **Ordering note:** the dependency-correct order is 1 → 3 → 2 → … (PBR, then shadows,
