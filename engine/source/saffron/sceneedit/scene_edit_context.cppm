@@ -30,28 +30,57 @@ export namespace se
         f32 fov = 45.0f;
         f32 nearPlane = 0.1f;
         f32 farPlane = 100.0f;
-        f32 moveSpeed = 6.0f;   // units/second
-        f32 lookSpeed = 0.12f;  // degrees/pixel
+        f32 moveSpeed = 6.0f;      // units/second
+        f32 lookSpeed = 0.12f;     // degrees/pixel
         bool controlling = false;  // latched while RMB is held (so a drag can leave the rect)
     };
 
     // Backend-neutral gizmo op + reference space (no ImGuizmo/imgui types, so the control
     // TU can read/write them); editor_gizmo.cpp maps these to ImGuizmo at the call site.
-    enum class GizmoOp { Translate, Rotate, Scale };
-    enum class GizmoSpace { World, Local };
+    enum class GizmoOp
+    {
+        Translate,
+        Rotate,
+        Scale
+    };
+    enum class GizmoSpace
+    {
+        World,
+        Local
+    };
 
-    auto gizmoOpName(GizmoOp op) -> const char*;            // "translate"|"rotate"|"scale"
+    auto gizmoOpName(GizmoOp op) -> const char*;  // "translate"|"rotate"|"scale"
     auto gizmoOpFromName(const std::string& name) -> GizmoOp;
-    auto gizmoSpaceName(GizmoSpace space) -> const char*;   // "world"|"local"
+    auto gizmoSpaceName(GizmoSpace space) -> const char*;  // "world"|"local"
     auto gizmoSpaceFromName(const std::string& name) -> GizmoSpace;
 
     // The engine-rendered (overlay) gizmo. mode/space are driven FROM the backend-neutral
     // GizmoOp/GizmoSpace (the single source) — mapped each frame — so the ImGuizmo path
     // (the retired C++ ImGui editor) and the native overlay path stay in sync. The remaining fields are the
     // overlay's own hover/drag interaction state.
-    enum class NativeGizmoMode { Translate, Rotate, Scale };
-    enum class NativeGizmoSpace { World, Local };
-    enum class NativeGizmoHandle { None, X, Y, Z, XY, YZ, XZ, Screen, Uniform };
+    enum class NativeGizmoMode
+    {
+        Translate,
+        Rotate,
+        Scale
+    };
+    enum class NativeGizmoSpace
+    {
+        World,
+        Local
+    };
+    enum class NativeGizmoHandle
+    {
+        None,
+        X,
+        Y,
+        Z,
+        XY,
+        YZ,
+        XZ,
+        Screen,
+        Uniform
+    };
 
     struct NativeGizmoState
     {
@@ -76,9 +105,14 @@ export namespace se
         Entity selected{ entt::null };
         SubscriberList<Entity> onSelectionChanged;
         std::string scenePath;
+        bool projectLoaded = false;
+        std::string projectRoot;
+        std::string projectPath;
+        std::string projectName;
+        std::string projectDisplayName;
         SceneEditCamera camera;
-        u64 sceneVersion = 0;       // bumped by add/copy/destroy-entity + load (control-plane diff poll)
-        u64 selectionVersion = 0;   // bumped on every selection change
+        u64 sceneVersion = 0;      // bumped by add/copy/destroy-entity + load (control-plane diff poll)
+        u64 selectionVersion = 0;  // bumped on every selection change
 
         GizmoOp gizmoOp = GizmoOp::Translate;       // W/E/R cycle translate/rotate/scale
         GizmoSpace gizmoSpace = GizmoSpace::World;  // gizmo reference space (world/local)
