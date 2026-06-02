@@ -5,7 +5,11 @@ weight = 7
 
 # Materials & pipelines
 
-How a material becomes a pipeline, and how the engine keeps the pipeline count tiny. One übershader covers every material, a specialization constant adds the unlit variant, and a single bindless texture array lets draws that differ only by texture batch together.
+A material is the surface description a mesh draws with — its shader and its parameters — and a pipeline is the compiled GPU state that renders it. These pages explain how a material resolves to a pipeline and how the pipeline count stays small through three mechanisms:
+
+- One übershader covers every material.
+- A specialization constant adds the unlit variant.
+- A single bindless texture array lets draws that differ only by texture batch together.
 
 ## Pages
 

@@ -6,15 +6,19 @@ math = true
 
 # IBL ambient term
 
-Direct lights only account for light arriving straight from a source. Everything bounced off
-the environment — the sky, nearby surfaces — is the indirect (ambient) term. The fragment
-shader adds it on top of the direct sum, either as image-based lighting (the split-sum
-approximation) or, when IBL is off, as a flat scalar fill.
+The ambient term is the indirect light a surface receives: everything bounced off the
+environment — the sky, nearby surfaces — rather than arriving straight from a source. Direct
+lights account only for the latter, so a surface lit by direct lights alone is black wherever no
+light points at it.
+
+The fragment shader adds the ambient term on top of the direct sum. It computes that term one of
+two ways: as image-based lighting through the split-sum approximation, or, when IBL is off, as a
+flat scalar fill.
 
 ## Two ambient paths
 
-The shader branches on `globals.counts.z` (the IBL-enabled flag). When IBL is ready it
-evaluates the split-sum; otherwise it falls back to a constant:
+The shader branches on `globals.counts.z`, the IBL-enabled flag. When IBL is ready it evaluates
+the split-sum; otherwise it falls back to a constant:
 
 ```hlsl
 if (globals.counts.z != 0)
@@ -24,20 +28,20 @@ else
 ```
 
 The fallback is the [directional light's](../directional-light/) `ambient` scalar
-(`directionAmbient.w`) times the diffuse albedo: a cheap constant fill so unlit surfaces are
-not pure black. No directionality, no specular.
+(`directionAmbient.w`) times the diffuse albedo — a constant fill so unlit surfaces are not pure
+black. It carries no directionality and no specular.
 
 ## Split-sum IBL
 
-The IBL term splits ambient into diffuse and specular, each precomputed into a cubemap or LUT
-so the fragment only does a few texture fetches. The diffuse half samples a convolved
+The IBL term splits the ambient into diffuse and specular halves, each precomputed into a cubemap
+or LUT so the fragment does only a few texture fetches. The diffuse half samples a convolved
 irradiance cube $E(n)$ in the normal direction:
 
 $$
 \text{diffuse}_\text{IBL} = k_d \cdot \text{albedo} \cdot E(n)
 $$
 
-with $k_d = (1 - F)(1 - \text{metallic})$ — the same energy-conservation factor the direct BRDF
+with $k_d = (1 - F)(1 - \text{metallic})$, the same energy-conservation factor the direct BRDF
 uses, here with a roughness-aware Fresnel. The specular half is the split-sum approximation: a
 prefiltered environment cube sampled in the reflection direction at a mip chosen by roughness,
 scaled by a two-term BRDF integration LUT:
@@ -57,13 +61,13 @@ ambient = diffuseIBL + prefiltered * (F0 * ab.x + ab.y);
 ```
 
 Roughness selects the prefilter mip: a mirror reads the sharp top mip, a rough surface reads a
-blurred low one. The maps themselves (irradiance cube, prefiltered cube, BRDF LUT) are bound on
+blurred low one. The maps themselves — irradiance cube, prefiltered cube, BRDF LUT — are bound on
 set 3; how they are convolved is the [image-based lighting](../../image-based-lighting/) topic.
 
 ## Modulation: AO, SSGI, DDGI
 
-Whichever path produced `ambient`, several screen- and world-space effects refine it. Each is
-gated by its own flag and touches only the indirect term, never the direct lights:
+Several screen- and world-space effects refine the ambient term after either path produces it.
+Each is gated by its own flag and touches only the indirect term, never the direct lights:
 
 - **AO** (`counts.w`) multiplies the ambient by a screen-space occlusion factor, darkening
   creases the IBL cube cannot see.
@@ -84,9 +88,9 @@ emission, all in linear HDR.
 | Indirect modulation | `mesh.slang` | `aoMap`, `ssgiMap`, `ddgiSampleIrradiance` |
 
 > [!TIP]
-> AO, SSGI, and DDGI only modulate the ambient term — they never touch the direct lights.
-> Darkening direct lighting with AO is a common mistake that double-counts shadowing the direct
-> shadow maps already handle.
+> AO, SSGI, and DDGI modulate only the ambient term; they never touch the direct lights.
+> Darkening direct lighting with AO double-counts shadowing the direct shadow maps already
+> handle.
 
 ## Related
 

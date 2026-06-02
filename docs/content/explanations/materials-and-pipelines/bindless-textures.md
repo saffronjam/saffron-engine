@@ -5,9 +5,23 @@ weight = 4
 
 # Bindless textures
 
-Every albedo texture in the scene lives in one global descriptor array. A texture is addressed by an integer slot, not by a per-material descriptor set. The slot rides along in the per-instance data, so two objects that differ *only* by texture still batch into a single instanced draw.
+Bindless texturing addresses every texture through one global descriptor array, indexed by an
+integer slot rather than a per-material descriptor set. A shader reads the slot from per-draw data
+and samples the array at that index. Binding the array once covers every texture the scene uses.
 
-That batching is the payoff. With per-material texture descriptor sets, two cubes with different albedos would each need their own set and couldn't share an instanced draw — texture *was* a batch key. With bindless, texture is just an integer in the instance buffer, so a `DrawBatch` keys only on `(pipeline, mesh)`. Two textures on the same mesh become one instanced `drawIndexed`; `se render-stats` reports batches, so you can watch two differently textured instances stay a single batch.
+The integer slot is what makes this useful. When texture is data rather than binding state, two
+objects that differ only by texture share the same pipeline and the same draw, so texture stops
+being a batch key.
+
+## How it works
+
+Every albedo texture in the scene lives in one fixed-size descriptor array bound at set 0. A
+texture is identified by its position in that array. The slot travels in the per-instance data, so
+the shader can look up the right texture for each instance from a single bound array.
+
+Because the slot is just an integer, a `DrawBatch` keys only on `(pipeline, mesh)`. Two textures on
+the same mesh become one instanced `drawIndexed`. `se render-stats` reports batches, so two
+differently textured instances are visible as a single batch.
 
 ## One array, set 0
 
@@ -19,14 +33,22 @@ The übershader declares a fixed-size combined-image-sampler array as set 0, bin
 
 The C++ layout makes that array partially bound and update-after-bind:
 
-- **partiallyBound** means not every one of the 1024 slots needs a valid descriptor. The shader only samples slots that were written, so the empty tail is fine.
-- **updateAfterBind** means a slot can be written while the set is bound and in use, between draws — exactly what `uploadTexture` does.
+- **partiallyBound** means not every one of the 1024 slots needs a valid descriptor. The shader
+  only samples slots that were written, so the empty tail is fine.
+- **updateAfterBind** means a slot can be written while the set is bound and in use, between draws —
+  exactly what `uploadTexture` does.
 
-Both features are requested at device selection time (`descriptorBindingPartiallyBound`, `descriptorBindingSampledImageUpdateAfterBind`), so a device that lacks them won't be chosen. The set is bound once and stays bound for every mesh draw. Slot 0 is the default white texture, so a renderable with no albedo samples white.
+Both features are requested at device selection time (`descriptorBindingPartiallyBound`,
+`descriptorBindingSampledImageUpdateAfterBind`), so a device that lacks them is not chosen. The set
+is bound once and stays bound for every mesh draw. Slot 0 is the default white texture, so a
+renderable with no albedo samples white.
 
 ## Claiming a slot
 
-`uploadTexture` creates the device image, claims the next free slot, writes the descriptor, and stores the slot on the `GpuTexture`. `nextBindlessIndex` is a bump allocator — slots are handed out monotonically and not recycled. The descriptor write pokes one element of the live set, pairing the view with the shared `linearSampler`:
+`uploadTexture` creates the device image, claims the next free slot, writes the descriptor, and
+stores the slot on the `GpuTexture`. `nextBindlessIndex` is a bump allocator: slots are handed out
+monotonically and not recycled. The descriptor write pokes one element of the live set, pairing the
+view with the shared `linearSampler`:
 
 ```cpp
 void writeBindlessTexture(Renderer& renderer, vk::ImageView view, u32 index)
@@ -42,11 +64,14 @@ void writeBindlessTexture(Renderer& renderer, vk::ImageView view, u32 index)
 }
 ```
 
-One linear, mipped, repeat sampler the renderer owns is shared across every texture, so the array is really a combined-image-sampler array sharing one sampler. A `GpuTexture` owns its image and view but not its sampler.
+The renderer owns one linear, mipped, repeat sampler, shared across every texture in the array. A
+`GpuTexture` owns its image and view but not its sampler.
 
 ## The index travels per-instance
 
-The slot ends up in the per-instance storage buffer (set 2). The vertex stage forwards it flat to the fragment stage, which samples with `NonUniformResourceIndex` because the index varies across the warp:
+The slot ends up in the per-instance storage buffer (set 2). The vertex stage forwards it flat to
+the fragment stage, which samples with `NonUniformResourceIndex` because the index varies across
+the warp:
 
 ```hlsl
 struct Instance

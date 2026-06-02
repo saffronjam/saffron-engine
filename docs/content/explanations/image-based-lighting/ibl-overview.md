@@ -6,9 +6,9 @@ math = true
 
 # IBL overview
 
-[Direct lighting](../../lighting-and-brdf/cook-torrance-brdf/) only accounts for the sun and the punctual lights. Everything else a surface sees — the sky, the bounce off nearby geometry, the general fill of a room — is the indirect, or *ambient*, term. Image-based lighting computes that term by treating an environment as a light source and integrating the [Cook-Torrance BRDF](../../lighting-and-brdf/cook-torrance-brdf/) against it.
+Image-based lighting computes a surface's indirect, or *ambient*, illumination by treating an environment as a light source and integrating the [Cook-Torrance BRDF](../../lighting-and-brdf/cook-torrance-brdf/) against it.
 
-That integral is too expensive to evaluate per pixel per frame. So the engine precomputes three small textures from the environment once at startup, then the mesh shader samples them.
+[Direct lighting](../../lighting-and-brdf/cook-torrance-brdf/) accounts only for the sun and the punctual lights. Everything else a surface sees — the sky, the bounce off nearby geometry, the general fill of a room — is the ambient term. The defining integral is too expensive to evaluate per pixel per frame, so the engine precomputes three small textures from the environment once at startup and the mesh shader samples them.
 
 ## Split-sum approximation
 
@@ -18,7 +18,7 @@ $$
 L_o(v) = \int_\Omega f(l, v)\, L_i(l)\, (n \cdot l)\, dl
 $$
 
-There is no closed form, and Monte-Carlo sampling it per fragment is far too slow for real time. The split-sum approximation (Karis, *Real Shading in Unreal Engine 4*) factors the specular part into two integrals that each precompute into a lookup:
+There is no closed form, and Monte-Carlo sampling it per fragment is too slow for real time. The split-sum approximation (Karis, *Real Shading in Unreal Engine 4*) factors the specular part into two integrals that each precompute into a lookup:
 
 $$
 \int_\Omega f\, L_i\, (n\cdot l)\, dl \;\approx\;
@@ -27,7 +27,7 @@ $$
 \underbrace{\int_\Omega f\,(n\cdot l)\, dl}_{\text{BRDF LUT}}
 $$
 
-The first factor is the environment prefiltered by roughness: a cubemap whose mip chain holds progressively blurrier reflections. The second depends only on $n\cdot v$, roughness, and $F_0$. Since it is environment-independent, it bakes into a single 2D table reused across scenes. Diffuse is handled separately by a cosine-weighted irradiance convolution.
+The first factor is the environment prefiltered by roughness: a cubemap whose mip chain holds progressively blurrier reflections. The second depends only on $n\cdot v$, roughness, and $F_0$, and being environment-independent it bakes into a single 2D table reused across scenes. Diffuse is handled separately by a cosine-weighted irradiance convolution.
 
 ## Three baked textures
 
@@ -43,7 +43,7 @@ All three are baked once by [the bake pass](../ibl-bake-pass/) and bound as set 
 
 ## How the mesh shader uses them
 
-The ambient block in `fragmentMain` reads all three and assembles diffuse plus specular. Diffuse samples the irradiance cube along the normal $n$ and scales by the energy-conservation factor $k_d$, computed with `fresnelSchlickRoughness` so rough surfaces don't over-reflect at grazing angles. Specular samples the prefiltered cube along the reflection vector $R$ at a mip chosen by roughness, then applies the LUT — `F0 * ab.x + ab.y` is the split-sum scale and bias.
+The ambient block in `fragmentMain` reads all three and assembles diffuse plus specular. Diffuse samples the irradiance cube along the normal $n$ and scales by the energy-conservation factor $k_d$, computed with `fresnelSchlickRoughness` so rough surfaces do not over-reflect at grazing angles. Specular samples the prefiltered cube along the reflection vector $R$ at a mip chosen by roughness, then applies the LUT, where `F0 * ab.x + ab.y` is the split-sum scale and bias.
 
 ```hlsl
 float3 diffuseIBL  = kd * irradianceMap.SampleLevel(n, 0.0).rgb * albedo;
@@ -54,7 +54,7 @@ ambient = diffuseIBL + prefiltered * (F0 * ab.x + ab.y);
 
 ## When it replaces flat ambient
 
-IBL is the default. It runs whenever `globals.counts.z != 0`, which is `useIbl && ibl.ready`. Disabling it (`se set-ibl 0`) falls back to a flat scalar — `albedo * (1 - metallic) * ambient` — that the directional-light setup carries. The flat version has no directionality and no specular reflection, which is exactly what IBL adds.
+IBL is the default. It runs whenever `globals.counts.z != 0`, which is `useIbl && ibl.ready`. Disabling it (`se set-ibl 0`) falls back to a flat scalar — `albedo * (1 - metallic) * ambient` — that the directional-light setup carries. The flat version has no directionality and no specular reflection, the two qualities IBL adds.
 
 ## In the code
 

@@ -6,16 +6,19 @@ math = true
 
 # Punctual lights
 
-Point and spot lights are the punctual lights: they have a world position, fall off with
-distance, and (for spots) cut off by angle. Each runs through the same
-[BRDF](../cook-torrance-brdf/) as the [directional sun](../directional-light/), but first builds
-an incoming radiance from three multiplicative factors — distance attenuation, a spot cone, and
-shadow.
+A punctual light is a light source at a single world-space position: a point light radiating in
+all directions, or a spot light confined to a cone. Both fall off with distance, and a spot also
+cuts off by angle.
+
+Each punctual light feeds the same [Cook-Torrance BRDF](../cook-torrance-brdf/) as the
+[directional sun](../directional-light/). The difference is the incoming radiance, which a punctual
+light builds from three multiplicative factors: distance attenuation, a spot cone, and shadow.
 
 ## One function per light
 
-`punctual` evaluates one light at a world-space surface point. It computes the light direction,
-the attenuation, the cone, and the shadow, folds them into `radiance`, and hands that to `brdf`:
+`punctual` evaluates a single light at a world-space surface point. It computes the light
+direction, the attenuation, the cone, and the shadow, folds them into `radiance`, and passes that
+to `brdf`:
 
 ```hlsl
 float3 toLight = lt.positionRange.xyz - worldPos;
@@ -29,15 +32,15 @@ float3 radiance = lt.colorIntensity.rgb * lt.colorIntensity.a * attenuation * co
 return brdf(n, v, l, albedo, metallic, roughness, radiance);
 ```
 
-The early `dist > range` test is a cheap reject before any BRDF work. Everything after it just
+The early `dist > range` test rejects a light cheaply before any BRDF work. Everything after it
 builds the `radiance` scalar the BRDF multiplies in.
 
 ## Distance attenuation
 
-Physically, a point source falls off as $1/d^2$. But a pure inverse-square never reaches zero,
-so it would touch every fragment in the scene and defeat any culling. The engine uses the
-UE4-style windowed inverse-square: the physical $1/d^2$ multiplied by a smooth factor that
-reaches exactly zero at `range`.
+A physical point source falls off as $1/d^2$. A pure inverse-square never reaches zero, so it
+touches every fragment in the scene and defeats culling. The engine uses the UE4-style windowed
+inverse-square: the physical $1/d^2$ multiplied by a smooth factor that reaches exactly zero at
+`range`.
 
 $$
 \text{att}(d, r) = \frac{1}{\max(d^2,\ 10^{-4})}\,\left[\operatorname{sat}\!\left(1 - \left(\tfrac{d}{r}\right)^4\right)\right]^2
@@ -53,15 +56,15 @@ float distanceAttenuation(float dist, float range)
 ```
 
 The $\max(d^2, 10^{-4})$ floor keeps the value finite at the light's own position. The
-$\bigl(1-(d/r)^4\bigr)^2$ window is $1$ near the light and tapers smoothly to $0$ at $d = r$, so
-the light has compact support — which is exactly what lets the
-[cluster cull](../clustered-forward/) treat `range` as a hard bounding radius.
+$\bigl(1-(d/r)^4\bigr)^2$ window is $1$ near the light and tapers smoothly to $0$ at $d = r$, giving
+the light compact support. That bounded support lets the [cluster cull](../clustered-forward/) treat
+`range` as a hard bounding radius.
 
 ## The spot cone
 
-A spot adds an angular cutoff on top of the distance falloff. The light's `directionType.w`
-flags it as a spot; the shader compares the angle between the spot's aim and the direction to
-the fragment against the two pre-computed cosines, smoothstepped for a soft penumbra:
+A spot adds an angular cutoff on top of the distance falloff. The light's `directionType.w` flags
+it as a spot. The shader compares the angle between the spot's aim and the direction to the
+fragment against two pre-computed cosines, smoothstepped for a soft penumbra:
 
 ```hlsl
 if (lt.directionType.w > 0.5)
@@ -72,9 +75,9 @@ if (lt.directionType.w > 0.5)
 }
 ```
 
-`smoothstep(outer, inner, cosAngle)` is $1$ inside the inner half-angle, $0$ outside the outer
-one, and a smooth Hermite ramp between. Larger angles have smaller cosines, so the outer cosine
-is the low edge and the inner is the high edge. A point light leaves `cone` at `1.0`.
+`smoothstep(outer, inner, cosAngle)` is $1$ inside the inner half-angle, $0$ outside the outer one,
+and a smooth Hermite ramp between. Larger angles have smaller cosines, so the outer cosine is the
+low edge and the inner is the high edge. A point light leaves `cone` at `1.0`.
 
 ## Shadow
 

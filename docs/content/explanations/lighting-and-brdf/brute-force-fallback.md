@@ -5,15 +5,16 @@ weight = 7
 
 # Brute-force fallback
 
-The fragment shader can loop every light instead of just its froxel's. That brute-force path
-is the reference: simpler, slower, and the ground truth the [clustered](../clustered-forward/)
-path is validated against. `se set-clustered 0` flips to it at runtime.
+The brute-force fallback is a shading path that loops over every light in the scene for each
+fragment, rather than only the lights assigned to that fragment's froxel. It is the reference
+implementation: simpler, slower, and the ground truth the [clustered](../clustered-forward/)
+path is validated against. `se set-clustered 0` selects it at runtime.
 
 ## One flag, two loops
 
 The flag rides in the cluster params (`screenSize.z`), set from `useClustered` in
-`setClusterCamera`. When it is zero there is no cluster lookup at all, and the loop runs over
-the full light count from the lighting UBO:
+`setClusterCamera`. When it is zero there is no cluster lookup, and the loop runs over the full
+light count from the lighting UBO:
 
 ```hlsl
 else
@@ -27,27 +28,26 @@ else
 
 The body is the same `punctual(...)` call the clustered loop makes; only the iteration set
 differs. When the flag is off, `clusterDispatchPending` is never set, so the
-[cull pass](../clustered-forward/) is not even added to the render graph that frame.
+[cull pass](../clustered-forward/) is not added to the render graph that frame.
 
 ## Why the two paths match
 
-The clustered and brute-force paths produce pixel-identical images, by construction. Both
-call the same `punctual` → `brdf` functions, so a given light shades a fragment the same way
-either way. And a light is added to a froxel only when its `range` sphere overlaps, while
-punctual [attenuation](../punctual-lights-and-attenuation/) is windowed to reach exactly zero
-at `range`. So any light the clustered loop skips would have contributed exactly zero anyway.
+The clustered and brute-force paths produce pixel-identical images by construction. Both call
+the same `punctual` → `brdf` functions, so a given light shades a fragment identically either
+way. A light is added to a froxel only when its `range` sphere overlaps, and punctual
+[attenuation](../punctual-lights-and-attenuation/) is windowed to reach exactly zero at
+`range`. Any light the clustered loop skips therefore contributes exactly zero.
 
-Summing a set of lights where the omitted ones are all zero gives the same result as summing
-all of them. Float summation order can differ, but every dropped term is a hard zero, so
-there is nothing to perturb the result. Toggling `se set-clustered` between 1 and 0
-reproduces the same frame.
+Summing a set of lights where the omitted terms are all zero equals summing the full set.
+Float summation order can differ, but every dropped term is a hard zero and cannot perturb the
+result. Toggling `se set-clustered` between 1 and 0 reproduces the same frame.
 
 ## What it is for
 
 Cluster culling has several places to get a sign or a slice boundary wrong: the exponential Z
 mapping, the AABB construction, the flat index encoding. Diffing a clustered frame against the
-brute-force frame is the cheapest way to catch those. It is also the safe default when the
-light count is small enough that culling is not worth the compute dispatch.
+brute-force frame is the cheapest way to catch those errors. It is also the safe default when
+the light count is small enough that culling is not worth the compute dispatch.
 
 ## In the code
 

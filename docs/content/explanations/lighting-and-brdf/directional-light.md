@@ -6,17 +6,17 @@ math = true
 
 # Directional light
 
-The directional light is the sun: one parallel light with no position and no falloff. It is
-the first term the fragment shader accumulates, evaluated through the same
-[BRDF](../cook-torrance-brdf/) as every punctual light, then attenuated by its shadow.
+A directional light is a parallel light source with a direction but no position and no falloff,
+modelling the sun. It is the first term the fragment shader accumulates, evaluated through the
+same [BRDF](../cook-torrance-brdf/) as every punctual light, then attenuated by its shadow.
 
 ## A single direction, no attenuation
 
-With no distance there is no attenuation and no cone — the incoming radiance is just the
-light's color times intensity, the same for every fragment. The only per-fragment work is the
-BRDF and the shadow. The shader stores the light's travel direction in
-`globals.directionAmbient.xyz` and flips it to get the direction toward the light, which is
-what the BRDF wants:
+A directional light has no distance, so it has no attenuation and no cone. The incoming radiance
+is the light's color times its intensity, identical for every fragment. The only per-fragment
+work is the BRDF and the shadow. The shader stores the light's travel direction in
+`globals.directionAmbient.xyz` and negates it to get the direction toward the light, which is
+what the BRDF expects:
 
 ```hlsl
 float3 lDir = -normalize(globals.directionAmbient.xyz);
@@ -24,14 +24,14 @@ float3 lo = brdf(n, v, lDir, albedo, metallic, roughness,
                  globals.colorIntensity.rgb * globals.colorIntensity.a) * shadow;
 ```
 
-The `radiance` argument is `color * intensity` directly. Compare that with a
-[punctual light](../punctual-lights-and-attenuation/), where the same slot also carries
-`attenuation * cone`. Same function, fewer factors.
+The `radiance` argument is `color * intensity` directly. A
+[punctual light](../punctual-lights-and-attenuation/) passes the same slot as
+`color * intensity * attenuation * cone`: the same function with extra factors.
 
 ## Shadow: map, contact, or ray
 
 The `shadow` scalar multiplies the whole direct term. The directional light is the one light
-with a full shadowing stack:
+with a full shadowing stack, selected by flags in the global constants:
 
 - **Shadow map.** When `counts.y` is set, `pcfShadow` projects the fragment into the sun's
   light-space `shadowViewProj`, does a 3×3 PCF comparison against a 2048² depth map, and
@@ -57,7 +57,7 @@ Contact shadows are directional-only in v1; the map and ray paths are mutually e
 
 The directional component is the only one carrying an `ambient` scalar
 (`directionAmbient.w`). When [IBL](../ibl-ambient-term/) is off, that scalar is the flat
-indirect fallback, a constant fill so unlit surfaces are not pure black. It is not part of the
+indirect fallback: a constant fill so unlit surfaces are not pure black. It is not part of the
 direct term above; it is added later with the rest of the ambient.
 
 ## In the code

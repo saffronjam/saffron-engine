@@ -5,11 +5,17 @@ weight = 3
 
 # AA modes
 
-The renderer offers three anti-aliasing approaches. They are mutually exclusive, and one call
-configures all of them: `setAa(renderer, msaaSamples, fxaa, taa)`. The `se set-aa` command is
-the CLI front for it.
+Anti-aliasing reduces the jagged edges that appear where a triangle's boundary crosses a pixel grid.
+A renderer can address it at different points in the pipeline, and each point is a distinct mode with
+its own cost and quality.
+
+Saffron offers three approaches and treats them as mutually exclusive: at most one is active at a
+time. A single configuration call selects the active mode, and a CLI command fronts it for scripting
+and inspection.
 
 ## The modes
+
+The three approaches differ in where they sample and how they combine:
 
 | Mode | `set-aa` arg | What it is | Where |
 |---|---|---|---|
@@ -20,12 +26,12 @@ the CLI front for it.
 
 ## Selecting a mode
 
-`setAa` takes a sample count plus FXAA and TAA flags and resolves them into one active mode.
-MSAA wins if a sample count above 1 is requested; otherwise FXAA, then TAA. The count maps to
-a `vk::SampleCountFlagBits` and clamps to the device's `maxSampleCount`, so asking for `msaa8`
-on hardware that tops out at 4× quietly gives you 4×.
+`setAa(renderer, msaaSamples, fxaa, taa)` takes a sample count plus FXAA and TAA flags and resolves
+them into one active mode. MSAA wins if a sample count above 1 is requested; otherwise FXAA, then
+TAA. The count maps to a `vk::SampleCountFlagBits` and clamps to the device's `maxSampleCount`, so
+asking for `msaa8` on hardware that tops out at 4× yields 4×.
 
-The `set-aa` command parses the mode string into those three arguments:
+The `se set-aa` command parses a mode string into those three arguments:
 
 | String | `msaaSamples` | `fxaa` | `taa` |
 |---|---|---|---|
@@ -36,17 +42,17 @@ The `set-aa` command parses the mode string into those three arguments:
 
 ## What a switch does
 
-A switch is a full reconfigure, not a flag flip. `setAa` waits for the GPU to go idle (the
-targets and PSOs are about to be destroyed), stores the new sample count and flags, then
-recreates three target sets: the multisampled MSAA pair, the 1× scratch that FXAA and TAA
-share, and the TAA motion + history pair. Finally it clears the PSO cache and rebuilds the
+Switching modes is a full reconfigure, not a flag flip. `setAa` waits for the GPU to go idle, since
+the targets and pipeline state objects are about to be destroyed. It stores the new sample count and
+flags, then recreates three target sets: the multisampled MSAA pair, the 1× scratch that FXAA and
+TAA share, and the TAA motion + history pair. Finally it clears the PSO cache and rebuilds the
 depth-prepass pipeline, because the mesh and prepass PSOs bake the sample count.
 
 ## Reading back the active mode
 
-`aaMode(renderer)` reports the current mode as a string, and `se render-stats` exposes it as
-the `aa` field. FXAA and TAA report by their flag; otherwise the sample count decides — `"off"`
-at 1, `"msaaN"` above.
+`aaMode(renderer)` reports the current mode as a string, and `se render-stats` exposes it as the
+`aa` field. FXAA and TAA report by their flag; otherwise the sample count decides — `"off"` at 1,
+`"msaaN"` above.
 
 ## In the code
 

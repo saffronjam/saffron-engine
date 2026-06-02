@@ -5,9 +5,13 @@ weight = 3
 
 # Descriptor sets
 
-The mesh übershader reads from a fixed set layout. Each Vulkan descriptor set holds one class of resource, numbered by how often it changes. The `vk::binding` attributes in `mesh.slang` and the layout list in `newMeshPipeline` are two views of the same contract, and they must agree.
+A descriptor set is a group of GPU resource bindings — textures, buffers, samplers — that a shader reads through a single bound object. Vulkan numbers the sets, and a pipeline declares a layout for each one. A shader and the pipeline that hosts it must agree on that layout exactly.
 
-## The layout
+The convention is to give each set one class of resource and to order the sets by how often the data changes. Binding a low-numbered set rarely and a high-numbered set per draw lets the driver keep more descriptor state resident across draws within a frame.
+
+## The mesh layout
+
+The mesh übershader reads from a fixed set layout. The `vk::binding` attributes in `mesh.slang` and the layout list in `newMeshPipeline` are two views of the same contract, and they must agree.
 
 Sets 0–5 are always present in a mesh PSO. Sets 6–7 exist only when the device supports ray tracing, because their layouts need the acceleration-structure extension.
 
@@ -36,13 +40,13 @@ In the shader these read as `vk::binding(binding, set)`:
 
 ## Numbered by change frequency
 
-The ordering is deliberate, following the conventional Vulkan discipline: bind the rarely changing sets low and the per-draw data high, so the driver keeps more descriptor state resident across draws within a frame.
+The mesh layout follows the change-frequency ordering throughout:
 
 - **Set 0** is bound once and never rebound — the bindless array is a single set for every draw. See [bindless textures](../bindless-textures/).
 - **Sets 1–2** are per-frame: light state and the instance buffer are rewritten each frame (double-buffered so a host write never races a frame still reading on the GPU).
 - **Sets 3–7** are feature state, stable across frames once their feature is on.
 
-## How a flag decouples from a binding
+## Flags decoupled from bindings
 
 Most of these features are optional and gated by a flag in the light UBO (`globals.counts`, `globals.screenFlags`) rather than by a different pipeline. The übershader checks the flag, then samples the matching set:
 

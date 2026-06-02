@@ -5,10 +5,11 @@ weight = 8
 
 # Lighting & BRDF
 
-Direct lighting and the shading model. Lights are fully dynamic ECS components, nothing
-baked: a compute pass culls punctual lights into a froxel grid so the fragment shader loops
-only the lights touching its cluster, and the shading is a Cook-Torrance metallic-roughness
-BRDF accumulated in linear HDR.
+Direct lighting is the radiance reaching a surface straight from the scene's light sources,
+shaded through a physically based reflectance model. Lights are fully dynamic ECS components
+with nothing baked. A compute pass culls punctual lights into a froxel grid, so each fragment
+loops only the lights touching its cluster. Shading is a Cook-Torrance metallic-roughness BRDF
+accumulated in linear HDR.
 
 ## Pages
 

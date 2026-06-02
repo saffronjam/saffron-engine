@@ -6,7 +6,9 @@ math = true
 
 # Specular prefilter
 
-The specular half of IBL needs the environment blurred by the GGX lobe of a given roughness. A mirror reflects the environment sharply; a rough surface reflects a smeared average. The prefilter precomputes that smear into the mip chain of a cubemap — mip 0 is the sharp environment, each coarser mip is blurred by a higher roughness. This is the first term of the [split-sum approximation](../ibl-overview/).
+The specular prefilter is a cubemap whose mip chain stores the environment pre-blurred by the GGX lobe at increasing roughness. Mip 0 holds the sharp environment, and each coarser mip is blurred by a higher roughness. A mirror reflects the environment sharply; a rough surface reflects a smeared average, and the prefilter precomputes that smear so the shader can read it back with a single sample.
+
+This is the first term of the [split-sum approximation](../ibl-overview/). The second term is the [BRDF LUT](../brdf-lut/).
 
 ## What one mip computes
 
@@ -16,11 +18,11 @@ $$
 \text{prefiltered}(r) \approx \frac{\sum_k L_i(l_k)\,(n\cdot l_k)}{\sum_k (n\cdot l_k)}
 $$
 
-The split-sum makes one simplifying assumption: view equals normal equals reflection. There is no single $v$ at bake time, so the prefilter can't know the real view — this is the trade that lets it be a function of direction and roughness alone (`float3 v = n;` in the shader). The cost is that grazing reflections lose their stretched, anisotropic shape. For most surfaces it's invisible.
+The split-sum makes one simplifying assumption: view equals normal equals reflection. The bake has no single view vector $v$, so the prefilter assumes the view aligns with the normal (`float3 v = n;` in the shader). This is the trade that makes the result a function of direction and roughness alone. The cost is that grazing reflections lose their stretched, anisotropic shape, which is invisible on most surfaces.
 
 ## GGX importance sampling
 
-Sampling the environment uniformly would waste nearly all samples on directions the GGX lobe barely weights. Instead the prefilter draws half-vectors $h$ from the GGX distribution itself, so samples concentrate where the lobe has energy. Each sample is a low-discrepancy [Hammersley](../brdf-lut/) pair turned into a half-vector, reflected to a light direction:
+Uniform sampling of the environment would spend nearly all samples on directions the GGX lobe barely weights. Instead the prefilter draws half-vectors $h$ from the GGX distribution itself, so samples concentrate where the lobe carries energy. Each sample is a low-discrepancy [Hammersley](../brdf-lut/) pair turned into a half-vector and reflected to a light direction:
 
 ```hlsl
 float2 xi = hammersley(i, 64);
@@ -35,11 +37,11 @@ $$
 \cos\theta_h = \sqrt{\frac{1 - \xi_y}{1 + (\alpha^2 - 1)\,\xi_y}}, \qquad \alpha = r^2
 $$
 
-then rotates it into the normal's tangent frame. Samples below the horizon ($n\cdot l \le 0$) are discarded; the rest accumulate weighted by $n\cdot l$, and the sum is normalized by total weight. The degenerate fallback (every sample missed) samples straight along $n$.
+then rotates it into the normal's tangent frame. Samples below the horizon ($n\cdot l \le 0$) are discarded. The rest accumulate weighted by $n\cdot l$, and the sum is normalized by total weight. When every sample misses, the fallback samples straight along $n$.
 
 ## One dispatch per mip
 
-The prefilter doesn't know roughness internally — it's a push constant, set per mip by the [bake](../ibl-bake-pass/). The renderer dispatches the shader once per mip level, binding that mip's storage view and pushing the matching roughness:
+Roughness is a push constant, set per mip by the [bake](../ibl-bake-pass/), not a value the shader holds internally. The renderer dispatches the shader once per mip level, binding that mip's storage view and pushing the matching roughness:
 
 ```cpp
 for (u32 m = 0; m < preMips; ++m) {
@@ -49,11 +51,11 @@ for (u32 m = 0; m < preMips; ++m) {
 }
 ```
 
-Mip 0 bakes at roughness 0 over the full `128²`; each coarser mip halves resolution and raises roughness, up to mip 4 at roughness 1. Lower resolution at higher roughness is free quality — a blurrier reflection doesn't need the detail.
+Mip 0 bakes at roughness 0 over the full `128²`. Each coarser mip halves resolution and raises roughness, up to mip 4 at roughness 1. The lower resolution at higher roughness costs no visible quality, since a blurrier reflection carries no detail to lose.
 
 ## How the mesh shader reads it
 
-The fragment samples the prefiltered cube along the reflection vector, choosing the mip from roughness, then applies the BRDF LUT scale/bias. Trilinear filtering between mips means a roughness between two baked levels blends smoothly.
+The fragment samples the prefiltered cube along the reflection vector, choosing the mip from roughness, then applies the BRDF LUT scale and bias. Trilinear filtering between mips blends a roughness that falls between two baked levels smoothly.
 
 ```hlsl
 float3 prefiltered = prefilteredMap.SampleLevel(reflect(-v, n), roughness * IblPrefilterMaxMip).rgb;

@@ -6,20 +6,30 @@ math = true
 
 # HDR & exposure
 
-The whole lighting pipeline runs in linear HDR. The [BRDF](../cook-torrance-brdf/) sums
-radiance with no ceiling, so a bright light or a tight specular highlight can push a pixel well
-past 1.0. That signal lives in a floating-point offscreen until the tonemap pass brings it down
-to a displayable range.
+High dynamic range (HDR) rendering carries light intensities with no upper bound, keeping bright
+highlights distinct rather than clamping them to white. Exposure is the single multiplier that
+selects how much of that unbounded range maps into the displayable band.
 
-## The format that makes it possible
+A physically based renderer accumulates radiance from many sources, and a bright light or a tight
+specular highlight can push a pixel far past 1.0. That signal must survive untruncated through
+shading and live in a floating-point buffer until a final step compresses it for the display.
+
+## How it works
+
+Shading runs in linear HDR: light contributions are summed as unbounded linear radiance and
+written to a floating-point color target. Exposure scales that radiance by one multiplier, and a
+final tonemap operator maps the result into the $[0, 1]$ range a display can show. Each step is
+deferred to the end of the frame so the full range is preserved until the last possible moment.
+
+## The floating-point format
 
 The scene pass writes into an offscreen color target whose format is `rgba16f`
-(`R16G16B16A16_SFLOAT`). Half-float gives 16 bits per channel and a floating exponent, so
-values above 1.0 survive without clamping. An `rgba8` target would saturate every overbright
-pixel to white the moment it was written, throwing away the very range tonemapping exists to
-compress. The HDR format defers that decision to the end of the frame.
+(`R16G16B16A16_SFLOAT`). Half-float gives 16 bits per channel and a floating exponent, so values
+above 1.0 survive without clamping. An `rgba8` target would saturate every overbright pixel to
+white the moment it was written, discarding the range tonemapping exists to compress. The HDR
+format defers that decision to the end of the frame.
 
-## Linear all the way down
+## Linear radiance
 
 Every light contribution the fragment shader accumulates is linear radiance:
 
@@ -27,9 +37,9 @@ $$
 L_o = \sum_{\text{lights}} \big(f_\text{diffuse} + f_\text{specular}\big)\,L_i\,(n\cdot l) \;+\; \text{ambient} \;+\; \text{emissive}
 $$
 
-No gamma, no clamp, no tonemap in `mesh.slang`. Adding lights is plain addition, which is only
-physically meaningful in linear space. Encoding (gamma) and range compression (tonemap) are
-both deferred to the display step, not the shading step.
+`mesh.slang` applies no gamma, no clamp, and no tonemap. Summing light contributions is plain
+addition, which is physically meaningful only in linear space. Encoding (gamma) and range
+compression (tonemap) both belong to the display step, not the shading step.
 
 ## Exposure in EV stops
 
@@ -40,15 +50,14 @@ $$
 \text{exposure} = 2^{EV}
 $$
 
-So $+1$ EV doubles brightness and $-1$ EV halves it, the photographic convention. The
-multiplier is a push constant on the tonemap shader; it is the one knob that decides how much
-of the unbounded HDR range lands in the visible $[0, 1]$ band.
+So $+1$ EV doubles brightness and $-1$ EV halves it, the photographic convention. The multiplier
+is a push constant on the tonemap shader. It is the one knob that decides how much of the
+unbounded HDR range lands in the visible $[0, 1]$ band.
 
-## The mandatory tonemap
+## The tonemap step
 
-The tonemap is not optional. A compute pass always runs on the offscreen before ImGui samples
-it, reading each HDR texel, applying exposure, a Reinhard curve, and gamma, writing the result
-back in place:
+A compute pass always runs on the offscreen before ImGui samples it. It reads each HDR texel,
+applies exposure, a Reinhard curve, and gamma, then writes the result back in place:
 
 ```hlsl
 float3 hdr    = color.rgb * push.exposure;     // exposure
@@ -58,9 +67,8 @@ mapped = pow(mapped, float3(1.0 / 2.2));       // gamma 2.2
 
 The full operator — why it is a compute pass, how the render graph moves the offscreen through
 its layouts — is covered in
-[tonemapping and exposure](../../screen-space-and-post/tonemap-and-exposure/). Here the point is
-that the lighting side produces unbounded linear radiance and trusts that step to land it on
-screen.
+[tonemapping and exposure](../../screen-space-and-post/tonemap-and-exposure/). The lighting side
+produces unbounded linear radiance and relies on that step to land it on screen.
 
 ## In the code
 

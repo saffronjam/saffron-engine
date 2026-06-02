@@ -5,35 +5,26 @@ weight = 2
 
 # FXAA
 
-FXAA is the cheap anti-aliasing option: a single compute pass that finds high-contrast edges
-in the finished image and blurs along them. It never touches how the scene is rasterized, so
-it costs one screen-sized dispatch and a few texture samples per pixel. It works on edges MSAA
-can't see — alpha-tested cutouts, specular highlights, shader aliasing — but it softens fine
-detail wherever it fires.
+FXAA (Fast Approximate Anti-Aliasing) is a post-process technique: it finds high-contrast
+edges in the finished image and blurs along them. It operates only on the final color buffer,
+never on how the scene is rasterized, so it costs one screen-sized compute dispatch and a few
+texture samples per pixel.
+
+Because it works from the image alone, FXAA smooths edges that rasterization-time anti-aliasing
+cannot reach: alpha-tested cutouts, specular highlights, and shader aliasing. The cost is
+fidelity. It cannot distinguish a real edge from sharp texture detail, so it softens both
+wherever it fires.
 
 ## How it works
 
-When FXAA is on, the scene renders into a 1× scratch image instead of straight into the
-offscreen. A compute pass reads the scratch as a sampler and writes the anti-aliased result
-into the offscreen as a storage image. It is a read-from-A, write-to-B variant of the
-[compute post-process pattern](../../screen-space-and-post/compute-post-process-pattern/), not
-an in-place pass like tonemap. The scratch matches the offscreen format and is shared with TAA,
-since both consume the scene's pre-AA result.
-
-The graph derives the transitions: the scratch goes to a sampled-in-compute layout, the
-offscreen to `GENERAL` for the storage write, then on to shader-read-only for ImGui. None of
-that is written by hand.
-
-### What the shader does per pixel
-
-`fxaa.slang` is the FXAA 3 console variant. Each invocation works in luma (perceived
-brightness, `dot(c, vec3(0.299, 0.587, 0.114))`):
+The shader works in luma — perceived brightness, `dot(c, vec3(0.299, 0.587, 0.114))`. Each
+invocation handles one pixel through four steps:
 
 1. **Sample a cross.** Read the center pixel and its four diagonal neighbours, take each luma,
    and find the local min and max. Their difference is the contrast range.
 
 2. **Skip flat regions.** If the range is below a threshold relative to the brightest sample,
-   this isn't an edge — write the original pixel and return. Most of the screen takes this
+   this is not an edge: write the original pixel and return. Most of the screen takes this
    branch, which is why FXAA is cheap.
 
 3. **Find the edge direction.** The diagonal luma gradient gives a 2D direction perpendicular
@@ -46,6 +37,19 @@ brightness, `dot(c, vec3(0.299, 0.587, 0.114))`):
 
 The blur runs only on texels that pass the edge test, and only along the detected edge, which
 keeps it from washing out the whole frame.
+
+## In Saffron
+
+With FXAA enabled, the scene renders into a 1× scratch image instead of straight into the
+offscreen. A compute pass reads the scratch as a sampler and writes the anti-aliased result
+into the offscreen as a storage image. This is a read-from-A, write-to-B variant of the
+[compute post-process pattern](../../screen-space-and-post/compute-post-process-pattern/),
+rather than an in-place pass like tonemap. The scratch matches the offscreen format and is
+shared with TAA, since both consume the scene's pre-AA result.
+
+The graph derives the transitions: the scratch goes to a sampled-in-compute layout, the
+offscreen to `GENERAL` for the storage write, then on to shader-read-only for ImGui. None of
+that is written by hand. The shader, `fxaa.slang`, is the FXAA 3 console variant.
 
 ## In the code
 

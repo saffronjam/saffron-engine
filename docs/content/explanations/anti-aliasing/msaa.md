@@ -5,33 +5,37 @@ weight = 1
 
 # MSAA
 
-Multisample anti-aliasing cleans geometry edges by rasterizing the scene at several samples
-per pixel and resolving them down to one. It is the only mode here that works at
-rasterization time rather than as a post-process, so it fixes what FXAA and TAA can only blur
-over: hard polygon edges against the background. The flip side is that it sees nothing inside
-a triangle.
+Multisample anti-aliasing (MSAA) rasterizes the scene at several coverage samples per pixel
+and resolves them down to one. It runs at rasterization time rather than as a post-process,
+so it smooths the case the post-process filters cannot: hard polygon edges against the
+background. It does nothing for detail inside a triangle, which is where shading aliasing
+lives.
+
+The hardware tests coverage at each sample but shades once per pixel, so the cost is bounded:
+edge quality scales with the sample count while the fragment shader still runs once per
+covered pixel.
 
 ## How it works
 
-When MSAA is on, the scene no longer renders straight into the offscreen. The renderer
-allocates a multisampled color/depth pair (`msaaColor`, `msaaDepth`) at the requested sample
-count and the offscreen's extent, and points the scene pass at those. At end-of-pass the
-multisampled color is resolved into the single-sample offscreen, which is what ImGui samples
-and what tonemap reads.
+With MSAA on, the scene renders into a multisampled color/depth pair rather than straight into
+the offscreen. The renderer allocates `msaaColor` and `msaaDepth` at the requested sample
+count and the offscreen's extent, and points the scene pass at them. At end-of-pass the
+multisampled color is resolved into the single-sample offscreen, which is what tonemap reads
+and what ImGui samples.
 
-The scene pass declares the resolve as part of its color attachment. The multisampled image
-is the attachment, the offscreen is its `resolve` target, and the multisampled samples are
-discarded after the resolve (`eDontCare`) since only the resolved image is kept.
+The scene pass declares the resolve as part of its color attachment: the multisampled image is
+the attachment, the offscreen is its `resolve` target, and the multisampled samples are
+discarded afterward (`eDontCare`) because only the resolved image is kept.
 
 ### Resolve in the graph
 
 The [render graph](../../frame-and-render-graph/render-graph-overview/) treats an
 `RgAttachment.resolve` as a second color write. It runs `applyAccess` against the resolve
 target with `ColorWrite` usage, so the barrier and layout for the offscreen come out the same
-way as any other attachment. When it builds the dynamic-rendering attachment info it sets
-`resolveMode = eAverage`, which averages each pixel's N samples into one. The pass body never
-changes: the same draw list records into a multisampled attachment, and the hardware resolves
-at `endRendering`.
+as any other attachment. When it builds the dynamic-rendering attachment info it sets
+`resolveMode = eAverage`, which averages each pixel's N samples into one. The pass body is
+unchanged: the same draw list records into a multisampled attachment, and the hardware
+resolves at `endRendering`.
 
 ```mermaid
 flowchart LR
@@ -43,11 +47,11 @@ flowchart LR
 
 ### Sample count baked into PSOs
 
-A graphics pipeline declares how many samples it rasterizes against, and that has to match the
-attachment. The mesh and depth-prepass PSOs read `renderer.targets.sampleCount` when they are
-built. Because the count is baked in, changing the MSAA level can't just swap a target — every
-mesh PSO is now stale. `setAa` clears the PSO cache so übershader pipelines rebuild on demand
-at the new count, and rebuilds the depth-prepass pipeline immediately.
+A graphics pipeline declares how many samples it rasterizes against, and that count must match
+the attachment. The mesh and depth-prepass PSOs read `renderer.targets.sampleCount` when they
+are built. Because the count is baked in, changing the MSAA level cannot just swap a target;
+every mesh PSO becomes stale. `setAa` clears the PSO cache so übershader pipelines rebuild on
+demand at the new count, and rebuilds the depth-prepass pipeline immediately.
 
 ## In the code
 

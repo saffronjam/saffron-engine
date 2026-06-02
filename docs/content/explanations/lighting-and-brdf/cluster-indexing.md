@@ -6,29 +6,33 @@ math = true
 
 # Cluster indexing
 
-The [cull pass](../clustered-forward/) writes a light list per froxel. The fragment shader has
-to find which froxel it is in to read the right list. That mapping — from a pixel position and
-a view-space depth to a flat cluster index — is `clusterIndexFor` in `mesh.slang`, and it must
-invert exactly the slicing the cull pass used.
+Cluster indexing is the mapping from a fragment's screen position and view-space depth to the flat
+index of the froxel that contains it. Clustered lighting partitions the view frustum into a 3D grid
+of froxels and assigns each one a light list; a shading fragment must locate its froxel to read the
+right list.
+
+The mapping must invert exactly the slicing the [cull pass](../clustered-forward/) used. A fragment
+that resolves to a different froxel than the cull assigned reads a light list built for another
+region of the frustum. Saffron implements the mapping as `clusterIndexFor` in `mesh.slang`.
 
 ## The three coordinates
 
-A fragment's cluster is a triple $(x, y, z)$: a screen tile in X and Y, and a depth slice in Z.
-The flat index packs them as
+A fragment's cluster is a triple $(x, y, z)$: a screen tile in X and Y, and a depth slice in Z. The
+flat index packs them as
 
 $$
 \text{index} = x + y \cdot G_x + z \cdot G_x G_y
 $$
 
-the same encoding the cull pass unpacks. The X and Y tiles are a straight division of the pixel
-position (`SV_Position.xy`) by the tile size, with a `min` that clamps the edge fragment so a
-pixel exactly on the right or bottom border does not index one tile past the grid.
+the same encoding the cull pass unpacks. The X and Y tiles are a division of the pixel position
+(`SV_Position.xy`) by the tile size, with a `min` that clamps the edge fragment so a pixel exactly
+on the right or bottom border does not index one tile past the grid.
 
 ## The exponential Z slice
 
-The depth slice is the part that has to match the cull pass's exponential planes. Given a
-view-space depth $d = \max(-z_\text{view}, n)$ (negate the view-Z and floor at the near plane),
-the slice is the logarithmic inverse of $z_i = -n(f/n)^{i/N}$:
+The depth slice must match the cull pass's exponential planes. Given a view-space depth
+$d = \max(-z_\text{view}, n)$ — the negated view-Z, floored at the near plane — the slice is the
+logarithmic inverse of $z_i = -n(f/n)^{i/N}$:
 
 $$
 \text{slice} = \left\lfloor \frac{\ln(d / n)}{\ln(f / n)} \cdot N \right\rfloor
@@ -40,13 +44,12 @@ uint zSlice = uint(log(depth / near) / log(far / near) * float(clusterParams.gri
 zSlice = min(zSlice, clusterParams.gridSize.z - 1);
 ```
 
-The $\log$ exactly undoes the $\text{pow}$ the cull used. Slicing on screen-space (NDC) depth
-instead of view-space would put fragments in a different slice than the one the cull assigned
-their light to, and lights near slice boundaries would pop. The two formulas are deliberately
-mirror images.
+The $\log$ undoes the $\text{pow}$ the cull used; the two formulas are mirror images. View-space
+depth is required here: slicing on screen-space (NDC) depth places a fragment in a different slice
+than the one the cull assigned its light to, so lights near slice boundaries pop.
 
-The fragment first needs `viewZ`, which it gets by transforming its world position by the
-cached view matrix, then loops its cluster's lights:
+The fragment first needs `viewZ`, obtained by transforming its world position by the cached view
+matrix, then loops over its cluster's lights:
 
 ```hlsl
 float viewZ = mul(clusterParams.view, float4(input.worldPos, 1.0)).z;

@@ -5,9 +5,14 @@ weight = 13
 
 # Anti-aliasing
 
-Three ways to trade quality for cost, switchable at runtime with `se set-aa`. MSAA cleans
-geometry edges by multisampling; FXAA blurs luma edges in a cheap post-process; TAA reuses
-history for a temporal solve (covered in [Screen-space & post](../screen-space-and-post/)).
+Anti-aliasing smooths the jagged edges that arise when continuous geometry is sampled onto a
+discrete grid of pixels. Saffron offers three techniques, each trading quality for cost and
+switchable at runtime with `se set-aa`:
+
+- **MSAA** cleans geometry edges by multisampling.
+- **FXAA** blurs luma edges in a cheap post-process.
+- **TAA** reuses history for a temporal solve, covered in
+  [Screen-space & post](../screen-space-and-post/).
 
 ## Pages
 

@@ -5,7 +5,7 @@ weight = 9
 
 # Image-based lighting
 
-The indirect, ambient term. Rather than a flat scalar, the engine convolves an environment into a diffuse irradiance cube and a roughness-prefiltered specular cube, and bakes the split-sum BRDF lookup table once at startup. The mesh shader samples all three for energy-conserving ambient light.
+Image-based lighting is the ambient, indirect term of the lighting model, where the light arriving at a surface comes from an environment image instead of a flat scalar. An environment is convolved into a diffuse irradiance cube and a roughness-prefiltered specular cube. The split-sum BRDF lookup table is baked once at startup, and the mesh shader samples all three to produce energy-conserving ambient light.
 
 ## Pages
 

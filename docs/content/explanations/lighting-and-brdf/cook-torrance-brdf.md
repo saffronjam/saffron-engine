@@ -6,20 +6,21 @@ math = true
 
 # Cook-Torrance BRDF
 
-This is the shading model. Every direct light in the engine (the directional sun and each
-punctual point or spot light) runs through the same `brdf` function in `mesh.slang`. It is
-a standard metallic-roughness Cook-Torrance model: a microfacet specular lobe plus a
-Lambertian diffuse term, energy-conserving, evaluated in linear HDR.
+The Cook-Torrance BRDF is a metallic-roughness shading model: a microfacet specular lobe
+plus a Lambertian diffuse term, energy-conserving and evaluated in linear HDR. A BRDF
+(bidirectional reflectance distribution function) gives the fraction of incoming light from
+one direction that a surface reflects toward another.
 
-The reflected radiance toward the eye from one light is
+Every direct light in the engine runs through the same model — the directional sun and each
+punctual point or spot light. The reflected radiance toward the eye from one light is
 
 $$
 L_o = \big(\,f_\text{diffuse} + f_\text{specular}\,\big)\; L_i \;(n \cdot l)
 $$
 
-where $L_i$ is the light's incoming radiance (its color times intensity, times attenuation
-and cone and shadow for punctual lights) and $n\cdot l$ is the cosine falloff. Both terms are
-computed in `brdf`; the caller only supplies $L_i$.
+where $L_i$ is the light's incoming radiance (its color times intensity, times attenuation,
+cone, and shadow for punctual lights) and $n\cdot l$ is the cosine falloff. Both terms are
+computed in `brdf`; the caller supplies only $L_i$.
 
 ## The half vector and the angles
 
@@ -30,7 +31,7 @@ $$
 n\cdot l,\quad n\cdot v,\quad n\cdot h,\quad h\cdot v
 $$
 
-`ndotv` is clamped to a small positive epsilon rather than zero, which keeps the grazing-angle
+`ndotv` is clamped to a small positive epsilon rather than zero, keeping the grazing-angle
 terms finite.
 
 ## Specular: $D\,V\,F$
@@ -65,7 +66,7 @@ F(h,v) = F_0 + (1 - F_0)\,(1 - h\cdot v)^5
 $$
 
 $F_0$ is the reflectance at normal incidence. The metallic workflow picks it by interpolation:
-dielectrics get a flat $0.04$, metals use their base color, blended by the metallic value.
+dielectrics take a flat $0.04$, metals take their base color, blended by the metallic value.
 
 $$
 F_0 = \operatorname{lerp}(0.04,\; \text{albedo},\; \text{metallic})
@@ -81,12 +82,12 @@ f_\text{diffuse} = k_d \, \frac{\text{albedo}}{\pi}, \qquad
 k_d = (1 - F)\,(1 - \text{metallic})
 $$
 
-The $(1 - F)$ factor is what couples the two lobes: light reflected by the Fresnel term is
-removed from what's available to scatter diffusely.
+The $(1 - F)$ factor couples the two lobes: light reflected by the Fresnel term is removed
+from what remains available to scatter diffusely.
 
 ## Putting it together
 
-That is exactly the body of `brdf`:
+The body of `brdf` is exactly these terms:
 
 ```hlsl
 float3 h    = normalize(v + l);
@@ -102,9 +103,9 @@ return (diff + spec) * radiance * ndotl;       // radiance == L_i
 ```
 
 The fragment shader calls this once for the directional light and once per punctual light,
-summing the results into the outgoing radiance before adding the ambient/IBL term. The same
-function is shared by the [clustered](../clustered-forward/) and brute-force light loops, so
-the two paths are pixel-identical by construction.
+summing the results into the outgoing radiance before adding the ambient/IBL term. The
+[clustered](../clustered-forward/) and brute-force light loops share the same function, so the
+two paths are pixel-identical by construction.
 
 ## Two clamps worth knowing
 

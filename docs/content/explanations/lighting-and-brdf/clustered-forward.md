@@ -6,17 +6,21 @@ math = true
 
 # Clustered forward
 
-A forward renderer that loops every light per fragment scales badly: a thousand lights means
-a thousand iterations per pixel, most contributing nothing. Clustered forward (Forward+) dices
-the view frustum into a 3D grid of froxels, a compute pass assigns each light to the froxels
-it touches, and the fragment shader loops only the lights in its froxel.
+Clustered forward (Forward+) is a forward rendering technique that bounds per-fragment lighting
+cost by limiting each fragment to the lights that can reach it. It dices the view frustum into a
+3D grid of froxels, a compute pass assigns each light to the froxels it touches, and the fragment
+shader loops only the lights in its froxel.
+
+A plain forward renderer loops every light per fragment, so a thousand lights cost a thousand
+iterations per pixel even though most contribute nothing. Clustering replaces that loop with a
+short per-froxel one.
 
 ## The froxel grid
 
 The grid is $16 \times 9 \times 24 = 3456$ clusters. The $16 \times 9$ tiles the screen; the
-24 slices it in depth. Depth slicing is exponential in view space, not linear, because
-perspective packs near geometry into a thin band of screen depth — equal-thickness slices
-would waste resolution far away and starve it up close. Slice $i$ spans the view-space Z planes
+24 slices it in depth. Depth slicing is exponential in view space, not linear. Perspective packs
+near geometry into a thin band of screen depth, so equal-thickness slices would waste resolution
+far away and starve it up close. Slice $i$ spans the view-space Z planes
 
 $$
 z_i = -n\left(\frac{f}{n}\right)^{i/N}, \qquad i = 0 \dots N
@@ -29,10 +33,10 @@ the fragment shader inverts the same mapping with a `log` — see [cluster index
 ## The cull pass
 
 `light_cull.slang` runs one invocation per cluster (a flat `[numthreads(64,1,1)]` dispatch of
-`(ClusterCount + 63) / 64` groups). Each invocation unpacks its `(x, y, z)` grid coordinate,
+`(ClusterCount + 63) / 64` groups). Each invocation unpacks its `(x, y, z)` grid coordinate and
 builds the cluster's view-space AABB by back-projecting the screen tile's corners onto the near
-plane and intersecting those eye rays with the slice's two Z planes, then tests every light as
-a sphere-vs-box check:
+plane, then intersecting those eye rays with the slice's two Z planes. It then tests every light
+as a sphere-vs-box check:
 
 ```hlsl
 float3 closest = clamp(posView, aabbMin, aabbMax);   // nearest box point to the light
@@ -47,10 +51,10 @@ if (dot(delta, delta) <= radius * radius)            // sphere overlaps box
 }
 ```
 
-The light's bounding radius is its `range`, which works precisely because punctual
+The light's bounding radius is its `range`. This is exact because punctual
 [attenuation](../punctual-lights-and-attenuation/) is windowed to reach zero at `range`, so a
-light truly contributes nothing outside its sphere. The result per froxel is a `Cluster`: a
-`count` plus a fixed array of light indices.
+light contributes nothing outside its sphere. The result per froxel is a `Cluster`: a `count`
+plus a fixed array of light indices.
 
 ```mermaid
 flowchart LR
@@ -72,11 +76,11 @@ into both the cull set and the fragment lighting set, so growing it rewrites bot
 ## Why it stays correct
 
 The cull is an optimization, not a different lighting model. It changes which lights a fragment
-iterates, never how a light is shaded — both this loop and the
+iterates, never how a light is shaded; both this loop and the
 [brute-force loop](../brute-force-fallback/) call the same `punctual`/`brdf` functions. A light
 is added to a cluster only when its `range` sphere overlaps the froxel, and that same `range`
 makes its contribution zero everywhere else, so a fragment never misses a light that would have
-lit it. That is why the two paths are pixel-identical and `se set-clustered 0` is a verified A/B.
+lit it. The two paths are therefore pixel-identical, and `se set-clustered 0` is a verified A/B.
 
 ## In the code
 

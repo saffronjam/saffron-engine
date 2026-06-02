@@ -5,9 +5,13 @@ weight = 10
 
 # Per-cluster cap
 
-Each froxel stores its light list in a fixed-size array, so a cluster can hold at most 64
-lights. When more than 64 punctual lights overlap one froxel, the
-[cull pass](../clustered-forward/) keeps the first 64 and silently drops the rest.
+A per-cluster cap is the fixed maximum number of lights a single cluster can record. Clustered
+lighting stores each froxel's overlapping lights in a fixed-size array, and that array length is
+the cap. In Saffron a cluster holds at most 64 punctual lights.
+
+A fixed array keeps the cluster buffer a flat, predictable allocation that the GPU indexes
+directly. The trade is a hard ceiling: when more than 64 lights overlap one froxel, the surplus
+cannot be stored.
 
 ## A fixed array per cluster
 
@@ -25,13 +29,13 @@ struct Cluster
 
 The whole cluster buffer is sized `ClusterCount * ClusterStride`, where
 `ClusterStride = sizeof(u32) * (1 + MaxLightsPerCluster)` — one count word plus 64 index words
-per froxel. A fixed stride keeps the buffer a flat, GPU-friendly allocation with no
-indirection, at the cost of a hard ceiling.
+per froxel. The fixed stride lets a froxel's data be reached by a single multiply, with no
+per-cluster offset table.
 
 ## The silent drop
 
-The cull loop appends a light only while there is room. Past 64 it stops writing but keeps
-scanning, so further overlapping lights are simply never recorded:
+The [cull pass](../clustered-forward/) appends a light only while there is room. Past 64 it
+stops writing but keeps scanning, so further overlapping lights are never recorded:
 
 ```hlsl
 if (dot(delta, delta) <= radius * radius)
@@ -45,21 +49,21 @@ if (dot(delta, delta) <= radius * radius)
 ```
 
 There is no warning and no spill list. The fragment shader reads `count` and loops exactly that
-many. Beyond the cap, the lights that survive are whichever ones the cull reached first — lowest
-scene index, not nearest or brightest. A 65th overlapping light produces no lighting in that
-froxel.
+many. The surviving lights are whichever ones the cull reached first — lowest scene index, not
+nearest or brightest. A 65th overlapping light produces no lighting in that froxel.
 
-## When it bites
+## When the cap matters
 
-For typical scenes the cap is invisible: 64 lights touching one $16\times9\times24$ froxel is a
-lot of overlap. It matters when many large-`range` lights pile into the same view region — a
-dense cluster of point lights, or a few oversized ranges that each land in most froxels.
+For typical scenes the cap is invisible, since 64 lights rarely touch one
+$16\times9\times24$ froxel. It matters when many large-`range` lights fall into the same view
+region — a dense cluster of point lights, or a few oversized ranges that each land in most
+froxels.
 
-This is also the one case where the clustered path and the
-[brute-force fallback](../brute-force-fallback/) can diverge. Below the cap the two are
+The cap is also the one case where the clustered path and the
+[brute-force fallback](../brute-force-fallback/) diverge. Below the cap the two are
 pixel-identical, because every light the clustered loop skips contributes exactly zero. Above
-the cap, the clustered loop drops lights the brute-force loop still sees. If you suspect the
-cap, `se set-clustered 0` reveals the difference.
+the cap, the clustered loop drops lights the brute-force loop still sees. `se set-clustered 0`
+forces the brute-force path and reveals the difference.
 
 ## In the code
 
