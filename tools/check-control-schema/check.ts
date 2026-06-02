@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Contract test: launches a headless SaffronEditor, drives `se`-style control commands
+// Contract test: launches a headless SaffronEngine, drives `se`-style control commands
 // over the unix socket, and validates each result against schemas/control/*.schema.json.
 //
 // There are no named C++ DTO structs (every engine response is an ad-hoc nlohmann::json
@@ -20,7 +20,7 @@ import net from 'node:net'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..', '..')
 const SCHEMA_DIR = join(REPO, 'schemas', 'control')
-const ENGINE = process.env.SAFFRON_ENGINE_BIN ?? join(REPO, 'build', 'debug', 'bin', 'SaffronEditor')
+const ENGINE = process.env.SAFFRON_ENGINE_BIN ?? join(REPO, 'build', 'debug', 'bin', 'SaffronEngine')
 const SOCK = process.env.SAFFRON_CONTROL_SOCK ?? `/tmp/saffron-contract-${process.pid}.sock`
 
 // ---- compact JSON Schema (subset) validator ---------------------------------

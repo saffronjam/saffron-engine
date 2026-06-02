@@ -25,7 +25,7 @@ step "engine present-only smoke (bounded, headless)"
 (
   export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
   cd /tmp && rm -f project.json
-  SAFFRON_EXIT_AFTER_FRAMES=5 SAFFRON_CONTROL_SOCK=/tmp/se-ci.sock "$REPO/build/debug/bin/SaffronEditor"
+  SAFFRON_EXIT_AFTER_FRAMES=5 SAFFRON_CONTROL_SOCK=/tmp/se-ci.sock "$REPO/build/debug/bin/SaffronEngine"
 ) || fail=1
 
 step "control schema contract test (live se output vs schemas/control)"

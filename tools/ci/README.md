@@ -5,7 +5,7 @@ It runs four steps and fails if any one fails:
 
 1. **engine build** — `cmake --preset debug` + `cmake --build build/debug -j1`
    (`-j1` avoids an intermittent clang module-BMI ICE).
-2. **present-only host smoke** — launches `SaffronEditor` bounded to 5 frames
+2. **present-only host smoke** — launches `SaffronEngine` bounded to 5 frames
    (`SAFFRON_EXIT_AFTER_FRAMES=5`); opens a real Vulkan swapchain.
 3. **control schema contract test** — `tools/check-control-schema/check.ts`
    diffs live `se` control output against `schemas/control`.
