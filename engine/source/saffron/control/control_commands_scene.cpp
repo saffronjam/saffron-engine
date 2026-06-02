@@ -484,6 +484,10 @@ namespace se
                 }
                 else if (preset == "cube" || preset == "model")
                 {
+                    if (!ctx.sceneEdit.projectLoaded)
+                    {
+                        return Err(std::string{ "no project loaded" });
+                    }
                     auto cube = importModel(ctx.assets, ctx.renderer, assetPath("models/cube.gltf"));
                     if (!cube) { return Err(cube.error()); }
                     e = spawnModel(scene, "Cube", *cube);
