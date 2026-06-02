@@ -20,13 +20,13 @@ module;
 #include <utility>
 #include <vector>
 
-export module Saffron.EditorApp;
+export module Saffron.Host;
 
 import Saffron.Core;
 import Saffron.App;
 import Saffron.Window;
 import Saffron.Rendering;
-import Saffron.Editor;
+import Saffron.SceneEdit;
 import Saffron.Control;
 import Saffron.Scene;
 import Saffron.Assets;
@@ -35,18 +35,18 @@ namespace se
 {
     constexpr se::i32 KeyEscape = 27;  // SDLK_ESCAPE
 
-    // State shared across the app lifecycle closures. The EditorContext is owned
+    // State shared across the app lifecycle closures. The SceneEditContext is owned
     // by the engine (heap) so its heavy entt/json destructor stays out of this TU.
-    struct EditorState
+    struct HostState
     {
-        se::EditorContext* editor = nullptr;
+        se::SceneEditContext* editor = nullptr;
         se::ControlContext* control = nullptr;
         se::AssetServer assets;
     };
 
     // The overlay-gizmo + billboard geometry builders + the SDL pointer handler. These
     // touch Rendering (OverlayVertex / submitOverlay / Renderer) + Assets (pickEntity) +
-    // SDL, so they stay in this TU; the pure-math hit-test/drag live in Saffron.Editor.
+    // SDL, so they stay in this TU; the pure-math hit-test/drag live in Saffron.SceneEdit.
 
     void addTriangle(std::vector<se::OverlayVertex>& vertices, glm::vec2 a, glm::vec2 b, glm::vec2 c, glm::vec4 color)
     {
@@ -101,7 +101,7 @@ namespace se
     }
 
     // Builds the active-mode gizmo geometry for the selected entity into `vertices`.
-    void buildNativeGizmo(se::EditorContext& editor, const se::CameraView& cam, se::u32 width, se::u32 height,
+    void buildNativeGizmo(se::SceneEditContext& editor, const se::CameraView& cam, se::u32 width, se::u32 height,
                           std::vector<se::OverlayVertex>& vertices)
     {
         if (editor.selected.handle == entt::null ||
@@ -186,7 +186,7 @@ namespace se
     // Colored screen-space glyphs for light/camera/empty entities (the overlay vertex
     // format has no UV/sampler, so the SVG billboards become solid glyphs): point = filled
     // warm box, spot = box + a short cone line along its direction, camera = box outline.
-    void buildEditorBillboards(se::EditorContext& editor, const se::CameraView& cam, se::u32 width, se::u32 height,
+    void buildSceneEditBillboards(se::SceneEditContext& editor, const se::CameraView& cam, se::u32 width, se::u32 height,
                                std::vector<se::OverlayVertex>& vertices)
     {
         if (width == 0 || height == 0)
@@ -236,18 +236,18 @@ namespace se
     }
 
     // Builds the combined overlay (billboards first, gizmo on top) + submits it to the renderer.
-    void submitNativeGizmo(se::EditorContext& editor, se::Renderer& renderer, const se::CameraView& cam,
+    void submitNativeGizmo(se::SceneEditContext& editor, se::Renderer& renderer, const se::CameraView& cam,
                            se::u32 width, se::u32 height)
     {
         std::vector<se::OverlayVertex> vertices;
-        buildEditorBillboards(editor, cam, width, height, vertices);
+        buildSceneEditBillboards(editor, cam, width, height, vertices);
         buildNativeGizmo(editor, cam, width, height, vertices);
         se::submitOverlay(renderer, std::move(vertices));
     }
 
     // SDL pointer → overlay-gizmo hover/drag, or (on a miss) a mesh ray-pick that updates
     // the selection. Wired to the window event sinks under the native viewport host.
-    auto handleNativeGizmoPointer(se::EditorContext& editor, se::AssetServer& assets, se::Renderer& renderer,
+    auto handleNativeGizmoPointer(se::SceneEditContext& editor, se::AssetServer& assets, se::Renderer& renderer,
                                   const se::CameraView& cam, const SDL_Event& event) -> bool
     {
         if (renderer.window == nullptr || renderer.window->width == 0 || renderer.window->height == 0)
@@ -305,9 +305,9 @@ export namespace se
     /// Builds the editor App (window + renderer + UI + editor/control/asset state),
     /// runs the main loop, and returns the process exit code. Takes plain title/size
     /// so the caller (main) needs no engine config types.
-    auto runEditor(std::string title, u32 width, u32 height) -> int
+    auto runHost(std::string title, u32 width, u32 height) -> int
     {
-        auto state = std::make_shared<EditorState>();
+        auto state = std::make_shared<HostState>();
 
         se::AppConfig config;
         config.window = se::WindowConfig{ .title = std::move(title), .width = width, .height = height };
@@ -317,7 +317,7 @@ export namespace se
 
         config.onCreate = [state](se::App& app)
         {
-            state->editor = se::newEditorContext();
+            state->editor = se::newSceneEditContext();
             state->control = se::newControlContext();
             state->assets = se::newAssetServer(se::assetPath("assets"));
             // The editor is the headless native-viewport host: always present-only (no ImGui
@@ -366,12 +366,12 @@ export namespace se
             app.window.eventSinks.push_back([state, &app](const SDL_Event& event)
             {
                 se::syncNativeGizmo(*state->editor);
-                const se::CameraView cam = se::editorCameraView(state->editor->camera);
+                const se::CameraView cam = se::sceneEditCameraView(state->editor->camera);
                 static_cast<void>(handleNativeGizmoPointer(*state->editor, state->assets, app.renderer, cam, event));
             });
 
             se::Layer layer;
-            layer.name = "EditorLayer";
+            layer.name = "HostLayer";
             layer.onUpdate = [state, &app](se::TimeSpan)
             {
                 if (state->control != nullptr)
@@ -391,9 +391,9 @@ export namespace se
                 state->editor->scene.catalog = &state->assets.catalog;
                 se::setViewportDesiredSize(app.renderer, app.window.width, app.window.height);
                 // Command-driven camera (controlling is false), so the frame dt is unused.
-                se::updateEditorCamera(state->editor->camera, false, 0.0f);
+                se::updateSceneEditCamera(state->editor->camera, false, 0.0f);
                 se::syncNativeGizmo(*state->editor);
-                se::CameraView cam = se::editorCameraView(state->editor->camera);
+                se::CameraView cam = se::sceneEditCameraView(state->editor->camera);
                 if (app.window.width > 0 && app.window.height > 0)
                 {
                     se::renderScene(app.renderer, state->editor->scene, state->assets, cam);
@@ -422,7 +422,7 @@ export namespace se
             }
             if (state->editor != nullptr)
             {
-                se::destroyEditorContext(state->editor);
+                se::destroySceneEditContext(state->editor);
                 state->editor = nullptr;
             }
             // Drop every GPU Ref this client holds before destroyRenderer frees the
