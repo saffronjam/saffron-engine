@@ -1,0 +1,6 @@
+# Read by oxfmt (it honours .prettierignore by default).
+dist/
+node_modules/
+src/protocol/
+src-tauri/
+*.css
