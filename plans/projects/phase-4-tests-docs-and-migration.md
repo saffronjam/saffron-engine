@@ -1,6 +1,12 @@
 # Phase 4: Tests, Docs, And Migration
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
+
+Completed 2026-06-02. Added the `ProjectInfo` control schema and regenerated
+protocol types; extended the live control-schema contract test for project
+commands; added a project startup/import compatibility smoke and wired it into
+`tools/ci/check.sh`; updated project/import/control docs; and verified root
+`appdata/` remains ignored. `tools/ci/check.sh` and `docs` Hugo build both pass.
 
 ## Goal
 

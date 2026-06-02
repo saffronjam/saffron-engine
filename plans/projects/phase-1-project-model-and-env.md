@@ -1,6 +1,12 @@
 # Phase 1: Project Model And Env Startup
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
+
+Completed 2026-06-02. Project metadata/state, env startup, app-data/userdata
+resolution, project create/open/save control commands, auto-empty startup, and
+legacy root `project.json` compatibility are implemented. Verified with toolbox
+build plus headless control-plane smokes for `SAFFRON_AUTO_EMPTY_PROJECT=1` and
+`SAFFRON_PROJECT=test-project`.
 
 ## Goal
 
@@ -64,6 +70,9 @@ Implement startup precedence:
 `appdata/userdata/`, bypassing the editor modal. Its name must be deterministic
 enough for tests to find, but unique enough for parallel test runs when paired
 with a per-run app-data override.
+
+`SAFFRON_APPDATA_DIR` is available as a test/local override for the app-data root.
+When unset, the engine uses repo-root `appdata`.
 
 ## Control surface
 

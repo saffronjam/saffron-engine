@@ -1,6 +1,14 @@
 # Phase 3: Project-Local Assets
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
+
+Completed 2026-06-02. New imports write project-local meshes under
+`assets/models` and textures under `assets/textures`, project create/open paths
+ensure both directories exist, and import commands now require an active project
+so runtime engine assets are not polluted. Legacy `meshes/...` mesh catalog paths
+remain loadable, including when the file has been moved under `assets/models`.
+Verified with toolbox build plus headless import smokes for model import, texture
+import, project save, and legacy mesh-path thumbnail loading.
 
 ## Goal
 

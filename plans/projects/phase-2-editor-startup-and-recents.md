@@ -1,6 +1,15 @@
 # Phase 2: Editor Startup And Recent Projects
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
+
+Completed 2026-06-02. The Tauri backend now owns local app-data paths and
+recent-project persistence, passes `SAFFRON_APPDATA_DIR` to the engine, and exposes
+typed commands for app-data info and recents. The React editor now checks active
+project state after attach, shows a greyed startup picker when no env-selected
+project is loaded, parks the native viewport while that modal is open, creates or
+opens projects through the control plane, remembers successful projects, and resets
+store state after project changes. Verified with C++ build, Rust `cargo check`, and
+frontend `bun run check`.
 
 ## Goal
 
