@@ -8,9 +8,11 @@ module;
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <cctype>
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -46,17 +48,144 @@ export namespace se
         Uuid albedoTexture;  // 0 == none
     };
 
+    struct ProjectInfo
+    {
+        bool loaded = false;
+        std::string root;
+        std::string path;
+        std::string name;
+        std::string displayName;
+    };
+
+    auto appDataRoot() -> std::string
+    {
+        if (const char* override = std::getenv("SAFFRON_APPDATA_DIR"))
+        {
+            if (override[0] != '\0')
+            {
+                return override;
+            }
+        }
+        return "appdata";
+    }
+
+    auto projectUserdataRoot() -> std::string
+    {
+        return (std::filesystem::path(appDataRoot()) / "userdata").string();
+    }
+
+    auto validProjectName(const std::string& name) -> bool
+    {
+        if (name.empty() || name.size() > 63)
+        {
+            return false;
+        }
+        auto isLowerDigit = [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); };
+        if (!isLowerDigit(name.front()) || !isLowerDigit(name.back()))
+        {
+            return false;
+        }
+        for (char c : name)
+        {
+            if (!isLowerDigit(c) && c != '-')
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    auto defaultDisplayName(std::string name) -> std::string
+    {
+        if (name.empty())
+        {
+            return "Untitled Project";
+        }
+        bool capitalize = true;
+        for (char& c : name)
+        {
+            if (c == '-')
+            {
+                c = ' ';
+                capitalize = true;
+            }
+            else if (capitalize && c >= 'a' && c <= 'z')
+            {
+                c = static_cast<char>(c - 'a' + 'A');
+                capitalize = false;
+            }
+            else
+            {
+                capitalize = false;
+            }
+        }
+        return name;
+    }
+
+    auto projectJsonPath(const std::string& selection) -> std::filesystem::path
+    {
+        std::filesystem::path path{ selection };
+        if (validProjectName(selection))
+        {
+            return std::filesystem::path(projectUserdataRoot()) / selection / "project.json";
+        }
+        if (path.filename() == "project.json")
+        {
+            return path;
+        }
+        return path / "project.json";
+    }
+
+    auto projectInfoFromPath(const std::filesystem::path& path, const nlohmann::json& doc) -> ProjectInfo
+    {
+        const std::filesystem::path root =
+            path.parent_path().empty() ? std::filesystem::path{ "." } : path.parent_path();
+        const std::string fallbackName = root.filename().string().empty() ? "project" : root.filename().string();
+        ProjectInfo project;
+        project.loaded = true;
+        project.root = root.string();
+        project.path = path.string();
+        project.name = jsonStringOr(doc, "name", fallbackName);
+        if (!validProjectName(project.name))
+        {
+            project.name = validProjectName(fallbackName) ? fallbackName : "project";
+        }
+        project.displayName = jsonStringOr(doc, "displayName", defaultDisplayName(project.name));
+        return project;
+    }
+
+    auto projectInfoJson(const ProjectInfo& project) -> nlohmann::json
+    {
+        return nlohmann::json{ { "loaded", project.loaded },
+                               { "root", project.root },
+                               { "path", project.path },
+                               { "name", project.name },
+                               { "displayName", project.displayName } };
+    }
+
     auto assetTypeName(AssetType type) -> const char*
     {
-        if (type == AssetType::Texture) { return "texture"; }
-        if (type == AssetType::Other) { return "other"; }
+        if (type == AssetType::Texture)
+        {
+            return "texture";
+        }
+        if (type == AssetType::Other)
+        {
+            return "other";
+        }
         return "mesh";
     }
 
     auto assetTypeFromName(const std::string& name) -> AssetType
     {
-        if (name == "texture") { return AssetType::Texture; }
-        if (name == "other") { return AssetType::Other; }
+        if (name == "texture")
+        {
+            return AssetType::Texture;
+        }
+        if (name == "other")
+        {
+            return AssetType::Other;
+        }
         return AssetType::Mesh;
     }
 
@@ -65,8 +194,10 @@ export namespace se
         nlohmann::json assets = nlohmann::json::array();
         for (const AssetEntry& entry : catalog.entries)
         {
-            assets.push_back(nlohmann::json{ { "id", entry.id.value }, { "name", entry.name },
-                                             { "type", assetTypeName(entry.type) }, { "path", entry.path },
+            assets.push_back(nlohmann::json{ { "id", entry.id.value },
+                                             { "name", entry.name },
+                                             { "type", assetTypeName(entry.type) },
+                                             { "path", entry.path },
                                              { "hdr", entry.hdr } });
         }
         return assets;
@@ -108,6 +239,7 @@ export namespace se
         assets.root = std::move(root);
         std::error_code ec;
         std::filesystem::create_directories(assets.root + "/meshes", ec);
+        std::filesystem::create_directories(assets.root + "/models", ec);
         std::filesystem::create_directories(assets.root + "/textures", ec);
 
         std::ifstream in(assets.root + "/asset_registry.json");
@@ -119,7 +251,7 @@ export namespace se
             {
                 const nlohmann::json& doc = *parsedDoc;
                 auto migrate = [&](const char* key, AssetType type)
-        {
+                {
                     if (!doc.contains(key) || !doc[key].is_object())
                     {
                         return;
@@ -146,47 +278,82 @@ export namespace se
         return assets;
     }
 
+    void setAssetRoot(AssetServer& assets, const std::string& root)
+    {
+        assets.root = root;
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(assets.root) / "models", ec);
+        std::filesystem::create_directories(std::filesystem::path(assets.root) / "textures", ec);
+    }
+
+    void ensureAssetDirectories(const AssetServer& assets)
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(assets.root) / "models", ec);
+        std::filesystem::create_directories(std::filesystem::path(assets.root) / "textures", ec);
+    }
+
+    void clearAssetCaches(AssetServer& assets)
+    {
+        assets.meshRefByUuid.clear();
+        assets.textureRefByUuid.clear();
+    }
+
     // Constant version for the unified project document.
     inline constexpr int ProjectVersion = 1;
 
     // Saves the whole project (asset catalog + scene entities) to one JSON file.
-    auto saveProject(AssetServer& assets, ComponentRegistry& reg, Scene& scene,
-                                                 const std::string& path) -> Result<void>
+    auto saveProject(AssetServer& assets, ComponentRegistry& reg, Scene& scene, const ProjectInfo& project,
+                     const std::string& path) -> Result<void>
     {
+        const std::string target = path.empty() ? project.path : path;
+        if (target.empty())
+        {
+            return Err(std::string{ "no active project path" });
+        }
         nlohmann::json doc;
         doc["version"] = ProjectVersion;
+        doc["name"] = project.name;
+        doc["displayName"] = project.displayName;
         doc["assets"] = catalogToJson(assets.catalog);
         doc["scene"] = sceneToJson(reg, scene);
 
-        std::ofstream out(path);
+        const std::filesystem::path parent = std::filesystem::path(target).parent_path();
+        if (!parent.empty())
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(parent, ec);
+        }
+        std::ofstream out(target);
         if (!out)
         {
-            return Err(std::format("cannot open '{}' for writing", path));
+            return Err(std::format("cannot open '{}' for writing", target));
         }
         out << dumpJson(doc, 2);
         out.flush();
         if (!out)
         {
-            return Err(std::format("write failed for '{}'", path));
+            return Err(std::format("write failed for '{}'", target));
         }
         return {};
     }
 
     // Loads a project file: replaces the catalog + scene. Clears the GPU caches (after a
     // device idle) so stale Refs are dropped and assets re-resolve from the new catalog.
-    auto loadProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg,
-                                                 Scene& scene, const std::string& path) -> Result<void>
+    auto loadProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
+                     ProjectInfo& project, const std::string& selection) -> Result<void>
     {
+        const std::filesystem::path path = projectJsonPath(selection);
         std::ifstream in(path);
         if (!in)
         {
-            return Err(std::format("cannot open '{}'", path));
+            return Err(std::format("cannot open '{}'", path.string()));
         }
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         auto parsedDoc = parseJson(text);
         if (!parsedDoc || !parsedDoc->is_object())
         {
-            return Err(std::format("'{}': JSON parse error", path));
+            return Err(std::format("'{}': JSON parse error", path.string()));
         }
         const nlohmann::json& doc = *parsedDoc;
         const int version = static_cast<int>(jsonU64Or(doc, "version", 0));
@@ -196,17 +363,55 @@ export namespace se
         }
 
         waitGpuIdle(renderer);
-        assets.meshRefByUuid.clear();
-        assets.textureRefByUuid.clear();
+        clearAssetCaches(assets);
+        project = projectInfoFromPath(path, doc);
+        setAssetRoot(assets, (std::filesystem::path(project.root) / "assets").string());
         catalogFromJson(assets.catalog, doc.value("assets", nlohmann::json::array()));
         return sceneFromJson(reg, scene, doc.value("scene", nlohmann::json::object()));
     }
 
+    auto createProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
+                       ProjectInfo& project, const std::string& name, const std::string& displayName,
+                       const std::string& rootOverride = "") -> Result<void>
+    {
+        if (!validProjectName(name))
+        {
+            return Err(std::format("invalid project name '{}'", name));
+        }
+        std::filesystem::path root = rootOverride.empty() ? std::filesystem::path(projectUserdataRoot()) / name
+                                                          : std::filesystem::path(rootOverride);
+        ProjectInfo next;
+        next.loaded = true;
+        next.root = root.string();
+        next.path = (root / "project.json").string();
+        next.name = name;
+        next.displayName = displayName.empty() ? defaultDisplayName(name) : displayName;
+
+        waitGpuIdle(renderer);
+        scene = Scene{};
+        assets.catalog.entries.clear();
+        assets.catalog.byId.clear();
+        clearAssetCaches(assets);
+        setAssetRoot(assets, (root / "assets").string());
+        project = std::move(next);
+        return saveProject(assets, reg, scene, project, project.path);
+    }
+
+    auto createAutoEmptyProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
+                                ProjectInfo& project) -> Result<void>
+    {
+        const std::string socket =
+            std::getenv("SAFFRON_CONTROL_SOCK") != nullptr ? std::getenv("SAFFRON_CONTROL_SOCK") : "";
+        std::string suffix =
+            std::to_string(std::hash<std::string>{}(std::filesystem::current_path().string() + socket));
+        const std::string name = "auto-empty-" + suffix.substr(0, 12);
+        return createProject(assets, renderer, reg, scene, project, name, "Auto Empty Project");
+    }
+
     // Writes encoded image bytes into assets/textures/<uuid>.<ext>, decodes + uploads
     // them, and adds a Texture entry to the catalog (named, deduped). Returns the id.
-    auto registerTextureBytes(AssetServer& assets, Renderer& renderer,
-                                                          const std::vector<u8>& encoded, const std::string& ext,
-                                                          const std::string& name) -> Result<Uuid>
+    auto registerTextureBytes(AssetServer& assets, Renderer& renderer, const std::vector<u8>& encoded,
+                              const std::string& ext, const std::string& name) -> Result<Uuid>
     {
         auto decoded = decodeImageFromMemory(encoded);
         if (!decoded)
@@ -224,6 +429,7 @@ export namespace se
         {
             extension = "png";
         }
+        ensureAssetDirectories(assets);
         const std::string relativePath = "textures/" + std::to_string(id.value) + "." + extension;
         std::ofstream out(assets.root + "/" + relativePath, std::ios::binary);
         if (!out)
@@ -242,9 +448,8 @@ export namespace se
 
     // Writes encoded HDR bytes into assets/textures/<uuid>.hdr, decodes + uploads them as a
     // linear float texture, and adds a Texture entry with hdr=true. Returns the id.
-    auto registerHdrTextureBytes(AssetServer& assets, Renderer& renderer,
-                                                             const std::vector<u8>& encoded,
-                                                             const std::string& name) -> Result<Uuid>
+    auto registerHdrTextureBytes(AssetServer& assets, Renderer& renderer, const std::vector<u8>& encoded,
+                                 const std::string& name) -> Result<Uuid>
     {
         auto decoded = decodeImageFromMemoryHdr(encoded);
         if (!decoded)
@@ -257,6 +462,7 @@ export namespace se
             return Err(texture.error());
         }
         const Uuid id = newUuid();
+        ensureAssetDirectories(assets);
         const std::string relativePath = "textures/" + std::to_string(id.value) + ".hdr";
         std::ofstream out(assets.root + "/" + relativePath, std::ios::binary);
         if (!out)
@@ -268,7 +474,8 @@ export namespace se
         {
             return Err(std::format("write failed for texture '{}'", relativePath));
         }
-        putAsset(assets.catalog, AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath, true });
+        putAsset(assets.catalog,
+                 AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath, true });
         assets.textureRefByUuid[id.value] = *texture;
         return id;
     }
@@ -377,7 +584,8 @@ export namespace se
         }
         const std::string baseName = std::filesystem::path(path).stem().string();
         const Uuid meshId = newUuid();
-        const std::string relativePath = "meshes/" + std::to_string(meshId.value) + ".smesh";
+        ensureAssetDirectories(assets);
+        const std::string relativePath = "models/" + std::to_string(meshId.value) + ".smesh";
         if (Result<void> baked = saveMesh(model->mesh, assets.root + "/" + relativePath); !baked)
         {
             return Err(baked.error());
@@ -387,7 +595,8 @@ export namespace se
         {
             return Err(meshRef.error());
         }
-        putAsset(assets.catalog, AssetEntry{ meshId, uniqueName(assets.catalog, baseName), AssetType::Mesh, relativePath });
+        putAsset(assets.catalog,
+                 AssetEntry{ meshId, uniqueName(assets.catalog, baseName), AssetType::Mesh, relativePath });
         assets.meshRefByUuid[meshId.value] = *meshRef;
 
         ImportResult result;
@@ -395,8 +604,8 @@ export namespace se
         result.baseColor = model->material.baseColor;
         if (model->material.hasAlbedo)
         {
-            auto texture = registerTextureBytes(
-                assets, renderer, model->material.albedoBytes, model->material.albedoExt, baseName + " albedo");
+            auto texture = registerTextureBytes(assets, renderer, model->material.albedoBytes,
+                                                model->material.albedoExt, baseName + " albedo");
             if (texture)
             {
                 result.albedoTexture = *texture;
@@ -423,7 +632,12 @@ export namespace se
         {
             return nullptr;
         }
-        auto mesh = loadMesh(assets.root + "/" + entry->path);
+        std::string fullPath = assets.root + "/" + entry->path;
+        if (!std::filesystem::exists(fullPath) && entry->path.starts_with("meshes/"))
+        {
+            fullPath = assets.root + "/models/" + entry->path.substr(std::string{ "meshes/" }.size());
+        }
+        auto mesh = loadMesh(fullPath);
         if (mesh)
         {
             auto meshRef = uploadMesh(renderer, *mesh);
@@ -488,18 +702,19 @@ export namespace se
         f32 lightIntensity = 1.0f;
         f32 lightAmbient = 0.15f;
         bool haveLight = false;
-        forEach<DirectionalLightComponent>(scene, [&](Entity, DirectionalLightComponent& light)
-        {
-            if (haveLight)
-            {
-                return;
-            }
-            lightDir = light.direction;
-            lightColor = light.color;
-            lightIntensity = light.intensity;
-            lightAmbient = light.ambient;
-            haveLight = true;
-        });
+        forEach<DirectionalLightComponent>(scene,
+                                           [&](Entity, DirectionalLightComponent& light)
+                                           {
+                                               if (haveLight)
+                                               {
+                                                   return;
+                                               }
+                                               lightDir = light.direction;
+                                               lightColor = light.color;
+                                               lightIntensity = light.intensity;
+                                               lightAmbient = light.ambient;
+                                               haveLight = true;
+                                           });
 
         // Gather punctual (point + spot) lights, positioned by their Transform. Track the
         // first spot light's index + its perspective light-space transform so it can cast
@@ -509,9 +724,10 @@ export namespace se
         glm::vec3 pointShadowPos{ 0.0f };
         f32 pointShadowFar = 1.0f;
         u32 pointShadowIndex = 0;
-        forEach<TransformComponent, PointLightComponent>(scene,
+        forEach<TransformComponent, PointLightComponent>(
+            scene,
             [&](Entity, TransformComponent& transform, PointLightComponent& light)
-        {
+            {
                 GpuLight gpu;
                 gpu.positionRange = glm::vec4(transform.translation, light.range);
                 gpu.colorIntensity = glm::vec4(light.color, light.intensity);
@@ -529,9 +745,10 @@ export namespace se
         bool haveSpotShadow = false;
         glm::mat4 spotShadowViewProj{ 1.0f };
         u32 spotShadowIndex = 0;
-        forEach<TransformComponent, SpotLightComponent>(scene,
+        forEach<TransformComponent, SpotLightComponent>(
+            scene,
             [&](Entity, TransformComponent& transform, SpotLightComponent& light)
-        {
+            {
                 const glm::vec3 dir = glm::normalize(light.direction);
                 GpuLight gpu;
                 gpu.positionRange = glm::vec4(transform.translation, light.range);
@@ -544,7 +761,8 @@ export namespace se
                     // A perspective frustum down the spot cone: fov = 2 x outer angle (a
                     // small pad so the penumbra is inside the map), aspect 1, near/far from range.
                     const f32 fov = glm::radians(glm::min(2.0f * light.outerAngle + 2.0f, 179.0f));
-                    const glm::vec3 up = glm::abs(dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+                    const glm::vec3 up =
+                        glm::abs(dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
                     const glm::mat4 lightView = glm::lookAt(transform.translation, transform.translation + dir, up);
                     // GLM_FORCE_DEPTH_ZERO_TO_ONE => Vulkan [0,1] clip depth.
                     const glm::mat4 lightProj = glm::perspective(fov, 1.0f, 0.05f, glm::max(light.range, 0.1f));
@@ -571,9 +789,10 @@ export namespace se
         std::vector<glm::vec4> boxMins;
         std::vector<glm::vec4> boxMaxs;
         std::vector<glm::vec4> boxAlbedos;
-        forEach<TransformComponent, MeshComponent>(scene,
+        forEach<TransformComponent, MeshComponent>(
+            scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
-        {
+            {
                 auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
                 {
@@ -607,9 +826,18 @@ export namespace se
                 for (u32 corner = 0; corner < 8; corner = corner + 1)
                 {
                     glm::vec3 p = meshRef->boundsMin;
-                    if (corner & 1u) { p.x = meshRef->boundsMax.x; }
-                    if (corner & 2u) { p.y = meshRef->boundsMax.y; }
-                    if (corner & 4u) { p.z = meshRef->boundsMax.z; }
+                    if (corner & 1u)
+                    {
+                        p.x = meshRef->boundsMax.x;
+                    }
+                    if (corner & 2u)
+                    {
+                        p.y = meshRef->boundsMax.y;
+                    }
+                    if (corner & 4u)
+                    {
+                        p.z = meshRef->boundsMax.z;
+                    }
                     const glm::vec3 world = glm::vec3(model * glm::vec4(p, 1.0f));
                     sceneMin = glm::min(sceneMin, world);
                     sceneMax = glm::max(sceneMax, world);
@@ -678,8 +906,8 @@ export namespace se
             {
                 ddgiSky = scene.environment.ambientColor * scene.environment.ambientIntensity;
             }
-            setDdgiScene(renderer, boxMins, boxMaxs, boxAlbedos, volMin, volExt,
-                         lightDir, lightColor, lightIntensity, ddgiSky);
+            setDdgiScene(renderer, boxMins, boxMaxs, boxAlbedos, volMin, volExt, lightDir, lightColor, lightIntensity,
+                         ddgiSky);
         }
         // Fallback ambient (used when IBL is off): the scene environment's ambient color when
         // useSkyForAmbient, else the directional light's legacy scalar ambient (grayscale).
@@ -753,8 +981,8 @@ export namespace se
     // Picks the nearest entity whose world-space mesh AABB the camera ray hits. `ndc` is
     // the click point in clip space [-1,1] matching the rendered image (Y-flipped proj).
     // Returns a null Entity on a miss (the caller clears the selection).
-    auto pickEntity(Scene& scene, AssetServer& assets, Renderer& renderer,
-                      const CameraView& camera, glm::vec2 ndc) -> Entity
+    auto pickEntity(Scene& scene, AssetServer& assets, Renderer& renderer, const CameraView& camera, glm::vec2 ndc)
+        -> Entity
     {
         if (!camera.valid)
         {
@@ -778,9 +1006,10 @@ export namespace se
 
         Entity hit{ entt::null };
         f32 nearest = std::numeric_limits<f32>::max();
-        forEach<TransformComponent, MeshComponent>(scene,
+        forEach<TransformComponent, MeshComponent>(
+            scene,
             [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
-        {
+            {
                 auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
                 {
@@ -795,9 +1024,18 @@ export namespace se
                 for (u32 corner = 0; corner < 8; corner = corner + 1)
                 {
                     glm::vec3 p = lo;
-                    if (corner & 1u) { p.x = hi.x; }
-                    if (corner & 2u) { p.y = hi.y; }
-                    if (corner & 4u) { p.z = hi.z; }
+                    if (corner & 1u)
+                    {
+                        p.x = hi.x;
+                    }
+                    if (corner & 2u)
+                    {
+                        p.y = hi.y;
+                    }
+                    if (corner & 4u)
+                    {
+                        p.z = hi.z;
+                    }
                     const glm::vec3 world = glm::vec3(model * glm::vec4(p, 1.0f));
                     worldMin = glm::min(worldMin, world);
                     worldMax = glm::max(worldMax, world);
