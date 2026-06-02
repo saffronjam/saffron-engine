@@ -5,9 +5,10 @@ weight = 4
 
 # Frame & render graph
 
-A pass declares what it does with each resource; the graph derives the barriers and layout
-transitions and records the pass body. Nothing writes a pipeline barrier by hand, and app
-layers can add their own passes to the cull → scene → UI frame.
+A render graph describes one frame of rendering as a set of passes and the resources they read and
+write. Each pass declares its usage of a resource; the graph derives the barriers and layout
+transitions and records the pass body. No pass writes a pipeline barrier by hand. Application
+layers add their own passes to the cull → scene → UI frame.
 
 ## Pages
 

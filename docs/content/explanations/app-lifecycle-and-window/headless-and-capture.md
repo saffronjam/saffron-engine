@@ -5,18 +5,20 @@ weight = 5
 
 # Headless runs
 
-A normal run waits for you to close the window, which is no good for automated verification.
-Two environment variables make `run` self-terminating and self-documenting: one bounds the
-run to a fixed number of frames, the other dumps the final viewport image to a PNG. Together
-they let a script start the editor, render a known number of frames, exit, and diff the
-result.
+A headless run is an instance of the loop that terminates on its own and records its output
+without a person at the window. Two environment variables drive it: one bounds the run to a
+fixed number of frames, the other writes the final viewport image to a PNG.
+
+A normal run continues until the window closes, which automated verification cannot wait for.
+The two variables together let a script start the engine, render a known number of frames,
+exit, and diff the result against a reference image.
 
 ## Exit after N frames
 
 `SAFFRON_EXIT_AFTER_FRAMES=N` makes the loop count its iterations and stop after `N`. The
-value is parsed once at startup, strictly: the whole-string check rejects trailing junk like
-`5x`, so a typo logs and is ignored rather than silently parsing the leading digits. A limit
-of 0 (unset or malformed) means "run forever".
+value is parsed once at startup, and the whole-string check rejects trailing junk like `5x`:
+a typo is logged and ignored rather than parsed as its leading digits. A limit of 0 (unset
+or malformed) means run forever.
 
 ```cpp
 auto frameLimitFromEnv() -> u64
@@ -36,27 +38,27 @@ auto frameLimitFromEnv() -> u64
 ```
 
 When `frameCount` reaches the limit, `run` sets `app.running = false` and exits through the
-normal teardown path — the same `waitGpuIdle` → `onDetach` → `onExit` ordering as a manual
+normal teardown path: the same `waitGpuIdle` → `onDetach` → `onExit` ordering as a manual
 close. A frame counts whether or not it rendered, so a minimized window still advances the
 count.
 
 ## Capture the viewport
 
-`SAFFRON_CAPTURE=path` dumps the offscreen viewport image to a file after the loop ends,
+`SAFFRON_CAPTURE=path` writes the offscreen viewport image to a file after the loop ends,
 during teardown. `captureViewport` reads the last rendered offscreen back to the host and
-writes it as a PNG:
+encodes it as a PNG in four steps:
 
 1. `device.waitIdle()` — the offscreen may still be sampled by an in-flight frame, so idle
    first or the capture's layout transition races that read.
 2. Allocate a host-visible buffer sized `width × height × formatPixelBytes(format)`.
 3. Record a one-time command buffer that transitions the image, copies it to the buffer, and
    transitions it **back to `ShaderReadOnly`** — leaving the image in the layout the next
-   frame's producer barrier expects, so capture doesn't desync the cross-frame layout.
+   frame's producer barrier expects, so capture does not desync the cross-frame layout.
 4. Submit, `waitIdle` again, invalidate the mapping, and write the PNG.
 
 The offscreen is `rgba16f` HDR. `writeBufferToPng` unpacks the half-floats and clamps each
-channel to `[0, 1]`, so the PNG is the already-tonemapped display image, not the raw HDR
-values. On failure `run` logs the error and exits normally.
+channel to `[0, 1]`, so the PNG holds the tonemapped display image, not the raw HDR values.
+On failure `run` logs the error and exits normally.
 
 ```mermaid
 flowchart TD
@@ -69,9 +71,8 @@ flowchart TD
 ```
 
 The control plane has its own live `se screenshot` command for grabbing the viewport or
-window while the editor runs. `SAFFRON_CAPTURE` is the simpler no-socket path: a single
-end-of-run dump driven entirely by the environment, which is what the headless pixel checks
-use.
+window while the editor runs. `SAFFRON_CAPTURE` is the no-socket path: a single end-of-run
+write driven entirely by the environment, used by the headless pixel checks.
 
 ## In the code
 

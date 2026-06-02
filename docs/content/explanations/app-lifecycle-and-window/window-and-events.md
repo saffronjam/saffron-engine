@@ -5,12 +5,10 @@ weight = 4
 
 # Window & events
 
-The window is an SDL3 handle plus its current size plus a set of typed event signals. Like
-everything else in the engine it is plain data, not a class. Input reaches the rest of the
-program through the signals: a layer subscribes in `onAttach` and gets called back when the
-matching event happens. The old engine routed input through an event/dispatch object; the
-rewrite reuses the same signal/slot primitive it uses everywhere else (selection, for one)
-rather than introducing a second mechanism.
+A window is an on-screen surface that the renderer presents into and that delivers the operating
+system's input events. In Saffron it is plain data: an SDL3 handle, the current size, a close flag,
+and a set of typed event signals. Input reaches the rest of the program through those signals — a
+layer subscribes in `onAttach` and gets called back when the matching event occurs.
 
 ```cpp
 struct Window
@@ -33,18 +31,18 @@ struct Window
 ## Polling and dispatch
 
 `newWindow` initializes SDL video and creates the window with Vulkan, resizable, and
-high-pixel-density flags, returning a `Result<Window>` — a failure comes back as an `Err`
-string, never an exception (see [error handling](../../core-and-conventions/error-handling/)).
+high-pixel-density flags. It returns a `Result<Window>`; a failure comes back as an `Err` string,
+never an exception (see [error handling](../../core-and-conventions/error-handling/)).
 
-`pollEvents` runs once at the top of each loop iteration. It drains the SDL queue and, for
-each event, forwards the raw event to every sink, then translates the events it recognizes
-into typed signal publishes.
+`pollEvents` runs once at the top of each loop iteration. It drains the SDL queue and, for each
+event, forwards the raw event to every sink, then translates the events it recognizes into typed
+signal publishes.
 
 ## Typed signals
 
-Each signal is a `SubscriberList<Args...>`, the engine-wide signal/slot type. A subscriber is
-a closure that returns `true` to stop propagation or `false` to let later subscribers also see
-the event. SDL events map in as:
+Each signal is a `SubscriberList<Args...>`, the engine-wide signal/slot type. A subscriber is a
+closure that returns `true` to stop propagation or `false` to let later subscribers also see the
+event. SDL events map in as:
 
 | Signal | SDL event | Payload |
 |---|---|---|
@@ -54,21 +52,21 @@ the event. SDL events map in as:
 | `onKeyReleased` | `SDL_EVENT_KEY_UP` | keycode |
 | `onFileDropped` | `SDL_EVENT_DROP_FILE` | dropped file path |
 
-`onResize` publishes the **pixel** size, not the logical size, which matters under
-high-pixel-density (the window carries `SDL_WINDOW_HIGH_PIXEL_DENSITY`). `run` subscribes
-`onClose` right after creating the window so closing it flips `app.running` to false; the
-editor subscribes `onFileDropped` to import dropped models and textures.
+`onResize` publishes the **pixel** size, not the logical size. The distinction matters under
+high-pixel-density, since the window carries `SDL_WINDOW_HIGH_PIXEL_DENSITY`. `run` subscribes
+`onClose` right after creating the window, so closing it flips `app.running` to false; the editor
+subscribes `onFileDropped` to import dropped models and textures.
 
 ## Raw event sinks
 
 Some consumers need the whole `SDL_Event`, not a typed slice. ImGui is the main one: its SDL3
-backend wants every event to track mouse, focus, and text input. Rather than couple `Window`
-to ImGui, `Window` exposes `eventSinks`, a list of `std::function<void(const SDL_Event&)>`,
-and the UI layer pushes a sink that forwards each event to the backend.
+backend wants every event to track mouse, focus, and text input. Rather than couple `Window` to
+ImGui, `Window` exposes `eventSinks`, a list of `std::function<void(const SDL_Event&)>`, and the
+UI layer pushes a sink that forwards each event to the backend.
 
-Sinks run *before* typed dispatch, so ImGui sees an event even when a typed signal later
-consumes it. This keeps `Window` ignorant of who is listening: it knows how to forward raw
-events and how to publish typed ones, nothing about the consumers.
+Sinks run *before* typed dispatch, so ImGui sees an event even when a typed signal later consumes
+it. This keeps `Window` ignorant of who is listening: it knows how to forward raw events and how to
+publish typed ones, nothing about the consumers.
 
 ## In the code
 

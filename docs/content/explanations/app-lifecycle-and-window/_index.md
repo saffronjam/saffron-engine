@@ -5,9 +5,9 @@ weight = 2
 
 # App lifecycle & window
 
-How a SaffronEngine program starts, runs, and shuts down: the `run` loop, the layers a
-client extends, and the SDL3 window with its typed event signals. Every feature hangs off a
-layer callback.
+The application lifecycle is the path a SaffronEngine program follows from start to shutdown:
+the `run` loop, the layers a client extends, and the SDL3 window with its typed event signals.
+Every feature hangs off a layer callback.
 
 ## Pages
 

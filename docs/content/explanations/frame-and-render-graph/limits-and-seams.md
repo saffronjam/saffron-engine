@@ -5,73 +5,75 @@ weight = 6
 
 # Limits
 
-The render graph is deliberately small. It does the one job that makes Vulkan tractable — derive
-barriers and layout transitions from declared usage — and stops there. Several features a mature
-graph eventually grows are missing on purpose, each with the seam already in place so adding it
-later is a contained change rather than a rewrite.
+The limits of a render graph are the optimizations a mature graph can perform but a given
+implementation chooses to leave out. Saffron's graph derives barriers and layout transitions from
+declared usage and does nothing more; several features a fuller graph eventually grows are absent
+by design.
+
+Each omission has a seam already in place: the data a future feature would need is declared, so
+adding it later is a contained change rather than a rewrite. The sections below name each limit,
+its cost, and the seam that anticipates it.
 
 ## Single graphics queue
 
 Every pass records into one command buffer on one graphics queue, in declaration order.
-`executeRenderGraph` walks `graph.passes` start to finish and submits one command buffer. There
-is no queue selection on a pass and no second timeline.
+`executeRenderGraph` walks `graph.passes` start to finish and submits one command buffer. A pass
+has no queue selection and there is no second timeline.
 
-That rules out async compute — running a compute pass concurrently on a dedicated compute queue
+This rules out async compute, where a compute pass runs concurrently on a dedicated compute queue
 while the graphics queue does other work. The light-cull and screen-space passes are compute, but
 they run inline on the graphics queue, serialized by the same barriers as everything else.
 
-The seam: `RgPass` already carries a `kind` (`Graphics` / `Compute`), and the barrier model is
-stage/access based, not queue based. Adding a queue field and a cross-queue semaphore where the
+The seam is `RgPass::kind` (`Graphics` / `Compute`) and a barrier model that is stage- and
+access-based rather than queue-based. Adding a queue field and a cross-queue semaphore where the
 timeline splits is the work; the usage declarations would not change.
 
 ## No transient resources, no aliasing
 
 The graph allocates nothing. Every resource is imported — an existing renderer-owned handle
 registered with `importImage` / `importBuffer` each frame. There are no graph-created images and
-no memory aliasing (reusing one allocation for two resources whose lifetimes don't overlap).
+no memory aliasing, which reuses one allocation for two resources whose lifetimes do not overlap.
 
-The cost is memory: the G-buffer normal target, the AO maps, the FXAA scratch, the TAA history
-and motion targets all hold their own allocations for the whole frame even though many never
-overlap in time. A graph that allocated transients could fold several into one backing
-allocation.
+The cost is memory. The G-buffer normal target, the AO maps, the FXAA scratch, and the TAA history
+and motion targets each hold their own allocation for the whole frame, though many never overlap in
+time. A graph that allocated transients could fold several into one backing allocation.
 
-The seam: imports and tracked state are already separate (`importImage` builds an
-`RgResourceState`; the resource table is just a vector). A transient would be a resource the graph
-allocates lazily and frees at end of frame, slotting into the same table. The right-sized targets
-that exist today are the first candidates to alias.
+The seam is the separation of imports from tracked state: `importImage` builds an `RgResourceState`,
+and the resource table is a plain vector. A transient would be a resource the graph allocates lazily
+and frees at end of frame, slotting into the same table. The right-sized targets that exist today
+are the first candidates to alias.
 
 ## No pass culling
 
-The graph records every pass it is given; there is no reachability analysis that drops a pass
-whose outputs nothing reads. In practice this rarely bites, because the engine builds the graph
-conditionally — `beginFrameGraph` adds the shadow pass only when a shadow is pending, the G-buffer
-only when a screen-space effect is on. The *construction* is pruned even though the *graph* never
-culls.
+The graph records every pass it is given; there is no reachability analysis that drops a pass whose
+outputs nothing reads. In practice this rarely matters, because the engine builds the graph
+conditionally. `beginFrameGraph` adds the shadow pass only when a shadow is pending and the G-buffer
+only when a screen-space effect is on. The construction is pruned even though the graph never culls.
 
-The seam: passes declare their reads and writes, which is exactly the information a dead-pass cull
-would need. The analysis isn't written because conditional construction already covers the common
-case.
+The seam is the read and write declaration on every pass, which is exactly the information a
+dead-pass cull would need. The analysis is unwritten because conditional construction already covers
+the common case.
 
 ## No scheduling or reordering
 
 Passes execute in the order they were added. The graph does not reorder them to overlap work or
-minimize barriers. This is what makes the per-frame state in `applyAccess` a simple running
-summary — it only ever reasons about the previous touch, never about a reordered schedule.
+minimize barriers. This keeps the per-frame state in `applyAccess` a simple running summary that
+reasons only about the previous touch, never about a reordered schedule.
 
-The trade is that getting a good order is the author's job, not the graph's. For a single-queue
-frame with a handful of passes that's the right call; a large graph with many independent branches
+The trade is that a good order is the author's responsibility, not the graph's. For a single-queue
+frame with a handful of passes that is the right call; a large graph with many independent branches
 would benefit from a scheduler.
 
 ## One subresource per barrier
 
-`applyAccess` emits barriers against the full image — a single mip and single array layer. The
-graph tracks one layout per resource, not per mip or layer. Images with multiple mips or layers
-that need different layouts at once aren't expressed; the omnidirectional point-shadow cube, for
+`applyAccess` emits barriers against the full image — a single mip and a single array layer. The
+graph tracks one layout per resource, not per mip or per layer. Images with multiple mips or layers
+that need different layouts at once cannot be expressed. The omnidirectional point-shadow cube, for
 instance, is handled outside the graph rather than as a six-layer attachment.
 
-The seam: the tracked state would grow from one layout to a per-subresource set, and `applyAccess`
-would compare ranges. The single-subresource assumption is baked into the barrier construction, so
-this is the most invasive of the listed changes.
+The seam is the tracked state, which would grow from one layout to a per-subresource set, with
+`applyAccess` comparing ranges. The single-subresource assumption is baked into the barrier
+construction, so this is the most invasive of the listed changes.
 
 ```mermaid
 flowchart LR
@@ -83,8 +85,8 @@ flowchart LR
 ```
 
 The graph is a correctness tool, not a scheduler or an allocator. It removes the error-prone,
-repetitive part of Vulkan and leaves the performance-shaping parts for when they're needed, with
-the data they would need already declared.
+repetitive part of Vulkan and leaves the performance-shaping parts for when they are needed, with
+the data they would require already declared.
 
 ## In the code
 

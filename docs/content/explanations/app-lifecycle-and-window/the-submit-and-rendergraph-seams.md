@@ -5,12 +5,15 @@ weight = 3
 
 # Render seams
 
-A layer has two ways to put work on the GPU, and they are not interchangeable. The dividing
-line is whether you are *drawing into* the world or *inserting a stage* of your own. `onRender`
-records commands into a pass the engine already opened; `onRenderGraph` adds new passes to the
-frame graph between the engine's stages and the present. Pick by intent: a mesh, debug line,
-or gizmo goes through `onRender`; a full-screen effect, extra render target, or compute step
-with its own synchronization is a pass of its own.
+A render seam is a hook through which a layer contributes GPU work to a frame. There are two,
+and they serve different intents. `onRender` records commands into a pass the engine has
+already opened; `onRenderGraph` adds new passes to the frame graph between the engine's stages
+and the present.
+
+The two are not interchangeable. The dividing line is whether a layer *draws into* the world or
+*inserts a stage* of its own. A mesh, debug line, or gizmo goes through `onRender`. A full-screen
+effect, an extra render target, or a compute step with its own synchronization is a pass of its
+own and goes through `onRenderGraph`.
 
 ## Submit seam: recording into the frame
 
@@ -25,11 +28,10 @@ void submit(Renderer& renderer, RenderFn fn)
 ```
 
 The closure takes the frame's command buffer and is replayed later, when the graph executes
-the scene pass. This is the backend-agnostic seam carried over from the old engine: there a
-submitted lambda received a D3D11 context, here it receives a `vk::CommandBuffer`. The layer
-never opens a rendering scope or manages a barrier — it records draw calls into a scope the
-graph owns. `submitUi` is the same idea for the UI pass; the ImGui backend uses it to record
-its draw data into the swapchain pass.
+the scene pass. It receives a `vk::CommandBuffer`; the seam is backend-agnostic in shape. The
+layer never opens a rendering scope or manages a barrier. It records draw calls into a scope the
+graph owns. `submitUi` is the same idea for the UI pass; the ImGui backend uses it to record its
+draw data into the swapchain pass.
 
 ## Render-graph seam: adding passes
 
@@ -46,10 +48,10 @@ endFrame(app.renderer);                         // derive barriers, execute, pre
 ```
 
 A layer adds a pass by declaring what it reads and writes and supplying the body. The graph
-derives the barriers and layout transitions from those declarations — the layer writes none.
-That is how an app-authored post-process slots in: it declares the offscreen as a
-read-modify-write storage image, the graph inserts the layout moves around it, and it runs
-between the scene pass and ImGui's sample. The demonstrator tonemap layer is exactly this. See
+derives the barriers and layout transitions from those declarations; the layer writes none. An
+app-authored post-process slots in this way: it declares the offscreen as a read-modify-write
+storage image, the graph inserts the layout moves around it, and it runs between the scene pass
+and ImGui's sample. The demonstrator tonemap layer is exactly this. See
 [the render graph](../../frame-and-render-graph/render-graph-overview/) for how a pass is
 declared and how the barriers fall out.
 

@@ -5,12 +5,13 @@ weight = 2
 
 # Layers
 
-A layer is the unit a client adds to the running app. It is not a class you subclass and it
-has no virtual methods. The old engine had an `App`/`Layer` lifecycle with virtual overrides;
-the rewrite keeps the shape and drops the inheritance. A `Layer` is a plain struct of
-`std::function` callbacks, and `run` invokes whichever ones are set — the Go-interface-as-itable
-pattern, where the "interface" is the set of function values and an implementation is whatever
-you assign into them.
+A layer is a unit of program behavior the app runs at each phase of the frame. It is a plain
+struct of optional `std::function` callbacks, not a class to subclass, and it has no virtual
+methods. The app keeps a list of layers and invokes whichever callbacks each one has set.
+
+This is the Go-interface-as-itable pattern: the "interface" is the set of function values, and
+an implementation is the set of callbacks assigned into them. The shape mirrors a conventional
+`App`/`Layer` lifecycle while dropping the inheritance that usually comes with it.
 
 ```cpp
 struct Layer
@@ -25,22 +26,10 @@ struct Layer
 };
 ```
 
-## Why closures, not a virtual base
-
-A struct of `std::function` buys two things over a virtual base. Every callback is
-independently optional with no empty-override boilerplate — an unset callback is a null
-`std::function` the loop skips. And a layer can capture state in its closures instead of
-holding it in member fields of a derived type, so the same struct works whether the behavior
-lives in a lambda, a free function, or a bound method. The cost is one indirect call per set
-callback per phase, noise next to a frame's GPU work.
-
-The editor is built this way. It is a layer whose closures hold the editor state and wire the
-hierarchy, inspector, and viewport into `onUi` and the camera into `onUpdate`.
-
 ## How dispatch works
 
-You build a `Layer`, fill in the callbacks you care about, and push it with `attachLayer`.
-`App` owns the layers in a flat `std::vector<Layer>`, in attach order. At each phase of the
+A client builds a `Layer`, fills in the callbacks it needs, and pushes it with `attachLayer`.
+`App` owns the layers in a flat `std::vector<Layer>` in attach order. At each phase of the
 frame, `run` walks the vector and calls only the layers that set that callback:
 
 ```cpp
@@ -50,8 +39,9 @@ for (Layer& layer : app.layers)
 }
 ```
 
-The null check is the whole dispatch mechanism. A layer that only draws UI sets `onUi` and
-leaves the rest empty; there is no base class forcing you to stub out methods you don't use.
+The null check is the whole dispatch mechanism. An unset callback is a null `std::function`
+the loop skips, so a layer that only draws UI sets `onUi` and leaves the rest empty. There is
+no base class forcing stubs for methods a layer does not use.
 
 ## The callback set
 
@@ -69,6 +59,17 @@ Each callback maps to a fixed point in the loop (see [the main loop](../main-loo
 The two rendering callbacks are separate on purpose. `onRender` records commands into the
 current frame; `onRenderGraph` is handed the live graph so the layer can add whole passes.
 That split is the subject of [the submit and render-graph seams](../the-submit-and-rendergraph-seams/).
+
+## Why closures, not a virtual base
+
+A struct of `std::function` offers two advantages over a virtual base. Every callback is
+independently optional, with no empty-override boilerplate. And a layer can capture its state
+in the closures rather than in member fields of a derived type, so the same struct works
+whether the behavior lives in a lambda, a free function, or a bound method. The cost is one
+indirect call per set callback per phase, negligible next to a frame's GPU work.
+
+The editor is built this way. It is a layer whose closures hold the editor state and wire the
+hierarchy, inspector, and viewport into `onUi` and the camera into `onUpdate`.
 
 ## In the code
 

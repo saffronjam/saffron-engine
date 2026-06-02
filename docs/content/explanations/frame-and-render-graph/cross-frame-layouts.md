@@ -5,11 +5,14 @@ weight = 4
 
 # Cross-frame layouts
 
-The graph is rebuilt from scratch every frame, which is cheap and keeps the per-frame state
-trivially correct. But some images live longer than a frame. The offscreen is sampled by ImGui
-at the end of one frame and written as a color attachment at the start of the next. If the graph
-forgot its layout each frame, it would emit a needless transition on the first touch every time.
-The fix is a write-back pointer that carries an image's layout across the frame boundary.
+A cross-frame layout is the resting Vulkan image layout an image holds at the end of one frame and
+relies on at the start of the next, carried across the frame boundary by a write-back pointer.
+
+Some images live longer than a frame. The offscreen is sampled by ImGui at the end of one frame and
+written as a color attachment at the start of the next. The graph is rebuilt from scratch every
+frame, which is cheap and keeps per-frame state simple. A rebuilt graph holds no memory of an
+image's prior layout, so on the first touch it would emit a transition that is already satisfied.
+The write-back pointer preserves that layout so the next frame derives the correct barrier instead.
 
 ## Imported, not allocated
 
@@ -24,8 +27,8 @@ auto importImage(RenderGraph& graph, vk::Image image, vk::ImageView view,
 
 Most imports pass `initialLayout = eUndefined` and `externalLayout = nullptr` — images the graph
 fully owns within the frame (depth buffer, MSAA color, G-buffer targets, swapchain image). They
-start undefined, get written, and the graph doesn't care what layout they end in. The interesting
-imports are the long-lived ones, and they pass a real `externalLayout`.
+start undefined, get written, and their final layout does not matter. The long-lived imports pass a
+real `externalLayout`.
 
 ## The externalLayout pointer
 
@@ -53,17 +56,17 @@ flowchart LR
     A -.->|next frame| B
 ```
 
-This is why the [tonemap](../../screen-space-and-post/tonemap-and-exposure/) and ImGui sampling
-don't fight the next frame's scene write. The offscreen rests in `ShaderReadOnlyOptimal` after
-ImGui samples it; that value is written back; next frame's import seeds the entry layout there,
-and the first scene `ColorWrite` derives a single correct transition.
+This keeps the [tonemap](../../screen-space-and-post/tonemap-and-exposure/) and ImGui sampling from
+conflicting with the next frame's scene write. The offscreen rests in `ShaderReadOnlyOptimal` after
+ImGui samples it; that value is written back; the next frame's import seeds the entry layout from
+it, and the first scene `ColorWrite` derives a single correct transition.
 
 ## Seeding the source scope
 
-Knowing the entry layout is half the story. To order the first barrier against an imported image,
-the graph also needs to know what last touched it — the source stage and access. A freshly
-imported resource has no prior pass this frame to read that from, so `seedImageState`
-reconstructs it from the entry layout:
+The entry layout alone is not enough. To order the first barrier against an imported image, the
+graph also needs the source stage and access — what last touched it. A freshly imported resource
+has no prior pass this frame to read that from, so `seedImageState` reconstructs it from the entry
+layout:
 
 ```cpp
 void seedImageState(RgResourceState& r)
@@ -82,11 +85,10 @@ void seedImageState(RgResourceState& r)
 ```
 
 An image that comes in as `ShaderReadOnlyOptimal` was last read by a fragment shader (ImGui, or a
-previous sampling pass), so the next write must wait on `eFragmentShader` / `eShaderSampledRead`
-— the write-after-read source scope. Any other entry layout has no in-frame predecessor worth
-waiting on, so the source defaults to `eTopOfPipe` / `eNone`, ordering against nothing. Get this
-wrong and you over-synchronize, or worse, race the next frame's write against the previous frame's
-read.
+previous sampling pass), so the next write must wait on `eFragmentShader` / `eShaderSampledRead`,
+the write-after-read source scope. Any other entry layout has no in-frame predecessor worth waiting
+on, so the source defaults to `eTopOfPipe` / `eNone`, ordering against nothing. An incorrect source
+scope either over-synchronizes or races the next frame's write against the previous frame's read.
 
 ## Which images carry across
 
@@ -99,9 +101,9 @@ read.
 | Depth, MSAA color, G-buffer | no | produced and consumed within one frame |
 | Swapchain image | no | fresh acquire each frame; starts undefined, ends in present layout |
 
-The rule is simple: if an image's contents (or just its layout) need to mean something next frame,
-it gets an `externalLayout`. If it's scratch within the frame, it imports as `eUndefined` and the
-graph clears it on first write.
+An image gets an `externalLayout` when its contents (or just its layout) must mean something next
+frame. A scratch image imports as `eUndefined` and the graph clears it on first
+write.
 
 > [!NOTE]
 > `seedImageState` only special-cases `ShaderReadOnlyOptimal`. It assumes anything else with no

@@ -5,119 +5,94 @@ weight = 1
 
 # Render graph
 
-Vulkan makes you responsible for synchronization. Before a shader samples an image you wrote
-as a color attachment, you owe the driver a barrier that transitions its layout and orders the
-write before the read. Get one wrong and you get a validation error, a corrupted frame, or a
-hang. Writing those barriers by hand, per pass, is where Vulkan renderers rot.
+A render graph (also called a *frame graph*) describes one frame of rendering as a directed graph:
+the passes are the nodes, and the images and buffers they read and write are the edges. Each pass
+declares the resources it consumes and produces. From those declarations the graph derives
+everything that connects the passes — their order, their dependencies, and the GPU synchronization
+that makes one pass's output safe for the next to read.
 
-The render graph removes that job. A pass *declares* what it does with each resource, and the
-graph reads those declarations and emits the barriers and layout transitions itself. No pass in
-the engine writes a `pipelineBarrier2` call.
+The pattern separates two concerns that are easy to tangle: *what* a frame draws, and *how* the GPU
+is synchronized while it draws. It originated with Frostbite's renderer (2017) and is now standard
+in engines built on explicit graphics APIs.
 
-## Declaration vocabulary
+## How it works
 
-A pass's intent toward a resource is one `RgUsage` value. Each case maps to a pipeline stage,
-an access mask, and (for images) a layout — `ColorWrite` is a color-attachment write that wants
-`eColorAttachmentOptimal`, `SampledRead` is a fragment-shader read that wants
-`eShaderReadOnlyOptimal`, and so on through the compute and storage cases. `usageInfo(usage)`
-expands a case into its `{ stage, access, layout, isWrite }`, and that table is the only place
-the mappings live. The [barrier derivation](../usage-and-barrier-derivation/) page lists all of
-them.
-
-## A pass is data plus a closure
-
-```cpp
-struct RgPass
-{
-    std::string name;
-    RgPassKind kind;                                // Graphics or Compute
-    std::vector<RgAccess> accesses;                 // non-attachment reads/writes
-    std::vector<RgAttachment> colors;               // MRT: index 0 == location 0
-    std::optional<RgAttachment> depth;
-    vk::Extent2D renderArea;
-    std::function<void(vk::CommandBuffer)> execute; // the body
-};
-```
-
-Attachments declare only their load/store/clear; the `ColorWrite`/`DepthWrite` usage and the
-layout transition are derived. The `colors` vector is what makes multiple render targets work —
-the thin G-buffer writes color and a normal target from one pass — and an attachment can also
-carry a `resolve` target, which is how MSAA resolves into the offscreen.
-
-The graph allocates nothing. Resources are *imported*: `importImage` and `importBuffer` register
-an existing Vulkan handle and return an `RgResource` index. The offscreen color, the swapchain
-image, the depth buffer, and the light buffers are all imported each frame.
-
-## Deriving a barrier
-
-The graph tracks a small state per resource as it walks the passes in order: current layout, the
-last stage and access that touched it, and whether that touch was a write. `applyAccess` compares
-the incoming usage against that state and decides whether a barrier is needed:
-
-```cpp
-const bool hazard = (target.isWrite && r.touched) || (!target.isWrite && r.lastWasWrite);
-```
-
-A write after the resource has been touched at all is a hazard (write-after-write or
-write-after-read). A read after a write is a hazard (read-after-write). Read-after-read is not,
-and emits nothing.
-
-Images have a second trigger: a layout change. If the resource's current layout differs from the
-usage's required layout, the graph emits a `vk::ImageMemoryBarrier2` that both transitions the
-layout and orders the access, even with no data hazard. Buffers have no layout, so they barrier
-only on a hazard, via a `vk::MemoryBarrier2`. After emitting, `applyAccess` advances the tracked
-state so the next pass sees the new reality.
+The graph runs in two phases each frame. First, every pass is recorded into the graph along with
+its declared resource usage — no GPU commands execute yet. Second, the graph walks the passes in
+dependency order, derives the synchronization each transition needs, and records the pass bodies.
 
 ```mermaid
 flowchart TD
-    A[next pass] --> B[for each declared access + attachment]
-    B --> C{image?}
-    C -- yes --> D{layout change<br/>or hazard?}
-    D -- yes --> E[emit ImageMemoryBarrier2<br/>transition + order]
+    A[pass declares usage per resource] --> B[graph walks passes in order]
+    B --> C[compare intent vs. what last touched the resource]
+    C --> D{barrier needed?}
+    D -- yes --> E[emit barrier: order + make visible + transition layout]
     D -- no --> F[no barrier]
-    C -- no --> G{hazard?}
-    G -- yes --> H[emit MemoryBarrier2]
-    G -- no --> F
-    E --> I[advance tracked state]
-    F --> I
-    H --> I
-    I --> J[open rendering scope, run execute, close]
+    E --> G[run the pass body]
+    F --> G
+    G --> B
 ```
 
-## Executing the frame
+The single idea underneath is *declare intent, derive the mechanics*. A pass never issues a
+synchronization command itself; it only states how it uses each resource, and the graph computes
+the rest from the sequence of declarations.
 
-`executeRenderGraph` runs once per frame with the frame's command buffer. For each pass it
-collects the barriers from every declared access and attachment (plus any resolve), submits them
-in one `pipelineBarrier2`, then runs the body. A graphics pass first opens a dynamic-rendering
-scope from the tracked image views (`beginRendering`, a full-area viewport and scissor) and
-closes it after; a compute pass just runs.
+## Why Vulkan needs it
 
-There are no `VkRenderPass` or `VkFramebuffer` objects here. The engine targets Vulkan 1.4, so
-attachments bind per-pass through dynamic rendering, which is exactly what a per-frame graph
-wants.
+Vulkan is an explicit API: the driver performs almost no synchronization on your behalf. A GPU
+pipelines work, so a command that writes an image and a later command that reads it can overlap
+unless you order them. Without that ordering the read sees incomplete data, and there is no driver
+safety net — only a corrupted frame, a hang, or a validation error.
 
-## Layouts across the frame boundary
+Ordering GPU work in Vulkan means inserting a **pipeline barrier**, which expresses three things:
 
-The offscreen image is sampled by ImGui at the end of one frame and written as a color attachment
-at the start of the next. If the graph reset every image to `eUndefined` each frame, it would
-emit a needless transition every time. `importImage` takes an `externalLayout` pointer: it seeds
-the resource's entry layout from it, and after execution writes the resolved layout back.
-`seedImageState` also reconstructs the right source scope, so the first barrier waits on whatever
-last touched the image. Layouts carry across frames and the spurious transitions disappear. See
-[cross-frame layouts](../cross-frame-layouts/).
+- **Execution dependency** — work in one set of pipeline stages must finish before work in another
+  begins.
+- **Memory dependency** — the first work's writes must be made visible to the second, flushing and
+  invalidating GPU caches as needed.
+- **Layout transition** (images only) — an image's memory layout must match its next use, since the
+  layout that is optimal as a color attachment differs from the one a shader samples.
 
-## What it is, what it isn't
+Each pass interacts with the resources of passes before and after it, so the barriers to reason
+about multiply as a renderer grows. Hand-written, per-pass barriers are the part of a Vulkan
+renderer that breaks first. The render graph removes that work by deriving every barrier from the
+declared usage.
 
-Every frame the graph is rebuilt from scratch. It's cheap (a couple of vectors) and keeps the
-per-frame state trivially correct. The engine's cull → scene → UI passes are added in
-`beginFrameGraph`; app layers then add their own in `onRenderGraph`
-(see [adding passes](../who-can-add-passes/)).
+## What a render graph can do
+
+Declared usage is enough to derive barriers; the same dependency information enables further
+optimizations that graphs may or may not implement:
+
+- **Barrier derivation** — order accesses, make writes visible, and transition layouts. The core
+  job, and the only one a graph must do.
+- **Resource aliasing** — knowing each resource's first and last use, share memory between
+  resources whose lifetimes do not overlap.
+- **Pass culling** — drop a pass whose outputs nothing reads.
+- **Async scheduling** — move independent passes onto a separate queue to run concurrently.
+
+## In Saffron
+
+Saffron's graph implements the core job and leaves the optimizations as seams. A pass is a small
+struct — a name, its resource accesses, its attachments, and a closure that records the draw or
+dispatch. Each access carries one `RgUsage` value (`ColorWrite`, `SampledRead`,
+`StorageImageRWCompute`, …), and a table maps each case to the stage, access mask, and layout a
+barrier needs.
+
+The graph allocates nothing. Resources are *imported*: `importImage` and `importBuffer` register an
+existing Vulkan handle and return an index the passes refer to. The graph is rebuilt from scratch
+each frame, which costs little and keeps the per-frame state simple to reason about. There are no
+`VkRenderPass` or `VkFramebuffer` objects — Saffron targets Vulkan 1.4 and binds attachments
+per-pass through dynamic rendering.
+
+Engine passes (light culling, the scene pass, shadows, post-processing) are added at the start of
+the frame; an application adds its own afterward. Both use the same declaration mechanism, so their
+barriers are derived identically.
 
 > [!NOTE]
-> This is a single-graphics-queue graph with no transient allocation and no aliasing: every
-> target is a persistent, renderer-owned image imported each frame. There's no async compute and
-> no automatic culling of unused passes. These are deliberate omissions with seams left for them.
-> See [limits](../limits-and-seams/).
+> This is a single-graphics-queue graph that does the core job only. Every resource is a persistent,
+> renderer-owned image imported each frame, so there is no transient allocation, aliasing, pass
+> culling, or async compute. These are deliberate omissions with seams left for them — see
+> [limits](../limits-and-seams/).
 
 ## In the code
 
@@ -127,13 +102,14 @@ per-frame state trivially correct. The engine's cull → scene → UI passes are
 | Pass + attachment data | `render_graph.cppm` | `RgPass`, `RgAttachment`, `RgAccess` |
 | Import resources | `render_graph.cppm` | `importImage`, `importBuffer`, `addPass` |
 | Barrier derivation | `render_graph.cppm` | `applyAccess`, `RgResourceState` |
-| Cross-frame layout | `render_graph.cppm` | `seedImageState`, `externalLayout` |
 | Execution | `render_graph.cppm` | `executeRenderGraph` |
 | Where engine passes are added | `renderer.cppm` | `beginFrameGraph`, `frameGraph` |
 
 ## Related
 
-- [Passes](../passes-and-attachments/) — MRT, resolve, load/store
-- [Barrier derivation](../usage-and-barrier-derivation/) — the full hazard table
-- [Cross-frame layouts](../cross-frame-layouts/)
+- [Barrier derivation](../usage-and-barrier-derivation/) — how one `RgUsage` becomes one barrier, in detail
+- [Passes](../passes-and-attachments/) — MRT, resolve, load/store, the execute closure
+- [Cross-frame layouts](../cross-frame-layouts/) — carrying image layouts across the frame boundary
+- [Adding passes](../who-can-add-passes/) — engine passes vs. application passes
+- [Synchronization2](../../vulkan-foundation/synchronization2-and-barriers/) — the barrier primitives the graph emits
 - [Dynamic rendering](../../vulkan-foundation/dynamic-rendering/) — the no-render-pass model the graph rides on

@@ -5,10 +5,10 @@ weight = 5
 
 # Adding passes
 
-The frame graph is built in three windows of one main-loop iteration: the engine lays down its
-own passes first, app layers add theirs in the middle, and the engine closes with the UI pass and
-executes. The ordering lets an app drop a post-process into the frame without touching engine
-code, and have it land in the right place.
+A frame graph is assembled in three ordered windows of a single main-loop iteration: the engine
+lays down its own passes, app layers add theirs, and the engine closes with the UI pass and
+executes. The order lets an app insert a pass — a post-process, a compute effect — at a defined
+point in the frame without touching engine code.
 
 ## The three windows
 
@@ -33,7 +33,7 @@ endFrame(app.renderer);                   // 3. engine: ui pass, then execute
 3. **`endFrame`** adds the UI pass — sample the offscreen, composite ImGui into the swapchain —
    then calls `executeRenderGraph` to derive every barrier and record the whole thing.
 
-Because the UI pass is added last, anything a layer adds in window 2 is recorded before ImGui
+The UI pass is added last, so anything a layer adds in window 2 is recorded before ImGui
 composites. An app post-process sees the engine's finished image and modifies it before it
 reaches the screen.
 
@@ -51,12 +51,12 @@ flowchart TD
 
 `frameGraph(renderer)` returns a reference to the current graph; the layer adds to it with the
 same `addPass` the engine uses. The engine exposes the offscreen color through
-`viewportColorResource(renderer)` (the same `RgResource` it tracks as `sceneColor`), so an
-in-place compute post-process imports nothing new: it declares `StorageImageRWCompute` on the
+`viewportColorResource(renderer)` — the same `RgResource` it tracks as `sceneColor` — so an
+in-place compute post-process imports nothing new. It declares `StorageImageRWCompute` on the
 offscreen handle, binds its pipeline, and dispatches.
 
-A layer pass and an engine pass are the same thing to the graph. The layer's pass goes through
-`applyAccess` identically, and its read-modify-write transition (`Color → General →
+A layer pass and an engine pass are identical to the graph. The layer's pass goes through
+`applyAccess` the same way, and its read-modify-write transition (`Color → General →
 ShaderReadOnly`) is derived, not coded. The engine's own tonemap uses the same machinery from
 inside `endFrame`.
 
@@ -72,18 +72,17 @@ const bool doDepthPrepass = renderer.useDepthPrepass && renderer.pipelines.depth
 const bool doScreen       = doSsao || doContact || doSsgi || wantRestir;
 ```
 
-So the graph for a given frame contains only the passes that frame needs. Turn off shadows and
-the shadow pass isn't added — and because the scene pass only declares a `SampledRead` on the
-shadow map when `doShadow` is true, no dangling barrier references a resource that was never
-imported. Conditional construction keeps the declared usage and the imported resources in
-lockstep.
+The graph for a given frame contains only the passes that frame needs. With shadows off, the
+shadow pass is not added; the scene pass declares a `SampledRead` on the shadow map only when
+`doShadow` is true, so no barrier references a resource that was never imported. Conditional
+construction keeps the declared usage and the imported resources in lockstep.
 
-## The submit() seam, layered on top
+## The submit() seam
 
-There are two ways app geometry reaches the GPU, and they coexist. The `onRenderGraph` hook adds
-whole passes. The older `submit(renderer, fn)` / `submitUi(renderer, fn)` seam pushes a closure
-*replayed inside* an existing engine pass — scene submissions run inside the scene pass body, UI
-submissions inside the UI pass body:
+App geometry reaches the GPU two coexisting ways. The `onRenderGraph` hook adds whole passes. The
+`submit(renderer, fn)` / `submitUi(renderer, fn)` seam pushes a closure *replayed inside* an
+existing engine pass — scene submissions run inside the scene pass body, UI submissions inside the
+UI pass body:
 
 ```cpp
 scene.execute = [&renderer](vk::CommandBuffer cmd)
@@ -93,8 +92,8 @@ scene.execute = [&renderer](vk::CommandBuffer cmd)
 };
 ```
 
-A layer that just wants to draw more geometry into the scene uses `submit`; a layer that wants its
-own synchronized pass (a compute effect, a separate target) uses `onRenderGraph`. The first rides
+A layer that draws more geometry into the scene uses `submit`; a layer that needs its own
+synchronized pass — a compute effect, a separate target — uses `onRenderGraph`. The first rides
 inside the engine's barriers; the second gets its own, derived.
 
 > [!NOTE]
