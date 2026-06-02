@@ -42,7 +42,7 @@ fn socket_path() -> String {
 fn engine_binary() -> String {
     std::env::var("SAFFRON_ENGINE_BIN").unwrap_or_else(|_| {
         repo_root()
-            .join("build/debug/bin/SaffronEditor")
+            .join("build/debug/bin/SaffronEngine")
             .to_string_lossy()
             .into_owned()
     })

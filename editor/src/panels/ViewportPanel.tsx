@@ -1,4 +1,4 @@
-/// The viewport region: a div the native SaffronEditor window is reparented OVER.
+/// The viewport region: a div the native SaffronEngine window is reparented OVER.
 /// It never renders pixels — it only owns the screen rectangle and keeps the native
 /// window glued to it. On mount it waits for a non-zero rect, then attaches; on any
 /// later size/position change it resizes (diffed, debounced). A <LoadingOverlay/>

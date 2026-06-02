@@ -2,7 +2,7 @@
 /// (parity with `viewerPanel`, editor_panels.cpp:327-351, and the 512 re-render at
 /// editor_app.cppm:165). A shadcn Dialog, opened by a tile double-click.
 ///
-/// OCCLUSION (the core viewport-bridge constraint): the native SaffronEditor window
+/// OCCLUSION (the core viewport-bridge constraint): the native SaffronEngine window
 /// is reparented OVER the viewport div and ALWAYS paints on top of the webview — a
 /// centered modal over the viewport rect would be hidden behind the native child.
 /// So while the viewer is open we set `store.viewportHidden`, which the
