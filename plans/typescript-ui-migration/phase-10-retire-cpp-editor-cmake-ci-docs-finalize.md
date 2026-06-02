@@ -356,7 +356,7 @@ that finding):
    undo/redo, no scene-graph parenting/`resolveRefs`, no multi-viewport, no
    native-Wayland (XWayland-only) — the C++ editor lacked these too, so they are not
    regressions.
-9. Build the docs to confirm no broken links: per `docs/README.md` (Hugo +
+9. Build the docs to confirm no broken links: per the root `README.md` (Hugo +
    hugo-book; Hugo at `~/.local/bin`). Every body page needs a `# Title` H1.
 
 ### Step 7 — `AGENTS.md`

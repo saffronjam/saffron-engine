@@ -378,7 +378,7 @@ Scope B only changes a value pushed into the already-existing DDGI trace pass
 - Update the matching `docs/content/` explanation page for IBL/environment (the
   environment/skybox concept page) in the same change: note that the IBL environment can now
   be sourced from a user equirectangular panorama, and that DDGI indirect light reads the
-  scene sky color. Add the row to the hub `_index.md` if a new page is created. Per `docs/README.md`.
+  scene sky color. Add the row to the hub `_index.md` if a new page is created. Per the docs conventions in `AGENTS.md`.
 
 ## Implementation Steps
 
