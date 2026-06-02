@@ -22,6 +22,7 @@ import type {
   Thumbnail,
   Transform,
   Vec3,
+  ProjectInfo,
 } from "../protocol";
 
 /// Device-pixel bounds the native viewport window is reparented over.
@@ -39,6 +40,24 @@ export interface PickResult {
   kind?: "mesh" | "billboard";
   id?: string;
   name?: string;
+}
+
+export interface RecentProject {
+  path: string;
+  name: string;
+  displayName: string;
+  lastOpenedAt: string;
+}
+
+export interface RecentProjects {
+  projects: RecentProject[];
+}
+
+export interface AppDataInfo {
+  appDataDir: string;
+  userdataDir: string;
+  envProject: boolean;
+  autoEmptyProject: boolean;
 }
 
 /// One pointer phase forwarded to the native gizmo. `hover` tracks the handle
@@ -181,6 +200,33 @@ export const client = {
     return callRaw("import-texture", { path }) as Promise<{ texture: string }>;
   },
 
+  // --- projects ---
+  getProject(): Promise<ProjectInfo> {
+    return callRaw("get-project") as Promise<ProjectInfo>;
+  },
+  newProject(name: string, displayName: string, root?: string): Promise<ProjectInfo> {
+    const params: { name: string; displayName: string; root?: string } = {
+      name,
+      displayName,
+    };
+    if (root !== undefined && root !== "") {
+      params.root = root;
+    }
+    return callRaw("new-project", params) as Promise<ProjectInfo>;
+  },
+  openProject(path: string): Promise<ProjectInfo> {
+    return callRaw("open-project", { path }) as Promise<ProjectInfo>;
+  },
+  appDataInfo(): Promise<AppDataInfo> {
+    return invoke<AppDataInfo>("app_data_info");
+  },
+  listRecentProjects(): Promise<RecentProjects> {
+    return invoke<RecentProjects>("list_recent_projects");
+  },
+  rememberRecentProject(project: RecentProject): Promise<RecentProjects> {
+    return invoke<RecentProjects>("remember_recent_project", { project });
+  },
+
   // --- stats / environment ---
   renderStats(): Promise<RenderStats> {
     return call("render-stats");
@@ -251,17 +297,13 @@ export const client = {
 
   // --- file ops (untyped; each returns { path }) ---
   /// Write catalog + scene to `path` (engine default `project.json` when omitted).
-  saveProject(path?: string): Promise<{ path: string }> {
-    return callRaw("save-project", path === undefined ? {} : { path }) as Promise<{
-      path: string;
-    }>;
+  saveProject(path?: string): Promise<ProjectInfo> {
+    return callRaw("save-project", path === undefined ? {} : { path }) as Promise<ProjectInfo>;
   },
   /// Restore catalog + scene + GPU assets from `path` (engine default
   /// `project.json`). Clears the engine's selection; the caller resets the store.
-  loadProject(path?: string): Promise<{ path: string }> {
-    return callRaw("load-project", path === undefined ? {} : { path }) as Promise<{
-      path: string;
-    }>;
+  loadProject(path?: string): Promise<ProjectInfo> {
+    return callRaw("load-project", path === undefined ? {} : { path }) as Promise<ProjectInfo>;
   },
   /// Write the scene only to `path` (required).
   saveScene(path: string): Promise<{ path: string }> {
@@ -308,4 +350,4 @@ export const client = {
 };
 
 export type Client = typeof client;
-export type { Vec3 };
+export type { ProjectInfo, Vec3 };

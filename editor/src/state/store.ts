@@ -3,6 +3,7 @@
 /// slices this fills.
 import { create } from "zustand";
 import { client, type Client } from "../control/client";
+import type { ProjectInfo } from "../control/client";
 import type {
   AssetEntry,
   EntityRef,
@@ -30,6 +31,7 @@ export interface EditorState {
   assets: AssetEntry[];
   environment: Environment | null;
   renderStats: RenderStats | null;
+  project: ProjectInfo | null;
   /// Client-side reconcile-poll rate (Hz), an EMA over the actual tick interval.
   /// This is the WEBVIEW poll cadence, NOT the engine frame rate — there is no
   /// frame timing on the control wire (the native viewport paints independently).
@@ -59,6 +61,7 @@ export interface EditorState {
   refreshAssets(): Promise<void>;
   setEnvironment(environment: Environment | null): void;
   setRenderStats(renderStats: RenderStats | null): void;
+  setProject(project: ProjectInfo | null): void;
   setPollRateHz(pollRateHz: number): void;
   /// Hard scene reset after a project/scene load: clear entities + selection +
   /// the live inspect result + assets + environment, invalidate cached thumbnails,
@@ -81,6 +84,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   assets: [],
   environment: null,
   renderStats: null,
+  project: null,
   pollRateHz: 0,
   engineStatus: { running: false, attached: false, phase: "idle" },
   dragActive: false,
@@ -122,6 +126,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   },
   setEnvironment: (environment) => set({ environment }),
   setRenderStats: (renderStats) => set({ renderStats }),
+  setProject: (project) => set({ project }),
   setPollRateHz: (pollRateHz) => set({ pollRateHz }),
   resetSceneState: () => {
     // The catalog changed under us, so every cached thumbnail blob URL is stale.
@@ -138,8 +143,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       selectionVersion: -1,
     });
   },
-  setEngineStatus: (patch) =>
-    set((s) => ({ engineStatus: { ...s.engineStatus, ...patch } })),
+  setEngineStatus: (patch) => set((s) => ({ engineStatus: { ...s.engineStatus, ...patch } })),
   setPhase: (phase, error) =>
     set((s) => ({
       engineStatus: {
@@ -256,8 +260,7 @@ export function startReconcile(client: Client): () => void {
       const nextSelectedId = selection.entity ? selection.entity.id : null;
       const sceneChanged = selection.sceneVersion !== knownSceneVersion;
       const selectionChanged =
-        selection.selectionVersion !== knownSelectionVersion ||
-        nextSelectedId !== knownSelectedId;
+        selection.selectionVersion !== knownSelectionVersion || nextSelectedId !== knownSelectedId;
 
       live.setSelectionVersion(selection.selectionVersion);
       live.setSceneVersion(selection.sceneVersion);
