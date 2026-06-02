@@ -12,11 +12,11 @@ using that material looks.
 
 ## How shaders get compiled
 
-The build globs every `*.slang` under `editor/assets/shaders/` and compiles each to
-`bin/shaders/<name>.spv` with `slangc`, wired in `editor/CMakeLists.txt`:
+The build globs every `*.slang` under `engine/assets/shaders/` and compiles each to
+`bin/shaders/<name>.spv` with `slangc`, wired in `engine/CMakeLists.txt`:
 
 ```cmake
-saffron_compile_shaders(SaffronEditor
+saffron_compile_shaders(SaffronEngine
     ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders
     ${SAFFRON_RUNTIME_DIR}/shaders)
 ```
@@ -39,7 +39,7 @@ stage consumes the interleaved vertex buffer (`position`/`normal`/`uv0`), reads 
 data from the storage buffer on set 2 indexed by `SV_VulkanInstanceID`, and takes the camera
 `viewProj` as a push constant. The fragment stage returns `SV_Target`.
 
-Create `editor/assets/shaders/flat.slang`:
+Create `engine/assets/shaders/flat.slang`:
 
 ```hlsl
 // Draws each instance in its base color, lit by one hard-coded headlight.

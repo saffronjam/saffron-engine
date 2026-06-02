@@ -6,11 +6,11 @@ math = false
 
 # Build and run
 
-The editor is a Tauri/React app driving the engine over the control socket; the engine itself is the C++ `SaffronEditor` target, now a headless viewport host under `editor-old/`. Both build in the `saffron-build` toolbox. (The Silverblue host has no C++ toolchain; the home directory is shared into the container, so the host's `bun` runs *inside* the toolbox by PATH.)
+The editor is a Tauri/React app driving the engine over the control socket; the engine itself is the C++ `SaffronEngine` host executable, built from the merged `engine/` project as a headless viewport host. Both build in the `saffron-build` toolbox. (The Silverblue host has no C++ toolchain; the home directory is shared into the container, so the host's `bun` runs *inside* the toolbox by PATH.)
 
 ## Build the engine host
 
-Build `SaffronEditor` first — the Tauri app spawns it on launch.
+Build `SaffronEngine` first — the Tauri app spawns it on launch.
 
 ## Steps
 
@@ -30,12 +30,12 @@ Build `SaffronEditor` first — the Tauri app spawns it on launch.
    ```sh
    toolbox run -c saffron-build bash -lc '
      cd /var/home/saffronjam/repos/SaffronEngine
-     ./build/debug/bin/SaffronEditor'
+     ./build/debug/bin/SaffronEngine'
    ```
 
 ## Run the Tauri editor
 
-The Tauri app builds and runs in the *same* toolbox, with the host `bun` on the PATH (the home dir is shared in). `bun run tauri dev` spawns the `SaffronEditor` host (built above) and reparents its viewport into the webview, so build the host first.
+The Tauri app builds and runs in the *same* toolbox, with the host `bun` on the PATH (the home dir is shared in). `bun run tauri dev` spawns the `SaffronEngine` host (built above) and reparents its viewport into the webview, so build the host first.
 
 ```sh
 toolbox run -c saffron-build bash -lc '
@@ -54,7 +54,7 @@ toolbox run -c saffron-build bash -lc '
 - **Tauri editor**: the shell opens with the Hierarchy / tabbed Inspector·Environment·Stats / Assets / Viewport dock; a "Preparing renderer…" overlay clears once the embedded scene attaches.
 - For a headless engine check, bound the host run and dump the offscreen image:
   ```sh
-  SAFFRON_EXIT_AFTER_FRAMES=5 SAFFRON_CAPTURE=/tmp/frame.png ./build/debug/bin/SaffronEditor
+  SAFFRON_EXIT_AFTER_FRAMES=5 SAFFRON_CAPTURE=/tmp/frame.png ./build/debug/bin/SaffronEngine
   ```
   `SAFFRON_EXIT_AFTER_FRAMES=N` exits after `N` frames; `SAFFRON_CAPTURE=path` writes the viewport image at exit.
 

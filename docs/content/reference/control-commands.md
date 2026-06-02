@@ -63,7 +63,7 @@ Every command registered in `Saffron.Control`, driven by the `se` CLI over the u
 | `attach-native-viewport` | `{parentXid, x?, y?, width?, height?}` | reparent the engine SDL/X11 window into the host XID; latches present-only. `parentXid` may be a string (u64) |
 | `resize-native-viewport` | `{x, y, width, height}` | move/resize the already-reparented child (no reparent, no flicker) |
 
-> The three `*-native-viewport` commands require launching `SaffronEditor` with
+> The three `*-native-viewport` commands require launching `SaffronEngine` with
 > `SAFFRON_EDITOR_NATIVE_VIEWPORT=1`, `SAFFRON_CONTROL_SOCK=<sock>`, and `SDL_VIDEODRIVER=x11`.
 > Under present-only mode `screenshot target=window` is disabled (the swapchain is never in a
 > capturable layout) — use `screenshot target=viewport` instead.

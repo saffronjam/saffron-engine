@@ -17,7 +17,7 @@ environment](../../explanations/architecture-and-conventions/) and `AGENTS.md`).
 `cmd/se` wrapper in the repo root launches the editor and a CLI that talks to it:
 
 ```sh
-./cmd/se start --build      # builds, launches SaffronEditor, waits for its socket
+./cmd/se start --build      # builds, launches SaffronEngine, waits for its socket
 ./cmd/se ping               # pong  engine=SaffronEngine  version=...  pid=...
 ```
 
@@ -32,8 +32,8 @@ below drives that same editor. If you'd rather click, the window has a **Hierarc
 
 ## Add a cube
 
-The editor ships a `cube` model under `editor/assets/models/`, copied next to the
-executable at build time. Import it:
+The engine ships a `cube` model under `engine/assets/models/`, copied next to the
+host executable at build time. Import it:
 
 ```sh
 ./cmd/se import-model models/cube.gltf

@@ -10,14 +10,14 @@ Add a `.slang` file, have CMake compile it to SPIR-V, and load it at runtime.
 
 ## Steps
 
-1. Drop a `.slang` into `editor/assets/shaders/`. Tag entry points with `[shader("vertex")]` / `[shader("fragment")]` / `[shader("compute")]` — all tagged entry points land in one SPIR-V module. Use `mesh.slang` as a reference for binding layout (set 0 bindless albedo, set 1 lighting, push-constant camera).
+1. Drop a `.slang` into `engine/assets/shaders/`. Tag entry points with `[shader("vertex")]` / `[shader("fragment")]` / `[shader("compute")]` — all tagged entry points land in one SPIR-V module. Use `mesh.slang` as a reference for binding layout (set 0 bindless albedo, set 1 lighting, push-constant camera).
 2. Re-run CMake configure so the new file is globbed:
    ```sh
    toolbox run -c saffron-build bash -lc '
      cd /var/home/saffronjam/repos/SaffronEngine && cmake --preset debug'
    ```
    `saffron_compile_shaders` GLOBs `*.slang` and emits `<name>.spv` under `bin/shaders/`, compiling each with `slangc ... -profile glsl_450 -target spirv -emit-spirv-directly -fvk-use-entrypoint-name -matrix-layout-column-major`.
-3. Build — the shaders are a dependency of `SaffronEditor`, so they compile alongside it:
+3. Build — the shaders are a dependency of `SaffronEngine`, so they compile alongside it:
    ```sh
    toolbox run -c saffron-build bash -lc '
      cd /var/home/saffronjam/repos/SaffronEngine && cmake --build build/debug -j1'
@@ -35,7 +35,7 @@ Add a `.slang` file, have CMake compile it to SPIR-V, and load it at runtime.
 | What | File | Symbols |
 |---|---|---|
 | The GLOB + slangc invocation | `CompileShaders.cmake` | `saffron_compile_shaders`, `${SAFFRON_SLANGC}` |
-| Where the editor wires it | `editor/CMakeLists.txt` | `saffron_compile_shaders(SaffronEditor ...)` |
+| Where the host wires it | `engine/CMakeLists.txt` | `saffron_compile_shaders(SaffronEngine ...)` |
 | Reference shader | `mesh.slang` | `[shader(...)]` entry points, set/binding layout |
 | Load + cache the PSO | `renderer_pipelines.cpp` | `loadShaderModule`, `requestMeshPipeline` |
 | Material → shader path | `renderer_types.cppm` | `Material::shader` (`"shaders/mesh.spv"`) |
