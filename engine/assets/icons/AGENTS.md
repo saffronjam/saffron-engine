@@ -1,41 +1,33 @@
-# Editor icons
+# Editor icons (legacy)
 
-SVGs are vendored from [Lucide](https://lucide.dev/icons/) and copied next to the
-binary by CMake on every build (`editor/CMakeLists.txt` copies the whole `icons/`
-directory to the runtime dir).
+SVGs vendored from [Lucide](https://lucide.dev/icons/). CMake still copies the whole
+`icons/` directory next to the binary on every build (`engine/CMakeLists.txt`, alongside
+models and fonts), but **nothing currently consumes them**: they were used by the old C++
+ImGui editor, which has been retired. The Tauri/React editor ships its own icons via the
+`lucide-react` package, and the host's in-viewport billboards are native solid-color
+glyphs (no textures). The renderer still exposes `uploadSvgIcon` (`renderer_textures.cpp`)
+if textured icons are wanted again, but there is no caller today.
 
-## Adding a new icon
+Treat this directory as vestigial — leave it unless you are reviving textured icons or
+cleaning up the asset copy.
+
+## Adding a new icon (if reviving)
 
 ```sh
 # From the repo root:
 curl -fsSL https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/<name>.svg \
-     -o editor/assets/icons/<name>.svg
+     -o engine/assets/icons/<name>.svg
 ```
 
-Browse available names at https://lucide.dev/icons/ — the URL slug is the filename
-without `.svg`.
-
-## Loading an icon at runtime
-
-In `editor/source/main.cpp` `onCreate`, follow the existing pattern:
-
-```cpp
-state->myIcon = loadIcon("icons/<name>.svg");
-// loadIcon calls:
-//   se::uploadSvgIcon(app.renderer, se::assetPath(file), 64, glm::vec4(0.85f))
-// size = raster resolution (px); tint = glm::vec4(0.85f) ≈ near-white
-```
-
-Store the result in `State` as a `Thumbnail { Ref<GpuTexture> tex; ImTextureID id; }`.
-Pass `id` wherever an `ImTextureID` is needed (e.g. `ImGui::Image`, `AddImage`).
+Browse names at https://lucide.dev/icons/ — the URL slug is the filename without `.svg`.
 
 ## Current icons
 
-| File | Lucide name | Used for |
+| File | Lucide name | Originally used for |
 |---|---|---|
 | `box.svg` | box | Mesh asset fallback |
 | `image.svg` | image | Texture asset fallback |
 | `file.svg` | file | Unknown asset fallback |
-| `lightbulb.svg` | lightbulb | PointLight editor billboard |
-| `flashlight.svg` | flashlight | SpotLight editor billboard |
-| `camera.svg` | camera | Camera editor billboard |
+| `lightbulb.svg` | lightbulb | PointLight billboard |
+| `flashlight.svg` | flashlight | SpotLight billboard |
+| `camera.svg` | camera | Camera billboard |
