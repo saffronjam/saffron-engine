@@ -310,7 +310,12 @@ export namespace se
         auto state = std::make_shared<HostState>();
 
         se::AppConfig config;
-        config.window = se::WindowConfig{ .title = std::move(title), .width = width, .height = height };
+        config.window = se::WindowConfig{
+            .title = std::move(title),
+            .width = width,
+            .height = height,
+            .hidden = std::getenv("SAFFRON_EDITOR_NATIVE_VIEWPORT") != nullptr,
+        };
         // The editor is the headless native-viewport host: it never runs ImGui — the full
         // editor UI is the React/Tauri frontend driving this host over the control plane.
         config.useImGui = false;

@@ -15,6 +15,7 @@ export namespace se
         std::string title = "Saffron";
         u32 width = 1600;
         u32 height = 900;
+        bool hidden = false;
     };
 
     // Plain data: a native handle, current size, and typed event signals.
@@ -44,6 +45,10 @@ export namespace se
         }
 
         SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+        if (config.hidden)
+        {
+            flags |= SDL_WINDOW_HIDDEN;
+        }
         SDL_Window* handle = SDL_CreateWindow(
             config.title.c_str(),
             static_cast<int>(config.width),

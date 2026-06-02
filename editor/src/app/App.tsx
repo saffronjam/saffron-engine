@@ -5,8 +5,9 @@
 /// left, Assets bottom, Viewport center) lives in `Layout`; the embedded viewport's
 /// LoadingOverlay is a sibling inside ViewportPanel, never a panel the native window
 /// paints over.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { client } from "../control/client";
 import { startReconcile, useEditorStore } from "../state/store";
 import { MenuBar } from "./MenuBar";
@@ -17,12 +18,45 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 type EnginePhaseEvent = "starting" | "attaching";
 
+let didRevealWindow = false;
+let revealWindowPromise: Promise<void> | null = null;
+
+function revealEditorWindow(): Promise<void> {
+  if (revealWindowPromise === null) {
+    revealWindowPromise = getCurrentWindow()
+      .show()
+      .then(() => {
+        didRevealWindow = true;
+      });
+  }
+  return revealWindowPromise;
+}
+
 export function App() {
   const setPhase = useEditorStore((s) => s.setPhase);
   const phase = useEditorStore((s) => s.engineStatus.phase);
+  const [revealed, setRevealed] = useState(didRevealWindow);
 
   // W/E/R → translate/rotate/scale, gated off while a text field is focused.
   useGizmoShortcuts();
+
+  useEffect(() => {
+    if (didRevealWindow) {
+      return;
+    }
+    let cancelled = false;
+    const raf = requestAnimationFrame(() => {
+      void revealEditorWindow().finally(() => {
+        if (!cancelled) {
+          requestAnimationFrame(() => setRevealed(true));
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, []);
 
   // Subscribe to the Rust-emitted lifecycle events. StrictMode double-mounts in
   // dev, so the cleanup must unlisten idempotently.
@@ -63,7 +97,10 @@ export function App() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-full flex-col overflow-hidden">
+      <div
+        className="flex h-full flex-col overflow-hidden transition-opacity duration-300 ease-out"
+        style={{ opacity: revealed ? 1 : 0 }}
+      >
         <MenuBar />
         <Topbar />
         <Layout />

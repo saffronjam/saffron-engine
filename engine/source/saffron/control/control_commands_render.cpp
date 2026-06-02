@@ -385,6 +385,7 @@ namespace se
                 XReparentWindow(display, child, static_cast<::Window>(*parent), x, y);
                 XMoveResizeWindow(display, child, x, y,
                     static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+                SDL_ShowWindow(ctx.window.handle);
                 XMapRaised(display, child);
                 XFlush(display);
 

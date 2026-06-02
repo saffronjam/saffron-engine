@@ -247,6 +247,16 @@ fn auto_start(handle: &AppHandle) -> Result<(), String> {
 }
 
 pub fn run() {
+    // The native viewport reparents the engine's X11 window into this GTK host, so the
+    // host itself must be X11 — on a Wayland session GTK otherwise picks the Wayland
+    // backend, which has no XID to reparent into and aborts with a protocol error. Force
+    // XWayland (matches the engine's SDL_VIDEODRIVER=x11); GTK reads GDK_BACKEND once at
+    // init, and run() is still single-threaded here, so setting it first is sound.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(EditorState::default())
