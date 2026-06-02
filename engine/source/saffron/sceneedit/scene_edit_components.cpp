@@ -6,7 +6,7 @@ module;
 
 #include <string>
 
-module Saffron.Editor;
+module Saffron.SceneEdit;
 
 import Saffron.Core;
 import Saffron.Scene;

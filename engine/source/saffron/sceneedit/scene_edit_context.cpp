@@ -7,7 +7,7 @@ module;
 
 #include <string>
 
-module Saffron.Editor;
+module Saffron.SceneEdit;
 
 import Saffron.Core;
 import Saffron.Signal;
@@ -15,7 +15,7 @@ import Saffron.Scene;
 
 namespace se
 {
-    void setSelection(EditorContext& ctx, Entity entity)
+    void setSelection(SceneEditContext& ctx, Entity entity)
     {
         ctx.selected = entity;
         ctx.selectionVersion += 1;
@@ -50,9 +50,9 @@ namespace se
         return name == "local" ? GizmoSpace::Local : GizmoSpace::World;
     }
 
-    auto newEditorContext() -> EditorContext*
+    auto newSceneEditContext() -> SceneEditContext*
     {
-        EditorContext* ctx = new EditorContext();
+        SceneEditContext* ctx = new SceneEditContext();
         // Components are registered by the client via registerBuiltinComponents(reg,
         // thumbnailFor) once the thumbnail provider exists. Seeding entities below uses
         // entt directly, so it does not need the ComponentRegistry populated yet.
@@ -72,7 +72,7 @@ namespace se
         return ctx;
     }
 
-    void destroyEditorContext(EditorContext* ctx)
+    void destroySceneEditContext(SceneEditContext* ctx)
     {
         delete ctx;
     }

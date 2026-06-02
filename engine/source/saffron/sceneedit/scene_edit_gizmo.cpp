@@ -11,14 +11,14 @@ module;
 #include <cmath>
 #include <utility>
 
-module Saffron.Editor;
+module Saffron.SceneEdit;
 
 import Saffron.Core;
 import Saffron.Scene;
 
 namespace se
 {
-    void syncNativeGizmo(EditorContext& ctx)
+    void syncNativeGizmo(SceneEditContext& ctx)
     {
         ctx.nativeGizmo.mode = ctx.gizmoOp == GizmoOp::Rotate ? NativeGizmoMode::Rotate
                              : ctx.gizmoOp == GizmoOp::Scale  ? NativeGizmoMode::Scale
@@ -106,7 +106,7 @@ namespace se
         return glm::vec3{ 0.0f };
     }
 
-    auto hitNativeGizmo(EditorContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
+    auto hitNativeGizmo(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
         -> NativeGizmoHandle
     {
         if (editor.selected.handle == entt::null || !hasComponent<TransformComponent>(editor.scene, editor.selected))
@@ -164,7 +164,7 @@ namespace se
         return NativeGizmoHandle::None;
     }
 
-    void applyNativeGizmoDrag(EditorContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
+    void applyNativeGizmoDrag(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
     {
         NativeGizmoState& gizmo = editor.nativeGizmo;
         if (!gizmo.dragging || gizmo.target.handle == entt::null ||

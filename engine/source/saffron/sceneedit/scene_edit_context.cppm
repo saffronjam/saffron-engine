@@ -11,7 +11,7 @@ module;
 #include <functional>
 #include <string>
 
-export module Saffron.Editor:Context;
+export module Saffron.SceneEdit:Context;
 
 import Saffron.Core;
 import Saffron.Signal;
@@ -22,7 +22,7 @@ export namespace se
     // The viewport's own fly-camera (the scene-view eye, distinct from any ECS
     // CameraComponent / game camera). Hold RMB over the viewport to look + WASD to move,
     // Shift up / Ctrl down. yaw/pitch in degrees; at yaw 0 the camera looks down -Z.
-    struct EditorCamera
+    struct SceneEditCamera
     {
         glm::vec3 position{ 3.0f, 2.5f, 4.0f };
         f32 yaw = -37.0f;
@@ -47,7 +47,7 @@ export namespace se
 
     // The engine-rendered (overlay) gizmo. mode/space are driven FROM the backend-neutral
     // GizmoOp/GizmoSpace (the single source) — mapped each frame — so the ImGuizmo path
-    // (editor-old) and the native overlay path stay in sync. The remaining fields are the
+    // (the retired C++ ImGui editor) and the native overlay path stay in sync. The remaining fields are the
     // overlay's own hover/drag interaction state.
     enum class NativeGizmoMode { Translate, Rotate, Scale };
     enum class NativeGizmoSpace { World, Local };
@@ -69,14 +69,14 @@ export namespace se
 
     // The editor's mutable state: the scene being edited, the component registry
     // that drives every panel, and the current selection (broadcast as a signal).
-    struct EditorContext
+    struct SceneEditContext
     {
         Scene scene;
         ComponentRegistry registry;
         Entity selected{ entt::null };
         SubscriberList<Entity> onSelectionChanged;
         std::string scenePath;
-        EditorCamera camera;
+        SceneEditCamera camera;
         u64 sceneVersion = 0;       // bumped by add/copy/destroy-entity + load (control-plane diff poll)
         u64 selectionVersion = 0;   // bumped on every selection change
 
@@ -92,28 +92,28 @@ export namespace se
         AssetType type = AssetType::Mesh;
     };
 
-    void setSelection(EditorContext& ctx, Entity entity);
+    void setSelection(SceneEditContext& ctx, Entity entity);
 
     // Concrete built-in component registration — the json serde lambdas live here. The
     // present-only native-viewport host renders no inspector, so the per-component
     // drawInspector is a no-op; the registry exists for its serialize/deserialize.
     void registerBuiltinComponents(ComponentRegistry& reg);
 
-    // Heap-owned so EditorContext's heavy destructor (entt/json) is instantiated
+    // Heap-owned so SceneEditContext's heavy destructor (entt/json) is instantiated
     // here, not in the client TU. The editor holds only the pointer.
-    auto newEditorContext() -> EditorContext*;
-    void destroyEditorContext(EditorContext* ctx);
+    auto newSceneEditContext() -> SceneEditContext*;
+    void destroySceneEditContext(SceneEditContext* ctx);
 
     // The editor camera's forward (world space) from its yaw/pitch.
-    auto editorCameraForward(const EditorCamera& camera) -> glm::vec3;
+    auto sceneEditCameraForward(const SceneEditCamera& camera) -> glm::vec3;
 
     // The editor camera as a Scene CameraView (view + projection params), so renderScene
     // and the gizmo draw from the same eye.
-    auto editorCameraView(const EditorCamera& camera) -> CameraView;
+    auto sceneEditCameraView(const SceneEditCamera& camera) -> CameraView;
 
     // Fly the editor camera while RMB is held over the viewport: mouse look + WASD move,
     // Shift up / Ctrl down (world Y). Reads ImGui input, so call from onUi each frame.
-    void updateEditorCamera(EditorCamera& camera, bool viewportHovered, f32 dt);
+    void updateSceneEditCamera(SceneEditCamera& camera, bool viewportHovered, f32 dt);
 
     // Native (overlay) gizmo math — pure glm + Scene types, no Rendering. Shared by the
     // SDL event sink (editor app) and the gizmo-pointer control command so both drive one
@@ -142,11 +142,11 @@ export namespace se
     // The world-space axis for a single-axis handle (zero for plane/screen/uniform handles).
     auto handleAxis(NativeGizmoHandle handle, const std::array<glm::vec3, 3>& axes) -> glm::vec3;
     // Hit-tests the selected entity's gizmo at `mouse` (viewport pixels) for the active mode/space.
-    auto hitNativeGizmo(EditorContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
+    auto hitNativeGizmo(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
         -> NativeGizmoHandle;
     // Applies an in-progress gizmo drag, writing the dragged entity's TransformComponent.
-    void applyNativeGizmoDrag(EditorContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse);
+    void applyNativeGizmoDrag(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse);
 
     // Mirrors the backend-neutral GizmoOp/GizmoSpace (the single source) onto nativeGizmo.mode/.space.
-    void syncNativeGizmo(EditorContext& ctx);
+    void syncNativeGizmo(SceneEditContext& ctx);
 }

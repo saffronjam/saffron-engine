@@ -6,14 +6,14 @@ module;
 
 #include <cmath>
 
-module Saffron.Editor;
+module Saffron.SceneEdit;
 
 import Saffron.Core;
 import Saffron.Scene;
 
 namespace se
 {
-    auto editorCameraForward(const EditorCamera& camera) -> glm::vec3
+    auto sceneEditCameraForward(const SceneEditCamera& camera) -> glm::vec3
     {
         const f32 yaw = glm::radians(camera.yaw);
         const f32 pitch = glm::radians(camera.pitch);
@@ -22,10 +22,10 @@ namespace se
                                         -std::cos(pitch) * std::cos(yaw)));
     }
 
-    auto editorCameraView(const EditorCamera& camera) -> CameraView
+    auto sceneEditCameraView(const SceneEditCamera& camera) -> CameraView
     {
         CameraView result;
-        const glm::vec3 forward = editorCameraForward(camera);
+        const glm::vec3 forward = sceneEditCameraForward(camera);
         result.view = glm::lookAt(camera.position, camera.position + forward, glm::vec3(0.0f, 1.0f, 0.0f));
         result.fov = camera.fov;
         result.nearPlane = camera.nearPlane;
@@ -34,8 +34,15 @@ namespace se
         return result;
     }
 
-    void updateEditorCamera(EditorCamera& camera, bool viewportHovered, f32 dt)
+    void updateSceneEditCamera(SceneEditCamera& camera, bool viewportHovered, f32 dt)
     {
+        // The present-only host runs no ImGui (no context); its camera is command-driven,
+        // so there is no keyboard/mouse input to read here — bail before touching ImGui.
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            camera.controlling = false;
+            return;
+        }
         ImGuiIO& io = ImGui::GetIO();
         const bool rmb = ImGui::IsMouseDown(ImGuiMouseButton_Right);
         if (!rmb || !(viewportHovered || camera.controlling))
@@ -49,7 +56,7 @@ namespace se
         camera.pitch -= io.MouseDelta.y * camera.lookSpeed;
         camera.pitch = glm::clamp(camera.pitch, -89.0f, 89.0f);
 
-        const glm::vec3 forward = editorCameraForward(camera);
+        const glm::vec3 forward = sceneEditCameraForward(camera);
         const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
         const glm::vec3 worldUp{ 0.0f, 1.0f, 0.0f };
         const f32 speed = camera.moveSpeed * dt;
