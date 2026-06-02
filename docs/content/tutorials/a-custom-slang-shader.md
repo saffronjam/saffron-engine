@@ -5,10 +5,10 @@ weight = 2
 
 # Custom Slang shader
 
-Write a new Slang shader, let CMake compile it to SPIR-V, and draw scene meshes with it
-through the renderer's PSO cache. The shader matches the engine's mesh I/O contract so it
-slots into the existing scene pass; change the fragment math and you change how every mesh
-using that material looks.
+This tutorial writes a new Slang shader, lets CMake compile it to SPIR-V, and draws scene
+meshes with it through the renderer's PSO cache. The shader matches the engine's mesh I/O
+contract, so it slots into the existing scene pass. Changing the fragment math changes how
+every mesh using that material looks.
 
 ## How shaders get compiled
 
@@ -28,13 +28,13 @@ slangc <shader>.slang -profile glsl_450 -target spirv -emit-spirv-directly \
         -fvk-use-entrypoint-name -matrix-layout-column-major -o <shader>.spv
 ```
 
-So adding a `.slang` to that folder compiles it with no CMake edit: the glob uses
+Adding a `.slang` to that folder compiles it with no CMake edit. The glob uses
 `CONFIGURE_DEPENDS`, so re-running the build picks up the new file. Both entry points live
 in one `.slang` module, named by their `[shader(...)]` tag.
 
 ## Write the shader
 
-A shader the scene pass can draw with honors the contract `mesh.slang` defines: the vertex
+A shader the scene pass can draw with honors the contract `mesh.slang` defines. The vertex
 stage consumes the interleaved vertex buffer (`position`/`normal`/`uv0`), reads per-instance
 data from the storage buffer on set 2 indexed by `SV_VulkanInstanceID`, and takes the camera
 `viewProj` as a push constant. The fragment stage returns `SV_Target`.
@@ -98,8 +98,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target
 
 The `Instance` struct must keep the same field order and layout as `mesh.slang`'s: the
 renderer fills that storage buffer from its `DrawItem` instances regardless of which shader
-draws them. You can ignore fields you don't use (here: texture, pbr, emissive), but you
-can't reorder them.
+draws them. Unused fields can be ignored (here: texture, pbr, emissive), but the order is
+fixed.
 
 > [!NOTE]
 > The entry points must be named `vertexMain` and `fragmentMain` — that's what
@@ -116,14 +116,14 @@ Rebuild so the new `.slang` compiles, then confirm the SPIR-V landed:
 ls build/debug/bin/shaders/flat.spv
 ```
 
-If `slangc` rejects the file it fails the build with the line and message. The `.spv` under
+If `slangc` rejects the file, the build fails with the line and message. The `.spv` under
 `bin/shaders/` is what the renderer loads at run time via `assetPath("shaders/flat.spv")`.
 
 ## Draw with it
 
-The renderer picks a pipeline per material: a `Material` carries a `shader` path (default
+The renderer picks a pipeline per material. A `Material` carries a `shader` path (default
 `"shaders/mesh.spv"`), and `requestMeshPipeline` builds and caches one PSO per distinct
-`(shader, unlit)` key. Point a material at your new shader:
+`(shader, unlit)` key. Point a material at the new shader:
 
 ```cpp
 Material flat;

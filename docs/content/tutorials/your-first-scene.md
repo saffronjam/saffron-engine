@@ -5,10 +5,10 @@ weight = 1
 
 # Your first scene
 
-Start from an empty editor, add a cube, light it, give it a camera, and save the whole
-thing to a project file you can reload. Every step is a real `se` command with a menu
-equivalent, so you can follow either path. You end with a `project.json` that draws a lit
-cube through a scene camera.
+Start from an empty editor, add a cube, light it, give it a camera, and save the result to a
+project file you can reload. Every step is a real `se` command with a menu equivalent, so you
+can follow either path. You end with a `project.json` that draws a lit cube through a scene
+camera.
 
 ## Start the editor and the control CLI
 
@@ -22,8 +22,8 @@ environment](../../explanations/architecture-and-conventions/) and `AGENTS.md`).
 ```
 
 `ping` confirms the CLI is connected to the live editor over its unix socket. Every command
-below drives that same editor. If you'd rather click, the window has a **Hierarchy** panel
-(top-left), an **Inspector** (below it), an **Assets** browser (bottom), and the 3D
+below drives that same editor. To work in the window instead, use the **Hierarchy** panel
+(top-left), the **Inspector** (below it), the **Assets** browser (bottom), and the 3D
 **Viewport** in the center.
 
 > [!NOTE]
@@ -41,7 +41,7 @@ host executable at build time. Import it:
 
 This bakes the model to a `.smesh`, registers it in the project asset catalog, and spawns an
 entity carrying it, already selected. The reply gives you the entity id and the mesh asset
-id. List what you have:
+id. List what you have so far:
 
 ```sh
 ./cmd/se list-entities      # one entity named "Mesh"
@@ -51,8 +51,8 @@ id. List what you have:
 In the editor this is **File ▸ Import...** (or the **Import...** button in the Assets
 panel), then dragging the catalog tile onto an entity's Mesh field.
 
-Position it so the camera you add next has something to frame. `set-transform` merges only
-the fields you pass, leaving scale and rotation alone:
+Position the cube so the camera you add next has something to frame. `set-transform` merges
+only the fields you pass, leaving scale and rotation alone:
 
 ```sh
 ./cmd/se set-transform Mesh --translation '{"x":0,"y":0,"z":0}'
@@ -65,8 +65,8 @@ the fields you pass, leaving scale and rotation alone:
 
 ## Light it
 
-A cube with no light is flat. Add a directional light; the engine shades through the first
-one in the scene:
+An unlit cube renders flat. Add a directional light; the engine shades through the first one
+in the scene:
 
 ```sh
 ./cmd/se create-entity Sun
@@ -88,7 +88,7 @@ Intensity / Ambient in the Inspector. For a local look, **Create ▸ Point Light
 
 ## Give it a camera
 
-The viewport draws through a fly-camera by default, but a scene needs its own camera so the
+The viewport draws through a fly-camera by default. A scene needs its own camera so the
 render is reproducible. Add one back from the cube, looking down -Z:
 
 ```sh
@@ -116,8 +116,9 @@ Ask the renderer what it drew, then screenshot the viewport:
 ./cmd/se screenshot viewport /tmp/first-scene.png
 ```
 
-One draw call, one batch, one instance is your cube. If `render-stats` shows `instances=0`,
-the camera lost its primary flag or the entity lost its Mesh; re-run `inspect` on each.
+One draw call, one batch, and one instance is your cube. If `render-stats` shows
+`instances=0`, the camera lost its primary flag or the entity lost its Mesh; re-run `inspect`
+on each.
 
 ## Save the project
 

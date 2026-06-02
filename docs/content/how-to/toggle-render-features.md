@@ -6,11 +6,11 @@ math = false
 
 # Toggle render features
 
-Flip renderer features on and off at runtime with `se set-*`.
+Switch renderer features on and off at runtime with the `se set-*` commands.
 
 ## Steps
 
-Each toggle takes `0|1` (or `off`/`on`); a few take a mode string. With the editor running:
+Each toggle takes `0|1` (or `off`/`on`); a few take a mode string instead. With the editor running:
 
 ```sh
 se set-aa msaa4              # off | fxaa | taa | msaa2 | msaa4 | msaa8
@@ -33,7 +33,7 @@ se set-gi ddgi              # off | ddgi (probe global illumination)
 ## Verify
 
 - Read the live flags: `se render-stats` reports `aa`, `clustered`, `depthPrepass`, `shadows`, `ibl`, `ssao`, `exposureEv`, and more.
-- Capture before/after to eyeball it:
+- Capture before and after for a visual diff:
   ```sh
   se set-aa off   && se screenshot viewport /tmp/aa-off.png
   se set-aa msaa4 && se screenshot viewport /tmp/aa-msaa4.png

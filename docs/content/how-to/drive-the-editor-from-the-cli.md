@@ -10,11 +10,11 @@ Script and inspect a running editor with the `se` CLI over its unix socket.
 
 ## Steps
 
-1. Start the editor (the control socket comes up with it):
+1. Start the editor; the control socket comes up with it:
    ```sh
    se start          # or: se start --build, or --attach to keep it foreground
    ```
-   `se start` launches `SaffronEngine` in the toolbox; everything else talks JSON over the socket.
+   `se start` launches `SaffronEngine` in the toolbox. Every other command talks JSON over the socket.
 2. Check liveness and list commands:
    ```sh
    se ping

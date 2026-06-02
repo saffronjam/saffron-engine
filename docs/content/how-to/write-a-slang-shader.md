@@ -10,14 +10,14 @@ Add a `.slang` file, have CMake compile it to SPIR-V, and load it at runtime.
 
 ## Steps
 
-1. Drop a `.slang` into `engine/assets/shaders/`. Tag entry points with `[shader("vertex")]` / `[shader("fragment")]` / `[shader("compute")]` — all tagged entry points land in one SPIR-V module. Use `mesh.slang` as a reference for binding layout (set 0 bindless albedo, set 1 lighting, push-constant camera).
+1. Drop a `.slang` into `engine/assets/shaders/`. Tag entry points with `[shader("vertex")]`, `[shader("fragment")]`, or `[shader("compute")]`; all tagged entry points land in one SPIR-V module. Use `mesh.slang` as a reference for binding layout: set 0 bindless albedo, set 1 lighting, push-constant camera.
 2. Re-run CMake configure so the new file is globbed:
    ```sh
    toolbox run -c saffron-build bash -lc '
      cd /var/home/saffronjam/repos/SaffronEngine && cmake --preset debug'
    ```
    `saffron_compile_shaders` GLOBs `*.slang` and emits `<name>.spv` under `bin/shaders/`, compiling each with `slangc ... -profile glsl_450 -target spirv -emit-spirv-directly -fvk-use-entrypoint-name -matrix-layout-column-major`.
-3. Build — the shaders are a dependency of `SaffronEngine`, so they compile alongside it:
+3. Build. The shaders are a dependency of `SaffronEngine`, so they compile alongside it:
    ```sh
    toolbox run -c saffron-build bash -lc '
      cd /var/home/saffronjam/repos/SaffronEngine && cmake --build build/debug -j1'
@@ -28,7 +28,7 @@ Add a `.slang` file, have CMake compile it to SPIR-V, and load it at runtime.
 
 - After configure, the build log shows `slangc <name>.slang -> <name>.spv`.
 - The compiled module lands at `build/debug/bin/shaders/<name>.spv`.
-- A pipeline using it builds without a `loadShaderModule` error, and `se render-stats` reports the `pipelines` count growing when a new PSO is cached.
+- A pipeline using it builds without a `loadShaderModule` error, and `se render-stats` reports the `pipelines` count growing as a new PSO is cached.
 
 ## In the code
 

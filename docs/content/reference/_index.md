@@ -5,7 +5,7 @@ weight = 30
 
 # Reference
 
-Type signatures, data shapes, enum values, and the full control command list. One page per module boundary.
+Reference pages catalogue the engine's exact surface: type signatures, data shapes, enum values, and the full control command list. Each page covers one module boundary and is meant for lookup, not reading end to end.
 
 ## Pages
 

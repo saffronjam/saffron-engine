@@ -6,7 +6,7 @@ math = false
 
 # Components
 
-Every built-in component exported by `Saffron.Scene`, with fields, types, and defaults. The [component registry](../../explanations/scene-and-ecs/component-registry/) drives serialization and the inspector.
+Every built-in component exported by `Saffron.Scene`, with its fields, types, and defaults. The [component registry](../../explanations/scene-and-ecs/component-registry/) drives serialization and the inspector.
 
 ## `NameComponent`
 | Field | Type | Default |
@@ -18,7 +18,7 @@ Every built-in component exported by `Saffron.Scene`, with fields, types, and de
 |---|---|---|
 | `id` | `Uuid` | `{0}` |
 
-Stable identity; not removable, not a registered (serialized as such) row — created by `createEntity`.
+Stable identity, created by `createEntity`. Not removable and not a registered row.
 
 ## `TransformComponent`
 | Field | Type | Default |

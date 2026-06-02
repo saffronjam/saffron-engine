@@ -6,7 +6,9 @@ math = false
 
 # Descriptor sets
 
-Descriptor sets bound by the mesh übershader (`mesh.slang`). Sets 0–4 are core (bindless / lighting / instances / IBL / screen-space); 5–7 are the GI/RT extensions. The push constant is the camera `viewProj` (`float4x4`). Each binding is `[[vk::binding(b, set)]]`.
+The descriptor sets bound by the mesh übershader (`mesh.slang`). Sets 0–4 are core: bindless textures, lighting, instances, IBL, and screen-space maps. Sets 5–7 are the GI/RT extensions. The push constant is the camera `viewProj` (`float4x4`). Each binding declares `[[vk::binding(b, set)]]`.
+
+The tables below list every binding by set, with its Slang type and role.
 
 ## Set 0 — bindless albedo
 | Binding | Slang type | Note |

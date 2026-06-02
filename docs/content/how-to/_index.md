@@ -5,7 +5,7 @@ weight = 20
 
 # How-to
 
-Task-focused recipes: you know what you want, here are the steps. For the "why", follow the links into [Explanations](../explanations/).
+How-to guides are task-focused recipes for a known goal: each page states the steps and their order. For the underlying "why", follow the links into [Explanations](../explanations/).
 
 ## Pages
 

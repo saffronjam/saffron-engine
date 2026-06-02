@@ -6,7 +6,7 @@ math = false
 
 # Control commands
 
-Every command registered in `Saffron.Control`, driven by the `se` CLI over the unix socket. Grouped by registering file. Params are positional unless named; `?` marks optional. Each returns a JSON result.
+Every command registered in `Saffron.Control` and driven by the `se` CLI over the unix socket. Commands are grouped by registering file. Params are positional unless named, and `?` marks an optional param. Each command returns a JSON result.
 
 ## Scene commands
 *(`control_commands_scene.cpp`)*

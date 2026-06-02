@@ -6,7 +6,7 @@ math = false
 
 # Signals
 
-The signal/slot primitive from `Saffron.Signal` and the typed signals the `Window` exposes.
+A signal is a list of subscribers that a publisher invokes. This page covers the signal/slot primitive in `Saffron.Signal` and the typed signals that `Window` exposes.
 
 ## `SubscriberList<Args...>`
 The engine-wide event list. A handler returns `true` to stop propagation to later subscribers.

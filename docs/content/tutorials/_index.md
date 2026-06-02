@@ -5,8 +5,8 @@ weight = 40
 
 # Tutorials
 
-Guided, end-to-end walkthroughs. Each tutorial picks one goal and takes you all the way
-there. Good for your first hour with the engine.
+A tutorial is a guided, end-to-end walkthrough that takes a single goal all the way to a
+working result. Each one is self-contained and suited to your first hour with the engine.
 
 ## Pages
 

@@ -6,10 +6,10 @@ math = false
 
 # Render graph API
 
-The `Saffron.Rendering:RenderGraph` partition: usage enum, pass/attachment shapes, and the import/add/execute functions.
+The types and functions of the `Saffron.Rendering:RenderGraph` partition: the usage enum, the pass and attachment shapes, and the import, add, and execute functions.
 
 ## `enum class RgUsage`
-What a pass does with a non-attachment resource — the single source of truth for barrier derivation.
+How a pass uses a non-attachment resource. This is the single source of truth for barrier derivation.
 
 | Value | Stage | Access | Layout | Write |
 |---|---|---|---|---|

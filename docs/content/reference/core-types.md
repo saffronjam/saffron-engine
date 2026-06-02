@@ -6,7 +6,7 @@ math = false
 
 # Core types
 
-Aliases, error type, and value types exported by `Saffron.Core`.
+`Saffron.Core` exports the aliases, error type, value types, functions, and constants listed below.
 
 ## Integer / float aliases
 | Alias | Underlying |

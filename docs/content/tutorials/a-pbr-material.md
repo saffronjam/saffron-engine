@@ -6,11 +6,11 @@ math = true
 
 # PBR material
 
-Turn a plain mesh into a believable metal: set its base color, push metallic to 1 and
-roughness down, add a point light so the specular highlight has something to reflect, and
-tune the tonemap exposure so the bright result doesn't clip. Every value feeds the
-Cook-Torrance BRDF the engine shades with. Start from
-[your first scene](../your-first-scene/) or any scene with one mesh entity.
+Turn a plain mesh into a believable metal. You set its base color, push metallic to 1 and
+roughness down, add a point light for the specular highlight to reflect, and tune the
+tonemap exposure so the bright result does not clip. Every value feeds the Cook-Torrance
+BRDF the engine shades with. Start from [your first scene](../your-first-scene/) or any
+scene with one mesh entity.
 
 ## Set base color and metallic-roughness
 
@@ -24,7 +24,7 @@ and merges only the fields you pass:
 
 That makes the cube gold: warm base color, fully metallic, fairly smooth. The metallic flag
 routes the base color into the Fresnel reflectance $F_0$ instead of the diffuse albedo, so a
-metal reflects its own color and has no Lambertian term:
+metal reflects its own color and carries no Lambertian term:
 
 $$
 F_0 = \operatorname{lerp}(0.04,\ \text{baseColor},\ \text{metallic})
@@ -45,9 +45,9 @@ Roughness controls how tight the highlight is; lower is sharper. In the editor t
 
 ## Add a point light to reflect
 
-A metal is only as interesting as what it reflects. The directional sun gives one broad
-highlight; a nearby point light gives a tight one that moves as you orbit. Drop one above
-and to the side:
+A metal shows only what it reflects. The directional sun gives one broad highlight; a
+nearby point light gives a tight one that moves as you orbit. Place one above and to the
+side:
 
 ```sh
 ./cmd/se create-entity Key Light
@@ -69,8 +69,8 @@ Confirm the renderer is feeding lights:
 
 ## Tune exposure so the highlight doesn't clip
 
-Lighting is computed in linear HDR and then tonemapped to the display. A bright metal under
-an intensity-20 light can blow out to white. The tonemap takes an exposure in stops (EV),
+Lighting is computed in linear HDR, then tonemapped to the display. A bright metal under an
+intensity-20 light can blow out to white. The tonemap takes an exposure in stops (EV),
 applied as $2^{EV}$ before the curve, so negative EV darkens:
 
 ```sh
@@ -83,14 +83,14 @@ Pick the value where the highlight reads as a bright spot rather than a flat whi
 `render-stats` reports the current `exposureEv`.
 
 > [!NOTE]
-> Exposure is a global render setting, not per-material, so there's no Inspector field for
+> Exposure is a global render setting, not per-material, so there is no Inspector field for
 > it — drive it from the CLI. See
 > [HDR and exposure](../../explanations/lighting-and-brdf/hdr-and-exposure/).
 
 ## Make it glow (optional)
 
-`emissive` adds light the surface emits on its own, independent of any scene light. Give the
-mesh a faint emissive tint:
+`emissive` adds light the surface emits on its own, independent of any scene light. Give
+the mesh a faint emissive tint:
 
 ```sh
 ./cmd/se set-material Mesh --emissive '{"x":0.2,"y":0.1,"z":0}' --emissiveStrength 2

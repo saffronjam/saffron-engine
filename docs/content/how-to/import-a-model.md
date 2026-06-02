@@ -6,11 +6,11 @@ math = false
 
 # Import a model
 
-Bring a glTF or OBJ model into the project, three ways.
+Bring a glTF or OBJ model into the project. Three methods are available.
 
 ## Steps
 
-Pick whichever fits:
+Choose the one that fits:
 
 1. **Drag-and-drop** — drop a `.gltf` / `.glb` / `.obj` onto the editor window. Imported into the catalog, no entity spawned.
 2. **File ▸ Import** — the editor menu, same catalog-only import.

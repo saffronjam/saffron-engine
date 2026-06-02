@@ -14,19 +14,19 @@ Create entities, add lights and a camera, and save the project from the CLI.
    ```sh
    se create-entity Floor
    ```
-2. Give it a mesh from the catalog (`se list-assets` for ids/names), then place it:
+2. Give it a mesh from the catalog (`se list-assets` lists ids and names), then place it:
    ```sh
    se assign-asset Floor mesh cube
    se set-transform Floor --scale '{"x":10,"y":0.2,"z":10}'
    ```
-   `set-transform` merges the fields you pass over the current value; rotation is Euler radians, all fields are `{x,y,z}` objects.
+   `set-transform` merges the passed fields over the current value. Rotation is Euler radians; every field is an `{x,y,z}` object.
 3. Add a directional light:
    ```sh
    se create-entity Sun
    se add-component Sun DirectionalLight
    se set-light Sun --direction '{"x":-0.5,"y":-1,"z":-0.3}' --intensity 3
    ```
-   For dynamic lights use `add-component <entity> PointLight` or `SpotLight`.
+   For dynamic lights, use `add-component <entity> PointLight` or `SpotLight`.
 4. Add a camera:
    ```sh
    se create-entity Camera
@@ -41,7 +41,7 @@ Create entities, add lights and a camera, and save the project from the CLI.
    se save-project project.json
    ```
 
-The editor offers the same: the **Create** menu, the in-viewport gizmo (W/E/R cycles translate/rotate/scale), and the Inspector.
+The editor offers the same operations: the **Create** menu, the in-viewport gizmo (W/E/R cycle translate/rotate/scale), and the Inspector.
 
 ## Verify
 

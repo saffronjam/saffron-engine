@@ -6,13 +6,13 @@ math = false
 
 # Build and run
 
-The editor is a Tauri/React app driving the engine over the control socket; the engine itself is the C++ `SaffronEngine` host executable, built from the merged `engine/` project as a headless viewport host. Both build in the `saffron-build` toolbox. (The Silverblue host has no C++ toolchain; the home directory is shared into the container, so the host's `bun` runs *inside* the toolbox by PATH.)
+Build the C++ engine host and the Tauri editor, then run both.
+
+The editor is a Tauri/React app that drives the engine over the control socket. The engine is the C++ `SaffronEngine` host executable, built from the `engine/` project as a headless viewport host. Both build in the `saffron-build` toolbox. The Silverblue host has no C++ toolchain; the home directory is shared into the container, so the host's `bun` runs inside the toolbox by PATH.
 
 ## Build the engine host
 
-Build `SaffronEngine` first — the Tauri app spawns it on launch.
-
-## Steps
+Build `SaffronEngine` first; the Tauri app spawns it on launch.
 
 1. Configure once, or after any CMake change:
    ```sh
@@ -26,7 +26,7 @@ Build `SaffronEngine` first — the Tauri app spawns it on launch.
      cd /var/home/saffronjam/repos/SaffronEngine
      cmake --build build/debug -j1'
    ```
-3. Run the host on its own (it opens its own window — useful for a headless check or driving it from the `se` CLI without the Tauri app):
+3. Run the host on its own. It opens its own window, useful for a headless check or for driving it from the `se` CLI without the Tauri app:
    ```sh
    toolbox run -c saffron-build bash -lc '
      cd /var/home/saffronjam/repos/SaffronEngine
@@ -35,7 +35,7 @@ Build `SaffronEngine` first — the Tauri app spawns it on launch.
 
 ## Run the Tauri editor
 
-The Tauri app builds and runs in the *same* toolbox, with the host `bun` on the PATH (the home dir is shared in). `bun run tauri dev` spawns the `SaffronEngine` host (built above) and reparents its viewport into the webview, so build the host first.
+The Tauri app builds and runs in the same toolbox, with the host `bun` on the PATH (the home directory is shared in). `bun run tauri dev` spawns the `SaffronEngine` host built above and reparents its viewport into the webview, so build the host first.
 
 ```sh
 toolbox run -c saffron-build bash -lc '
@@ -46,7 +46,7 @@ toolbox run -c saffron-build bash -lc '
   bun run tauri dev  # spawns the engine host + opens the editor'
 ```
 
-`bun run check` regenerates `editor/src/protocol/` from the [control schemas](../../explanations/tooling-and-control/shared-types/) and typechecks. The dev launch needs an X11/XWayland display — the reparented child is Xlib-only — so it can't run under the toolbox's headless Wayland compositor; use a real desktop session.
+`bun run check` regenerates `editor/src/protocol/` from the [control schemas](../../explanations/tooling-and-control/shared-types/) and typechecks. The dev launch needs an X11/XWayland display because the reparented child is Xlib-only. It cannot run under the toolbox's headless Wayland compositor; use a real desktop session.
 
 ## Verify
 
@@ -59,7 +59,7 @@ toolbox run -c saffron-build bash -lc '
   `SAFFRON_EXIT_AFTER_FRAMES=N` exits after `N` frames; `SAFFRON_CAPTURE=path` writes the viewport image at exit.
 
 > [!NOTE]
-> The Tauri editor is at parity with the old ImGui editor, not beyond it. Undo/redo, scene-graph parenting, multi-viewport, and native Wayland are non-goals — the old editor lacked them too.
+> The Tauri editor is at parity with the old ImGui editor, not beyond it. Undo/redo, scene-graph parenting, multi-viewport, and native Wayland are non-goals; the old editor lacked them too.
 
 ## In the code
 

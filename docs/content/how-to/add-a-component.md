@@ -6,11 +6,11 @@ math = false
 
 # Add a component
 
-Add a new ECS component type. One `registerComponent` call wires up serialization, the CLI, and the Inspector.
+Add a new ECS component type. A single `registerComponent` call wires up serialization, the CLI, and the Inspector.
 
 ## Steps
 
-1. Declare the value struct in `scene.cppm` (a plain struct, registered with entt like the existing ones).
+1. Declare the value struct in `scene.cppm` — a plain struct, registered with entt like the existing ones.
 2. Register it once in `registerBuiltinComponents` (`editor_components.cpp`) with four things: the stable name, an ImGui draw closure, a `toJson`, and a `fromJson`:
    ```cpp
    registerComponent<HealthComponent>(reg, "Health",
@@ -30,10 +30,10 @@ Add a new ECS component type. One `registerComponent` call wires up serializatio
        },
        true);  // removable
    ```
-   `registerComponent` synthesizes `has` / `addDefault` / `remove` / `copyTo` / `serialize` / `deserialize` from the generic helpers. The last arg is `removable` (`false` for always-present types like Name and Transform).
-3. Rebuild: `cmake --build build/debug -j1`.
+   `registerComponent` synthesizes `has` / `addDefault` / `remove` / `copyTo` / `serialize` / `deserialize` from the generic helpers. The last argument is `removable`, which is `false` for always-present types like Name and Transform.
+3. Rebuild with `cmake --build build/debug -j1`.
 
-The stable name is the JSON key, the Inspector header, and the CLI token. Keep it consistent.
+The stable name is the JSON key, the Inspector header, and the CLI token. Keep it consistent across all three.
 
 ## Verify
 

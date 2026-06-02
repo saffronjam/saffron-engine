@@ -6,7 +6,7 @@ math = false
 
 # Renderer API
 
-Exported entry points of `Saffron.Rendering` (the `:Types` partition). All take a `Renderer&`. Fallible calls return `Result<…>`.
+These are the exported entry points of `Saffron.Rendering` (the `:Types` partition). Each takes a `Renderer&`; fallible calls return `Result<…>`.
 
 ## Lifecycle
 | Symbol | Signature | Effect |
