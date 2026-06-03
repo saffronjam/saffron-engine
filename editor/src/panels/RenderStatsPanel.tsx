@@ -112,6 +112,8 @@ export function RenderStatsPanel() {
   const phase = useEditorStore((s) => s.engineStatus.phase);
   const stats = useEditorStore((s) => s.renderStats);
   const pollRateHz = useEditorStore((s) => s.pollRateHz);
+  const uiFrameRateHz = useEditorStore((s) => s.uiFrameRateHz);
+  const uiFrameMs = useEditorStore((s) => s.uiFrameMs);
   const setRenderStats = useEditorStore((s) => s.setRenderStats);
   const setDragActive = useEditorStore((s) => s.setDragActive);
   const [error, setError] = useState<string | null>(null);
@@ -196,10 +198,18 @@ export function RenderStatsPanel() {
               label="UI poll"
               value={pollRateHz > 0 ? `${pollRateHz.toFixed(1)} Hz` : "—"}
             />
+            <Stat
+              label="UI frame"
+              value={
+                uiFrameRateHz > 0
+                  ? `${uiFrameRateHz.toFixed(0)} fps / ${uiFrameMs.toFixed(1)} ms`
+                  : "—"
+              }
+            />
           </section>
 
           <p className="px-0.5 text-[10px] italic leading-tight text-muted-foreground">
-            UI poll is the webview reconcile rate, not the engine frame rate.
+            UI frame is the webview repaint rate. UI poll is the reconcile rate. Neither is engine fps.
           </p>
 
           <Separator className="my-0.5" />
@@ -268,8 +278,8 @@ export function RenderStatsPanel() {
 
 function PanelHeader() {
   return (
-    <div className="flex h-[30px] flex-none items-center border-b border-border px-2.5">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="flex h-10 flex-none items-center border-b border-border px-3">
+      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Render Stats
       </span>
     </div>

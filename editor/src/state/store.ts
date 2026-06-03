@@ -36,6 +36,9 @@ export interface EditorState {
   /// This is the WEBVIEW poll cadence, NOT the engine frame rate — there is no
   /// frame timing on the control wire (the native viewport paints independently).
   pollRateHz: number;
+  /// Webview repaint cadence measured with requestAnimationFrame.
+  uiFrameRateHz: number;
+  uiFrameMs: number;
   engineStatus: EngineStatus;
   dragActive: boolean;
   gizmo: GizmoState;
@@ -63,6 +66,7 @@ export interface EditorState {
   setRenderStats(renderStats: RenderStats | null): void;
   setProject(project: ProjectInfo | null): void;
   setPollRateHz(pollRateHz: number): void;
+  setUiFrameStats(frameRateHz: number, frameMs: number): void;
   /// Hard scene reset after a project/scene load: clear entities + selection +
   /// the live inspect result + assets + environment, invalidate cached thumbnails,
   /// and let the next reconcile tick re-fetch everything against the new scene
@@ -86,6 +90,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   renderStats: null,
   project: null,
   pollRateHz: 0,
+  uiFrameRateHz: 0,
+  uiFrameMs: 0,
   engineStatus: { running: false, attached: false, phase: "idle" },
   dragActive: false,
   gizmo: { op: "translate", space: "world" },
@@ -128,6 +134,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   setRenderStats: (renderStats) => set({ renderStats }),
   setProject: (project) => set({ project }),
   setPollRateHz: (pollRateHz) => set({ pollRateHz }),
+  setUiFrameStats: (uiFrameRateHz, uiFrameMs) => set({ uiFrameRateHz, uiFrameMs }),
   resetSceneState: () => {
     // The catalog changed under us, so every cached thumbnail blob URL is stale.
     invalidateThumbnails();
@@ -159,29 +166,31 @@ export const useEditorStore = create<EditorState>((set) => ({
   setViewportHidden: (viewportHidden) => set({ viewportHidden }),
 }));
 
-const RECONCILE_INTERVAL_MS = 160; // ~6 Hz
+const FAST_RECONCILE_INTERVAL_MS = 50; // cheap state lane, target ~20 Hz
+const WATCHDOG_INTERVAL_MS = 1000;
 
-/// Start the focus-gated reconcile poll. Each tick, only while phase === 'ready'
-/// and the document has focus:
-///   - getSelection() + renderStats() (cheap, every tick),
-///   - listEntities() only when sceneVersion changed,
-///   - inspect(selectedId) only when selection/sceneVersion changed,
-///   - engineAlive() watchdog → setPhase('error') on a mid-session crash.
-/// Writes to the store are gated off while dragActive (avoid clobbering optimistic
-/// local state during a drag). Returns a stop fn (idempotent).
+/// Start the focus-gated reconcile loops. Cheap interactive state runs frequently;
+/// heavier scene/entity/inspect refreshes only run when versions change and never
+/// block the next cheap tick.
 export function startReconcile(client: Client): () => void {
   let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let inTick = false;
+  let fastTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let fastInFlight = false;
+  let refreshInFlight = false;
+  let watchdogInFlight = false;
+  let pendingRefresh: {
+    selectedId: string | null;
+    sceneChanged: boolean;
+    selectionChanged: boolean;
+    sceneVersion: number;
+    previousSceneVersion: number;
+  } | null = null;
 
-  // Versions last applied to the store, used to decide what to re-fetch.
   let knownSceneVersion = -1;
   let knownSelectionVersion = -1;
   let knownSelectedId: string | null = null;
 
-  // Client-side poll-rate EMA: the wall-clock interval between completed ticks,
-  // smoothed and surfaced as Hz. This is the WEBVIEW reconcile cadence, never the
-  // engine frame rate (the control wire carries no frame timing).
   let lastTickAt = 0;
   let emaIntervalMs = 0;
 
@@ -189,53 +198,126 @@ export function startReconcile(client: Client): () => void {
     if (stopped) {
       return;
     }
-    timer = setTimeout(tick, RECONCILE_INTERVAL_MS);
+    fastTimer = setTimeout(tick, FAST_RECONCILE_INTERVAL_MS);
+  };
+
+  const readyForSync = (): boolean => {
+    const store = useEditorStore.getState();
+    return store.engineStatus.phase === "ready" && document.hasFocus();
+  };
+
+  const refreshHeavyState = (request: {
+    selectedId: string | null;
+    sceneChanged: boolean;
+    selectionChanged: boolean;
+    sceneVersion: number;
+    previousSceneVersion: number;
+  }): void => {
+    const { selectedId, sceneChanged, selectionChanged, sceneVersion, previousSceneVersion } = request;
+    if (refreshInFlight || (!sceneChanged && !selectionChanged)) {
+      if (refreshInFlight) {
+        pendingRefresh = request;
+      }
+      return;
+    }
+    refreshInFlight = true;
+
+    void (async () => {
+      try {
+        if (sceneChanged) {
+          if (sceneVersion < previousSceneVersion) {
+            invalidateThumbnails();
+          }
+          void useEditorStore.getState().refreshAssets();
+          client
+            .getEnvironment()
+            .then((env) => {
+              if (!stopped && !useEditorStore.getState().dragActive) {
+                useEditorStore.getState().setEnvironment(env);
+              }
+            })
+            .catch(() => {});
+
+          const list = await client.listEntities();
+          if (stopped) {
+            return;
+          }
+          if (!useEditorStore.getState().dragActive) {
+            useEditorStore.getState().setEntities(list.entities);
+          }
+        }
+
+        if (selectedId === null) {
+          if (!useEditorStore.getState().dragActive) {
+            useEditorStore.getState().setComponentsBySelected(null);
+          }
+          return;
+        }
+
+        const inspected = await client.inspect(selectedId);
+        if (stopped) {
+          return;
+        }
+        if (!useEditorStore.getState().dragActive) {
+          useEditorStore.getState().setComponentsBySelected(inspected);
+        }
+      } catch {
+      } finally {
+        refreshInFlight = false;
+        if (pendingRefresh !== null && !stopped) {
+          const next = pendingRefresh;
+          pendingRefresh = null;
+          refreshHeavyState(next);
+        }
+      }
+    })();
+  };
+
+  const watchdog = (): void => {
+    if (stopped || watchdogInFlight || !readyForSync()) {
+      return;
+    }
+    watchdogInFlight = true;
+    void client
+      .engineAlive()
+      .then((alive) => {
+        if (!alive && !stopped) {
+          useEditorStore.getState().setPhase("error", "Engine process exited.");
+        }
+      })
+      .catch(() => {
+        if (!stopped) {
+          useEditorStore.getState().setPhase("error", "Engine process exited.");
+        }
+      })
+      .finally(() => {
+        watchdogInFlight = false;
+      });
   };
 
   async function tick(): Promise<void> {
-    if (stopped) {
+    if (stopped || fastInFlight) {
+      if (!stopped) {
+        schedule();
+      }
       return;
     }
-    // Avoid overlapping ticks if a round of calls outruns the interval.
-    if (inTick) {
-      schedule();
-      return;
-    }
-    inTick = true;
+    fastInFlight = true;
     try {
-      const store = useEditorStore.getState();
-      if (store.engineStatus.phase !== "ready" || !document.hasFocus()) {
-        // Reset the EMA baseline so a paused poll (blurred/not-ready) does not
-        // bake a huge interval into the rate when it resumes.
+      if (!readyForSync()) {
         lastTickAt = 0;
         return;
       }
 
-      // Update the client-side poll-rate EMA from the wall-clock tick interval.
       const now = performance.now();
       if (lastTickAt !== 0) {
         const interval = now - lastTickAt;
         emaIntervalMs = emaIntervalMs === 0 ? interval : emaIntervalMs * 0.8 + interval * 0.2;
         if (emaIntervalMs > 0) {
-          store.setPollRateHz(1000 / emaIntervalMs);
+          useEditorStore.getState().setPollRateHz(1000 / emaIntervalMs);
         }
       }
       lastTickAt = now;
-
-      // Crash watchdog: a dead child flips us to the error overlay.
-      let alive = true;
-      try {
-        alive = await client.engineAlive();
-      } catch {
-        alive = false;
-      }
-      if (stopped) {
-        return;
-      }
-      if (!alive) {
-        useEditorStore.getState().setPhase("error", "Engine process exited.");
-        return;
-      }
 
       const [selection, stats, gizmo] = await Promise.all([
         client.getSelection(),
@@ -246,7 +328,6 @@ export function startReconcile(client: Client): () => void {
         return;
       }
 
-      // Writes gated off while dragging (optimistic local state owns the truth).
       const live = useEditorStore.getState();
       if (live.dragActive || live.engineStatus.phase !== "ready") {
         return;
@@ -258,6 +339,7 @@ export function startReconcile(client: Client): () => void {
       live.setGizmo(gizmo);
 
       const nextSelectedId = selection.entity ? selection.entity.id : null;
+      const previousSceneVersion = knownSceneVersion;
       const sceneChanged = selection.sceneVersion !== knownSceneVersion;
       const selectionChanged =
         selection.selectionVersion !== knownSelectionVersion || nextSelectedId !== knownSelectedId;
@@ -268,78 +350,36 @@ export function startReconcile(client: Client): () => void {
         live.setSelectedId(nextSelectedId);
       }
 
-      // Re-fetch the entity list only when the scene structure changed.
-      if (sceneChanged) {
-        // A scene/project load resets sceneVersion (it can drop below the last
-        // seen value); when that happens the catalog changed under us, so revoke
-        // every cached blob URL — stale thumbnails would otherwise point at gone
-        // assets (parity with editor_app.cppm:235-240).
-        if (selection.sceneVersion < knownSceneVersion) {
-          invalidateThumbnails();
-        }
-        // Imports/loads change the catalog; refresh it (and let the lazy cache
-        // re-fetch thumbnails on demand).
-        void useEditorStore.getState().refreshAssets();
-        // A scene/project load also swaps the environment; refresh it so the
-        // Environment panel reflects the loaded sky/ambient (the panel gates its
-        // own writes off mid-drag, so this poll-driven refresh is safe).
-        client
-          .getEnvironment()
-          .then((env) => {
-            if (!stopped && !useEditorStore.getState().dragActive) {
-              useEditorStore.getState().setEnvironment(env);
-            }
-          })
-          .catch(() => {});
-        const list = await client.listEntities();
-        if (stopped) {
-          return;
-        }
-        if (!useEditorStore.getState().dragActive) {
-          useEditorStore.getState().setEntities(list.entities);
-        }
-      }
-
-      // Re-inspect the selected entity only when selection or scene changed.
-      if (selectionChanged || sceneChanged) {
-        if (nextSelectedId === null) {
-          if (!useEditorStore.getState().dragActive) {
-            useEditorStore.getState().setComponentsBySelected(null);
-          }
-        } else {
-          try {
-            const inspected = await client.inspect(nextSelectedId);
-            if (stopped) {
-              return;
-            }
-            if (!useEditorStore.getState().dragActive) {
-              useEditorStore.getState().setComponentsBySelected(inspected);
-            }
-          } catch {
-            // Entity may have vanished between selection and inspect; ignore.
-          }
-        }
-      }
+      refreshHeavyState({
+        selectedId: nextSelectedId,
+        sceneChanged,
+        selectionChanged,
+        sceneVersion: selection.sceneVersion,
+        previousSceneVersion,
+      });
 
       knownSceneVersion = selection.sceneVersion;
       knownSelectionVersion = selection.selectionVersion;
       knownSelectedId = nextSelectedId;
     } catch {
-      // Transient errors (engine briefly busy) are swallowed; the watchdog and
-      // next tick recover. A hard crash is caught by engineAlive() above.
     } finally {
-      inTick = false;
+      fastInFlight = false;
       schedule();
     }
   }
 
   schedule();
+  watchdogTimer = setInterval(watchdog, WATCHDOG_INTERVAL_MS);
 
   return () => {
     stopped = true;
-    if (timer !== null) {
-      clearTimeout(timer);
-      timer = null;
+    if (fastTimer !== null) {
+      clearTimeout(fastTimer);
+      fastTimer = null;
+    }
+    if (watchdogTimer !== null) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
     }
   };
 }

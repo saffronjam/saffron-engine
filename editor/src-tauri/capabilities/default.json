@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default editor capability set",
   "windows": ["main"],
-  "permissions": ["core:default", "core:event:default", "dialog:default"]
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-show",
+    "dialog:default"
+  ]
 }

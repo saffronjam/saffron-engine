@@ -38,6 +38,7 @@ export function App() {
   const setPhase = useEditorStore((s) => s.setPhase);
   const setProject = useEditorStore((s) => s.setProject);
   const phase = useEditorStore((s) => s.engineStatus.phase);
+  const uiFrameRateHz = useEditorStore((s) => s.uiFrameRateHz);
   const [revealed, setRevealed] = useState(didRevealWindow);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
 
@@ -49,16 +50,13 @@ export function App() {
       return;
     }
     let cancelled = false;
-    const raf = requestAnimationFrame(() => {
-      void revealEditorWindow().finally(() => {
-        if (!cancelled) {
-          requestAnimationFrame(() => setRevealed(true));
-        }
-      });
+    void revealEditorWindow().finally(() => {
+      if (!cancelled) {
+        requestAnimationFrame(() => setRevealed(true));
+      }
     });
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
     };
   }, []);
 
@@ -97,6 +95,33 @@ export function App() {
   useEffect(() => {
     const stop = startReconcile(client);
     return stop;
+  }, []);
+
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    let sampleStart = last;
+    let frames = 0;
+    let averageMs = 0;
+
+    const tick = (now: number): void => {
+      const delta = now - last;
+      last = now;
+      frames += 1;
+      averageMs = averageMs === 0 ? delta : averageMs * 0.9 + delta * 0.1;
+
+      if (now - sampleStart >= 500) {
+        const hz = (frames * 1000) / (now - sampleStart);
+        useEditorStore.getState().setUiFrameStats(hz, averageMs);
+        sampleStart = now;
+        frames = 0;
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   useEffect(() => {
@@ -141,7 +166,7 @@ export function App() {
         <ProjectStartupModal open={projectModalOpen} onProjectLoaded={handleProjectLoaded} />
         <footer className="flex h-[22px] flex-none items-center justify-end border-t border-border bg-card px-3">
           <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-            {phase}
+            {phase} · UI {uiFrameRateHz > 0 ? uiFrameRateHz.toFixed(0) : "--"} fps
           </span>
         </footer>
       </div>
