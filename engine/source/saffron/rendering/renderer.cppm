@@ -355,7 +355,7 @@ namespace se
         {
             return Err(baked.error());
         }
-        // Seed every reflection-probe slot (mesh set 8) with the global IBL cubes so the bind is
+        // Seed every reflection-probe slot (IBL set, bindings 3-5) with the global IBL cubes so the bind is
         // valid before any probe is captured; real probes overwrite their slot on capture.
         seedReflectionProbeSet(renderer);
         setDirectionalLight(renderer, glm::vec3(-0.5f, -1.0f, -0.3f), glm::vec3(1.0f), 1.0f, 0.15f);
@@ -478,6 +478,9 @@ namespace se
         renderer.targets.history[0].reset();
         renderer.targets.history[1].reset();
         renderer.ibl.envCube.reset();
+        renderer.ibl.transmittanceLut.reset();
+        renderer.ibl.multiScatterLut.reset();
+        renderer.ibl.skyViewLut.reset();
         renderer.ibl.irradianceCube.reset();
         renderer.ibl.prefilteredCube.reset();
         renderer.ibl.brdfLut.reset();
@@ -505,16 +508,6 @@ namespace se
         {
             renderer.context.device.destroySampler(renderer.reflection.sampler);
             renderer.reflection.sampler = nullptr;
-        }
-        if (renderer.reflection.meshLayout)
-        {
-            renderer.context.device.destroyDescriptorSetLayout(renderer.reflection.meshLayout);
-            renderer.reflection.meshLayout = nullptr;
-        }
-        if (renderer.descriptors.emptyLayout)
-        {
-            renderer.context.device.destroyDescriptorSetLayout(renderer.descriptors.emptyLayout);
-            renderer.descriptors.emptyLayout = nullptr;
         }
         renderer.targets.msaaColor.reset();
         renderer.targets.msaaDepth.reset();

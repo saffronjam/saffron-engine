@@ -610,7 +610,6 @@ export namespace se
         vk::DescriptorSetLayout taaSetLayout;
         std::array<vk::DescriptorSet, 2> taaSets;
         vk::DescriptorSetLayout clusterSetLayout;    // compute set 0
-        vk::DescriptorSetLayout emptyLayout;         // zero-binding set; fills the 6/7 gap when RT is off
     };
 
     // Directional + punctual lights and the clustered-forward froxel apparatus.
@@ -632,7 +631,7 @@ export namespace se
         std::array<void*, MaxFramesInFlight> clusterParamMapped{};
         bool useClustered = true;        // false = fragment loops all lights (reference)
         u32 frameLightCount = 0;         // punctual lights uploaded this frame
-        u32 frameProbeCount = 0;         // reflection probes sampled this frame (set-8 count)
+        u32 frameProbeCount = 0;         // reflection probes sampled this frame (encoded in ambientColor.w)
         bool clusterDispatchPending = false;
         // Directional shadow: the light-space transform written into the light UBO + the
         // shadow pass push constant. shadowPending arms the depth pass for the frame.
@@ -745,6 +744,25 @@ export namespace se
     {
         Procedural,  // ibl_skygen.slang from SkygenParams (default)
         Equirect,    // ibl_equirect.slang projecting a user panorama
+        Atmosphere,  // atmos_* LUT chain into atmos_skygen (Hillaire 2020)
+    };
+
+    // Renderer-side mirror of Scene's AtmosphereSettings (the renderer does not import
+    // Saffron.Scene). A plain aggregate, compared memberwise to gate the re-bake. Carried on
+    // SkygenParams so the existing pending/baked round-trip plumbing moves it through unchanged.
+    struct AtmosphereParams
+    {
+        bool enabled = false;
+        f32 planetRadius = 6360.0f;
+        f32 atmosphereHeight = 100.0f;
+        glm::vec3 rayleighScattering{ 5.802f, 13.558f, 33.1f };
+        f32 rayleighScaleHeight = 8.0f;
+        f32 mieScattering = 3.996f;
+        f32 mieScaleHeight = 1.2f;
+        f32 mieAnisotropy = 0.8f;
+        glm::vec3 ozoneAbsorption{ 0.650f, 1.881f, 0.085f };
+        f32 sunDiskAngularRadius = 0.00465f;
+        f32 sunDiskIntensity = 20.0f;
     };
 
     // Inputs that drive the procedural-sky bake (ibl_skygen). The sun follows the scene's
@@ -755,6 +773,7 @@ export namespace se
         glm::vec3 sunDir{ 0.5f, 1.0f, 0.3f };  // direction TO the sun (= -lightDir); shader normalizes
         f32 sunIntensity = 1.0f;
         glm::vec3 sunColor{ 1.0f };
+        AtmosphereParams atmosphere;  // physically based source params (enabled gates the LUT chain)
     };
 
     // A per-frame snapshot of one ReflectionProbeComponent, passed from renderScene into the
@@ -778,6 +797,9 @@ export namespace se
     struct Ibl
     {
         Image envCube;          // source environment (procedural sky)
+        Image transmittanceLut;  // atmosphere: view-zenith x altitude extinction (rgba16f)
+        Image multiScatterLut;   // atmosphere: isotropic multiple-scattering term (rgba16f)
+        Image skyViewLut;        // atmosphere: azimuth x elevation in-scatter, horizon-densified
         Image irradianceCube;   // diffuse irradiance convolution
         Image prefilteredCube;  // GGX-prefiltered specular (one mip per roughness step)
         Image brdfLut;          // split-sum (scale, bias) table (rgba16f, RG used)
@@ -799,7 +821,7 @@ export namespace se
 
     // One captured + prefiltered local reflection probe. Mirrors the Ibl cube layout but
     // per-probe; baked on demand (the capture pass renders the scene into 6 faces, then the
-    // shared ibl_irradiance/ibl_prefilter convolve into these). Sampled at mesh set 8.
+    // shared ibl_irradiance/ibl_prefilter convolve into these). Sampled via the IBL set (set 3).
     struct ReflectionProbe
     {
         Image envCube;                             // captured local environment (newColorCubeImage)
@@ -818,15 +840,14 @@ export namespace se
         bool dirty = false;      // (re)capture pending this frame
     };
 
-    // The mesh-set-8 probe array + metadata SSBO, plus the per-frame capture state. Every
+    // The probe cube arrays + metadata SSBO (IBL set bindings 3-5), plus the per-frame capture state. Every
     // array slot is seeded with the global IBL cubes so the bind is always valid (unused
     // slots harmlessly resolve to the global env).
     struct ReflectionProbes
     {
         std::array<ReflectionProbe, MaxReflectionProbes> probes;
         u32 count = 0;                       // active probe slots (<= MaxReflectionProbes)
-        vk::DescriptorSetLayout meshLayout;  // set 8: prefiltered array + irradiance array + meta SSBO
-        vk::DescriptorSet meshSet;
+        vk::DescriptorSet meshSet;           // the IBL set (set 3); probes live at bindings 3-5
         vk::Sampler sampler;                 // linear, clamp, mipped — cube sampling in the mesh
         Ref<Buffer> metaBuffer;              // MaxReflectionProbes ProbeMeta records (origin/radius/...)
         bool useProbes = true;

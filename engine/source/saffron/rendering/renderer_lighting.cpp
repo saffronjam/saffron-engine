@@ -114,7 +114,7 @@ namespace se
         // non-IBL fallback uses the RGB ambientColor below.
         ubo.directionAmbient = glm::vec4(glm::normalize(direction), (ambient.r + ambient.g + ambient.b) / 3.0f);
         ubo.colorIntensity = glm::vec4(color, intensity);
-        // ambientColor.w carries the reflection-probe count the mesh fragment iterates (set 8);
+        // ambientColor.w carries the reflection-probe count the mesh fragment iterates;
         // 0 = no probes -> the fragment's specular IBL is byte-identical to the global fallback.
         const bool probesOn = renderer.reflection.useProbes && renderer.ibl.ready;
         const u32 probeCount = probesOn ? renderer.lighting.frameProbeCount : 0u;
@@ -207,7 +207,17 @@ namespace se
         const SkygenParams& baked = ibl.bakedParams;
         const bool skyChanged = params.sunDir != baked.sunDir || params.sunColor != baked.sunColor ||
                                 params.sunIntensity != baked.sunIntensity;
-        if (sourceChanged || panoChanged || (source == EnvSource::Procedural && skyChanged))
+        const AtmosphereParams& a = params.atmosphere;
+        const AtmosphereParams& ba = baked.atmosphere;
+        const bool atmosChanged =
+            a.enabled != ba.enabled || a.planetRadius != ba.planetRadius ||
+            a.atmosphereHeight != ba.atmosphereHeight || a.rayleighScattering != ba.rayleighScattering ||
+            a.rayleighScaleHeight != ba.rayleighScaleHeight || a.mieScattering != ba.mieScattering ||
+            a.mieScaleHeight != ba.mieScaleHeight || a.mieAnisotropy != ba.mieAnisotropy ||
+            a.ozoneAbsorption != ba.ozoneAbsorption || a.sunDiskAngularRadius != ba.sunDiskAngularRadius ||
+            a.sunDiskIntensity != ba.sunDiskIntensity;
+        if (sourceChanged || panoChanged || (source == EnvSource::Procedural && skyChanged) ||
+            (source == EnvSource::Atmosphere && (skyChanged || atmosChanged)))
         {
             ibl.rebakePending = true;
         }

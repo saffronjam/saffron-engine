@@ -1122,7 +1122,16 @@ export namespace se
     inline constexpr u32 IblPrefilterMips = 5;  // mesh.slang's IblPrefilterMaxMip must be this - 1
     inline constexpr u32 IblLutSize = 256;
 
-    // One reflection-probe metadata record in the set-8 SSBO (std430). Mirrors the ProbeMeta
+    // Atmosphere LUT sizes (Hillaire 2020). Small + persistent; baked into ShaderReadOnly
+    // alongside envCube and re-baked with the sun. The multiscatter/skyview counts are coarse
+    // first-target sizes adequate on llvmpipe.
+    inline constexpr u32 AtmosTransmittanceW = 256;
+    inline constexpr u32 AtmosTransmittanceH = 64;
+    inline constexpr u32 AtmosMultiScatterSize = 32;
+    inline constexpr u32 AtmosSkyViewW = 192;
+    inline constexpr u32 AtmosSkyViewH = 108;
+
+    // One reflection-probe metadata record in the probe SSBO (std430). Mirrors the ProbeMeta
     // struct in mesh.slang: origin + influence radius, box extents + intensity, a valid flag.
     struct ProbeMetaGpu
     {
@@ -2820,7 +2829,11 @@ export namespace se
         }
         renderer.ibl.sampler = *iblSampler;
 
-        std::array<vk::DescriptorSetLayoutBinding, 3> iblBindings{};
+        // Bindings 0-2 are the global IBL (irradiance/prefiltered/brdf); bindings 3-5 carry the
+        // reflection probes (prefiltered-cube array + irradiance-cube array + metadata SSBO) so
+        // probes ride the always-present IBL set instead of a 9th bound set that would exceed
+        // maxBoundDescriptorSets.
+        std::array<vk::DescriptorSetLayoutBinding, 6> iblBindings{};
         for (u32 b = 0; b < 3; b = b + 1)
         {
             iblBindings[b].binding = b;
@@ -2828,6 +2841,18 @@ export namespace se
             iblBindings[b].descriptorCount = 1;
             iblBindings[b].stageFlags = vk::ShaderStageFlagBits::eFragment;
         }
+        iblBindings[3].binding = 3;
+        iblBindings[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        iblBindings[3].descriptorCount = MaxReflectionProbes;
+        iblBindings[3].stageFlags = vk::ShaderStageFlagBits::eFragment;
+        iblBindings[4].binding = 4;
+        iblBindings[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        iblBindings[4].descriptorCount = MaxReflectionProbes;
+        iblBindings[4].stageFlags = vk::ShaderStageFlagBits::eFragment;
+        iblBindings[5].binding = 5;
+        iblBindings[5].descriptorType = vk::DescriptorType::eStorageBuffer;
+        iblBindings[5].descriptorCount = 1;
+        iblBindings[5].stageFlags = vk::ShaderStageFlagBits::eFragment;
         vk::DescriptorSetLayoutCreateInfo iblLayoutInfo{};
         iblLayoutInfo.setBindings(iblBindings);
         auto iblLayout = checked(renderer.context.device.createDescriptorSetLayout(iblLayoutInfo), "iblSetLayout");
@@ -2847,7 +2872,7 @@ export namespace se
         }
         renderer.ibl.set = (*iblSet)[0];
 
-        // Reflection-probe set (set 8 in the mesh pipeline): a prefiltered-cube array + an
+        // Reflection probes share the IBL set (bindings 3-5): a prefiltered-cube array + an
         // irradiance-cube array (MaxReflectionProbes each) + the probe-metadata SSBO. The array
         // slots are seeded with the global IBL cubes after the first bake so the bind is always
         // valid; real probes overwrite their slot on capture. The sampler matches the IBL one.
@@ -2862,46 +2887,13 @@ export namespace se
         auto probeSampler = checked(renderer.context.device.createSampler(probeSamplerInfo), "createSampler (probe)");
         if (!probeSampler) { return Err(probeSampler.error()); }
         renderer.reflection.sampler = *probeSampler;
-
-        std::array<vk::DescriptorSetLayoutBinding, 3> probeBindings{};
-        probeBindings[0].binding = 0;
-        probeBindings[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        probeBindings[0].descriptorCount = MaxReflectionProbes;
-        probeBindings[0].stageFlags = vk::ShaderStageFlagBits::eFragment;
-        probeBindings[1].binding = 1;
-        probeBindings[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        probeBindings[1].descriptorCount = MaxReflectionProbes;
-        probeBindings[1].stageFlags = vk::ShaderStageFlagBits::eFragment;
-        probeBindings[2].binding = 2;
-        probeBindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
-        probeBindings[2].descriptorCount = 1;
-        probeBindings[2].stageFlags = vk::ShaderStageFlagBits::eFragment;
-        vk::DescriptorSetLayoutCreateInfo probeLayoutInfo{};
-        probeLayoutInfo.setBindings(probeBindings);
-        auto probeLayout = checked(renderer.context.device.createDescriptorSetLayout(probeLayoutInfo), "probeSetLayout");
-        if (!probeLayout) { return Err(probeLayout.error()); }
-        renderer.reflection.meshLayout = *probeLayout;
-
-        vk::DescriptorSetAllocateInfo probeAlloc{};
-        probeAlloc.descriptorPool = renderer.descriptors.descriptorPool;
-        probeAlloc.setSetLayouts(renderer.reflection.meshLayout);
-        auto probeSet = checked(renderer.context.device.allocateDescriptorSets(probeAlloc), "allocate probeSet");
-        if (!probeSet) { return Err(probeSet.error()); }
-        renderer.reflection.meshSet = (*probeSet)[0];
+        renderer.reflection.meshSet = renderer.ibl.set;
 
         auto probeMeta = makeRtBuffer(renderer, sizeof(ProbeMetaGpu) * MaxReflectionProbes,
                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
         if (!probeMeta) { return Err(probeMeta.error()); }
         renderer.reflection.metaBuffer = *probeMeta;
         std::memset(renderer.reflection.metaBuffer->mapped, 0, sizeof(ProbeMetaGpu) * MaxReflectionProbes);
-
-        // A zero-binding set layout. The mesh shader places probes at set 8, but sets 6/7 (RT
-        // TLAS + ReSTIR) exist only when RT is supported; this fills those slots in the mesh PSO
-        // layout otherwise, keeping set 8 contiguous (Vulkan layouts must have no gaps).
-        vk::DescriptorSetLayoutCreateInfo emptyLayoutInfo{};
-        auto emptyLayout = checked(renderer.context.device.createDescriptorSetLayout(emptyLayoutInfo), "emptySetLayout");
-        if (!emptyLayout) { return Err(emptyLayout.error()); }
-        renderer.descriptors.emptyLayout = *emptyLayout;
 
         // Sky set (set 1 in the sky pipeline): the procedural environment cube the visible-sky
         // pass samples. Layout + set created here so makeSkyPipeline can reference the layout;
@@ -3397,9 +3389,9 @@ export namespace se
         return {};
     }
 
-    // Writes one probe slot's prefiltered + irradiance cube into the persistent mesh set 8
-    // (binding 0 = prefiltered array, binding 1 = irradiance array). Falls back to the global
-    // IBL cubes when the slot has no captured probe, so every array element is always valid.
+    // Writes one probe slot's prefiltered + irradiance cube into the IBL set (binding 3 =
+    // prefiltered array, binding 4 = irradiance array). Falls back to the global IBL cubes when
+    // the slot has no captured probe, so every array element is always valid.
     void writeReflectionProbeSlot(Renderer& renderer, u32 slot)
     {
         ReflectionProbes& refl = renderer.reflection;
@@ -3413,7 +3405,7 @@ export namespace se
         for (u32 b = 0; b < 2; b = b + 1)
         {
             writes[b].dstSet = refl.meshSet;
-            writes[b].dstBinding = b;
+            writes[b].dstBinding = b + 3;
             writes[b].dstArrayElement = slot;
             writes[b].descriptorType = vk::DescriptorType::eCombinedImageSampler;
             writes[b].setImageInfo(infos[b]);
@@ -3421,9 +3413,9 @@ export namespace se
         renderer.context.device.updateDescriptorSets(writes, {});
     }
 
-    // Seeds every set-8 array slot with the global IBL cubes (valid placeholders) and writes
-    // the metadata-SSBO binding. Called once after the first IBL bake so the mesh bind is
-    // valid even before any probe captures.
+    // Seeds every probe array slot (IBL set bindings 3/4) with the global IBL cubes (valid
+    // placeholders) and writes the metadata-SSBO binding (binding 5). Called once after the first
+    // IBL bake so the mesh bind is valid even before any probe captures.
     void seedReflectionProbeSet(Renderer& renderer)
     {
         for (u32 slot = 0; slot < MaxReflectionProbes; slot = slot + 1)
@@ -3436,7 +3428,7 @@ export namespace se
         bi.range = sizeof(ProbeMetaGpu) * MaxReflectionProbes;
         vk::WriteDescriptorSet w{};
         w.dstSet = renderer.reflection.meshSet;
-        w.dstBinding = 2;
+        w.dstBinding = 5;
         w.descriptorType = vk::DescriptorType::eStorageBuffer;
         w.setBufferInfo(bi);
         renderer.context.device.updateDescriptorSets(w, {});
@@ -3445,7 +3437,7 @@ export namespace se
     // Captures a local reflection probe: renders the scene into the probe's 6 cube faces
     // (pointShadowFaceMatrices), then convolves the captured cube into the probe's irradiance +
     // prefiltered cubes via the shared ibl_irradiance/ibl_prefilter shaders (same dispatch as
-    // bakeEnvironment), and writes the result into mesh set 8. Synchronous one-shot work +
+    // bakeEnvironment), and writes the result into the probe slot. Synchronous one-shot work +
     // waitIdle, run only on a dirty probe at the GPU-idle top of beginFrameGraph.
     auto captureReflectionProbe(Renderer& renderer, ReflectionProbe& probe, u32 slot) -> Result<void>
     {
@@ -3481,7 +3473,7 @@ export namespace se
         static_cast<void>(device.waitIdle());
 
         // The 6-face scene render reuses the cached scene draw list (built this frame) but pushes
-        // each face's view-proj in place of the camera's. recordSceneDrawList binds set 8, but the
+        // each face's view-proj in place of the camera's. recordSceneDrawList binds the probe set, but the
         // probe being captured is not yet `valid`, so its slot still resolves to the global env —
         // no self-feedback (its envCube is the attachment, never sampled here).
         const std::array<glm::mat4, 6> faces = pointShadowFaceMatrices(probe.origin, glm::max(probe.influenceRadius * 4.0f, 50.0f));
@@ -3736,6 +3728,17 @@ export namespace se
             if (!lut) { return Err(lut.error()); }
             renderer.ibl.brdfLut = std::move(*lut);
             renderer.ibl.prefilterMips = preMips;
+
+            // Atmosphere LUTs (storage + sampled, persistent like the cubes above).
+            auto trans = newColorImage(renderer, AtmosTransmittanceW, AtmosTransmittanceH, IblColorFormat, true);
+            if (!trans) { return Err(trans.error()); }
+            renderer.ibl.transmittanceLut = std::move(*trans);
+            auto ms = newColorImage(renderer, AtmosMultiScatterSize, AtmosMultiScatterSize, IblColorFormat, true);
+            if (!ms) { return Err(ms.error()); }
+            renderer.ibl.multiScatterLut = std::move(*ms);
+            auto sv = newColorImage(renderer, AtmosSkyViewW, AtmosSkyViewH, IblColorFormat, true);
+            if (!sv) { return Err(sv.error()); }
+            renderer.ibl.skyViewLut = std::move(*sv);
         }
         else
         {
@@ -3806,6 +3809,58 @@ export namespace se
         auto lutP = newComputePipeline(renderer, "shaders/ibl_brdf.spv", layoutA);
         if (!lutP) { cleanupLayouts(); return Err(lutP.error()); }
 
+        // The atmosphere chain. transmittance writes one storage image (layoutA); multiscatter
+        // and skyview read prior LUTs (layoutC = two samplers + one storage out), and skygen
+        // reads the sky-view LUT into the cube (layoutB-shaped: sampler + storage cube). Built
+        // only when this bake selects the Atmosphere source.
+        const bool useAtmosphere = renderer.ibl.source == EnvSource::Atmosphere && sky.atmosphere.enabled;
+        std::array<vk::DescriptorSetLayoutBinding, 3> bindC{};
+        for (u32 i = 0; i < 2; i = i + 1)
+        {
+            bindC[i].binding = i;
+            bindC[i].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            bindC[i].descriptorCount = 1;
+            bindC[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        }
+        bindC[2].binding = 2;
+        bindC[2].descriptorType = vk::DescriptorType::eStorageImage;
+        bindC[2].descriptorCount = 1;
+        bindC[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        vk::DescriptorSetLayoutCreateInfo layoutCInfo{};
+        layoutCInfo.setBindings(bindC);
+        vk::DescriptorSetLayout layoutC = nullptr;
+        if (useAtmosphere)
+        {
+            auto layoutCR = checked(device.createDescriptorSetLayout(layoutCInfo), "atmos layoutC");
+            if (!layoutCR) { cleanupLayouts(); return Err(layoutCR.error()); }
+            layoutC = *layoutCR;
+        }
+        auto cleanupAtmos = [&]()
+        {
+            if (layoutC) { device.destroyDescriptorSetLayout(layoutC); }
+        };
+
+        const u32 atmosPush = static_cast<u32>(5 * sizeof(glm::vec4));
+        std::optional<Ref<Pipeline>> transP;
+        std::optional<Ref<Pipeline>> multiP;
+        std::optional<Ref<Pipeline>> skyViewP;
+        std::optional<Ref<Pipeline>> atmosSkygenP;
+        if (useAtmosphere)
+        {
+            auto t = newComputePipeline(renderer, "shaders/atmos_transmittance.spv", layoutA, atmosPush);
+            if (!t) { cleanupAtmos(); cleanupLayouts(); return Err(t.error()); }
+            transP = *t;
+            auto m = newComputePipeline(renderer, "shaders/atmos_multiscatter.spv", layoutC, atmosPush);
+            if (!m) { cleanupAtmos(); cleanupLayouts(); return Err(m.error()); }
+            multiP = *m;
+            auto s = newComputePipeline(renderer, "shaders/atmos_skyview.spv", layoutC, atmosPush);
+            if (!s) { cleanupAtmos(); cleanupLayouts(); return Err(s.error()); }
+            skyViewP = *s;
+            auto g = newComputePipeline(renderer, "shaders/atmos_skygen.spv", layoutB, atmosPush);
+            if (!g) { cleanupAtmos(); cleanupLayouts(); return Err(g.error()); }
+            atmosSkygenP = *g;
+        }
+
         // Transient 2D-array storage views (one per cube mip we write) + the per-set allocs.
         std::vector<vk::ImageView> transientViews;
         auto makeStorageView = [&](vk::Image image, u32 mip) -> vk::ImageView
@@ -3838,6 +3893,17 @@ export namespace se
         vk::DescriptorSet equirectSet = allocSet(layoutB);
         vk::DescriptorSet brdfSet = allocSet(layoutA);
         vk::DescriptorSet irrSet = allocSet(layoutB);
+        vk::DescriptorSet transSet = nullptr;
+        vk::DescriptorSet multiSet = nullptr;
+        vk::DescriptorSet skyViewSet = nullptr;
+        vk::DescriptorSet atmosSkygenSet = nullptr;
+        if (useAtmosphere)
+        {
+            transSet = allocSet(layoutA);
+            multiSet = allocSet(layoutC);
+            skyViewSet = allocSet(layoutC);
+            atmosSkygenSet = allocSet(layoutB);
+        }
         std::vector<vk::DescriptorSet> preSets;
         for (u32 m = 0; m < preMips; m = m + 1)
         {
@@ -3875,6 +3941,20 @@ export namespace se
             writeSampler(preSets[m], 0, renderer.ibl.envCube.view);
             writeStorage(preSets[m], 1, preStore[m]);
         }
+        if (useAtmosphere)
+        {
+            // transmittance: storage out only. multiscatter: transmittance sampler -> storage out.
+            // skyview: transmittance + multiscatter samplers -> storage out. skygen: skyview sampler
+            // (binding 0) -> envCube storage (binding 1). The LUT 2D .view doubles as storage view.
+            writeStorage(transSet, 0, renderer.ibl.transmittanceLut.view);
+            writeSampler(multiSet, 0, renderer.ibl.transmittanceLut.view);
+            writeStorage(multiSet, 2, renderer.ibl.multiScatterLut.view);
+            writeSampler(skyViewSet, 0, renderer.ibl.transmittanceLut.view);
+            writeSampler(skyViewSet, 1, renderer.ibl.multiScatterLut.view);
+            writeStorage(skyViewSet, 2, renderer.ibl.skyViewLut.view);
+            writeSampler(atmosSkygenSet, 0, renderer.ibl.skyViewLut.view);
+            writeStorage(atmosSkygenSet, 1, envStore);
+        }
 
         vk::CommandBufferAllocateInfo cmdAlloc{};
         cmdAlloc.commandPool = renderer.frame.frames[0].commandPool;
@@ -3884,6 +3964,7 @@ export namespace se
         if (!cmds)
         {
             for (vk::ImageView v : transientViews) { device.destroyImageView(v); }
+            cleanupAtmos();
             cleanupLayouts();
             return Err(cmds.error());
         }
@@ -3920,10 +4001,85 @@ export namespace se
         {
             logWarn("ibl bake: Equirect source has no panorama; falling back to procedural sky");
         }
+        // The atmosphere LUT chain runs before the cube fill: each LUT goes Undefined->General,
+        // dispatch, General->ShaderReadOnly so the next stage samples it. The push packs the
+        // AtmosphereParams + sun into 5 float4s (layout shared with the atmos_*.slang shaders).
+        if (useAtmosphere)
+        {
+            const AtmosphereParams& a = sky.atmosphere;
+            struct AtmosPush
+            {
+                glm::vec4 sunDir;     // xyz = dir to sun, w = sun intensity
+                glm::vec4 rayleigh;   // xyz = rayleigh scattering, w = rayleigh scale height
+                glm::vec4 ozone;      // xyz = ozone absorption, w = mie scattering
+                glm::vec4 params0;    // planetRadius, atmosphereHeight, mieScaleHeight, mieAnisotropy
+                glm::vec4 params1;    // sunDiskAngularRadius, sunDiskIntensity, cameraAltitude, 0
+            } atmos{
+                glm::vec4(glm::normalize(sky.sunDir), sky.sunIntensity),
+                glm::vec4(a.rayleighScattering, a.rayleighScaleHeight),
+                glm::vec4(a.ozoneAbsorption, a.mieScattering),
+                glm::vec4(a.planetRadius, a.atmosphereHeight, a.mieScaleHeight, a.mieAnisotropy),
+                glm::vec4(a.sunDiskAngularRadius, a.sunDiskIntensity, 0.0f, 0.0f) };
+
+            barrier(renderer.ibl.transmittanceLut.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, 0, 1, 1);
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, transP.value()->pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, transP.value()->layout, 0, transSet, {});
+            cmd.pushConstants(transP.value()->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(atmos), &atmos);
+            cmd.dispatch(group(AtmosTransmittanceW), group(AtmosTransmittanceH), 1);
+            barrier(renderer.ibl.transmittanceLut.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderSampledRead, 0, 1, 1);
+
+            barrier(renderer.ibl.multiScatterLut.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, 0, 1, 1);
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, multiP.value()->pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, multiP.value()->layout, 0, multiSet, {});
+            cmd.pushConstants(multiP.value()->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(atmos), &atmos);
+            cmd.dispatch(group(AtmosMultiScatterSize), group(AtmosMultiScatterSize), 1);
+            barrier(renderer.ibl.multiScatterLut.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderSampledRead, 0, 1, 1);
+
+            barrier(renderer.ibl.skyViewLut.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, 0, 1, 1);
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, skyViewP.value()->pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, skyViewP.value()->layout, 0, skyViewSet, {});
+            cmd.pushConstants(skyViewP.value()->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(atmos), &atmos);
+            cmd.dispatch(group(AtmosSkyViewW), group(AtmosSkyViewH), 1);
+            barrier(renderer.ibl.skyViewLut.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderSampledRead, 0, 1, 1);
+        }
+
         barrier(renderer.ibl.envCube.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral,
                 vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, 0, 1, 6);
-        if (useEquirect)
+        if (useAtmosphere)
+        {
+            const AtmosphereParams& a = sky.atmosphere;
+            struct AtmosPush
+            {
+                glm::vec4 sunDir;
+                glm::vec4 rayleigh;
+                glm::vec4 ozone;
+                glm::vec4 params0;
+                glm::vec4 params1;
+            } atmos{
+                glm::vec4(glm::normalize(sky.sunDir), sky.sunIntensity),
+                glm::vec4(a.rayleighScattering, a.rayleighScaleHeight),
+                glm::vec4(a.ozoneAbsorption, a.mieScattering),
+                glm::vec4(a.planetRadius, a.atmosphereHeight, a.mieScaleHeight, a.mieAnisotropy),
+                glm::vec4(a.sunDiskAngularRadius, a.sunDiskIntensity, 0.0f, 0.0f) };
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, atmosSkygenP.value()->pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, atmosSkygenP.value()->layout, 0, atmosSkygenSet, {});
+            cmd.pushConstants(atmosSkygenP.value()->layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(atmos), &atmos);
+            cmd.dispatch(group(IblEnvSize), group(IblEnvSize), 6);
+        }
+        else if (useEquirect)
         {
             // The panorama wraps in longitude, so it reads through the eRepeat linearSampler
             // (ibl.sampler is eClampToEdge and would seam the meridian).
@@ -4045,10 +4201,19 @@ export namespace se
         renderer.sky.ready = true;
         }
 
+        if (useAtmosphere)
+        {
+            renderer.ibl.transmittanceLut.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            renderer.ibl.multiScatterLut.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            renderer.ibl.skyViewLut.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+
         for (vk::ImageView v : transientViews) { device.destroyImageView(v); }
+        cleanupAtmos();
         cleanupLayouts();
-        logInfo(std::format("ibl baked — env {}^2, irradiance {}^2, prefiltered {}^2 x{} mips, lut {}^2",
-                            IblEnvSize, IblIrradianceSize, IblPrefilterSize, preMips, IblLutSize));
+        logInfo(std::format("ibl baked — env {}^2, irradiance {}^2, prefiltered {}^2 x{} mips, lut {}^2{}",
+                            IblEnvSize, IblIrradianceSize, IblPrefilterSize, preMips, IblLutSize,
+                            useAtmosphere ? " (atmosphere)" : ""));
         return {};
     }
 }
