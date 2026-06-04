@@ -77,8 +77,14 @@ Entity and asset ids are u64, carried on the wire as decimal JSON strings (see [
 | `open-project` | `{path}` | open a project name, directory, or `project.json` |
 | `import-model` | `{path}` | import + bake a model, spawn an entity carrying it (selected) |
 | `import-texture` | `{path}` | import an image into the asset dir; returns its texture id |
-| `list-assets` | — | the project catalog `{id, name, type, path}` |
+| `list-assets` | — | the project catalog `{assets:[{id, name, type, path, folder?}], folders}` |
 | `rename-asset` | `{id\|name, newName}` | rename a catalog entry |
+| `create-asset-folder` | `{folder}` | create a project-saved virtual asset folder |
+| `rename-asset-folder` | `{folder, name}` | rename a virtual folder and update assigned assets |
+| `delete-asset-folder` | `{folder}` | delete a virtual folder and move assigned assets to root |
+| `move-asset` | `{asset:id\|name, folder?}` | move an asset into a virtual folder, or root when omitted |
+| `asset-usages` | `{asset:id\|name}` | list scene/environment slots that reference an asset |
+| `delete-asset` | `{asset:id\|name}` | delete the catalog entry and imported file, clearing references |
 | `assign-asset` | `{entity, slot:mesh\|albedo, id\|name}` | assign a catalog asset to the entity's Mesh/Material |
 | `save-scene` | `{path}` | write the scene JSON |
 | `load-scene` | `{path}` | read a scene JSON (deselects) |
