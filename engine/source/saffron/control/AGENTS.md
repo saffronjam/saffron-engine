@@ -47,8 +47,10 @@ Conventions to follow:
 - **Parameters accept named or positional form.** Use the `positionalOr(params, name,
   index)` helper so `--flag value` and bare positional args both work (the latter arrive
   in `params["args"]`).
-- **Entity selectors resolve by UUID or exact name** via `resolveEntity`. IDs are u64 —
-  serialize them as **strings** so JS keeps full precision.
+- **Entity selectors resolve a string id, a number, or an exact name** via `resolveEntity`
+  (id first — it is stable across reloads). IDs are u64; emit them on the wire as **decimal
+  strings** (`uuidToJson`) so a JS client keeps full precision past 2^53, and read them with
+  `jsonU64`, which accepts a string or a number.
 - **Schema-first contract.** Anything new in the wire format gets a hand-authored schema
   in `schemas/control/` (see that directory's `AGENTS.md`). `dump-schema` must keep
   reflecting the live component/environment/render-stats DTOs, and the contract test in
