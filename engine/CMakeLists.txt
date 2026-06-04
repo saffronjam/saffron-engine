@@ -20,6 +20,7 @@ target_sources(SaffronEngineLib
             source/saffron/assets/assets.cppm
             source/saffron/sceneedit/scene_edit_context.cppm
             source/saffron/sceneedit/sceneedit.cppm
+            source/saffron/control/control_dto.cppm
             source/saffron/control/command.cppm
             source/saffron/control/control.cppm
             source/saffron/app/app.cppm
@@ -35,10 +36,12 @@ target_sources(SaffronEngineLib PRIVATE
     source/saffron/rendering/renderer_aa.cpp
     source/saffron/rendering/renderer_textures.cpp
     source/saffron/rendering/renderer_thumbnail.cpp
+    source/saffron/scene/scene_component_serde.generated.cpp
     source/saffron/sceneedit/scene_edit_context.cpp
     source/saffron/sceneedit/scene_edit_components.cpp
     source/saffron/sceneedit/scene_edit_camera.cpp
     source/saffron/sceneedit/scene_edit_gizmo.cpp
+    source/saffron/control/control_dto_serde.generated.cpp
     source/saffron/control/control_commands_render.cpp
     source/saffron/control/control_commands_scene.cpp
     source/saffron/control/control_commands_asset.cpp
