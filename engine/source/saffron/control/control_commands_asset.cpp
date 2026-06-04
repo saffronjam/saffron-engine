@@ -12,6 +12,7 @@ module;
 module Saffron.Control;
 
 import Saffron.Core;
+import Saffron.Json;
 import Saffron.Window;
 import Saffron.Rendering;
 import Saffron.Scene;
@@ -129,7 +130,7 @@ namespace se
             {
                 return Err(std::string{ "asset has no thumbnail" });
             }
-            return json{ { "id", match->id.value },
+            return json{ { "id", uuidToJson(match->id.value) },
                          { "format", "png" },
                          { "width", size },
                          { "height", size },
@@ -202,10 +203,11 @@ namespace se
                                 return Err(imported.error());
                             }
                             Entity entity = spawnModel(ctx.sceneEdit.scene, "Mesh", *imported);
+                            ctx.sceneEdit.sceneVersion += 1;
                             setSelection(ctx.sceneEdit, entity);
                             json result = entityRef(ctx.sceneEdit.scene, entity);
-                            result["mesh"] = imported->mesh.value;
-                            result["albedoTexture"] = imported->albedoTexture.value;
+                            result["mesh"] = uuidToJson(imported->mesh.value);
+                            result["albedoTexture"] = uuidToJson(imported->albedoTexture.value);
                             return result;
                         });
 
@@ -228,7 +230,7 @@ namespace se
                             {
                                 return Err(id.error());
                             }
-                            return json{ { "texture", id->value } };
+                            return json{ { "texture", uuidToJson(id->value) } };
                         });
 
         registerCommand(reg, "list-assets", "list the project asset catalog",
@@ -237,7 +239,7 @@ namespace se
                             json out = json::array();
                             for (const AssetEntry& entry : ctx.assets.catalog.entries)
                             {
-                                out.push_back(json{ { "id", entry.id.value },
+                                out.push_back(json{ { "id", uuidToJson(entry.id.value) },
                                                     { "name", entry.name },
                                                     { "type", assetTypeName(entry.type) },
                                                     { "path", entry.path } });
@@ -260,7 +262,7 @@ namespace se
                                 if (entry.id.value == byId || entry.name == selector)
                                 {
                                     entry.name = newName;
-                                    return json{ { "id", entry.id.value }, { "name", entry.name } };
+                                    return json{ { "id", uuidToJson(entry.id.value) }, { "name", entry.name } };
                                 }
                             }
                             return Err(std::format("no asset '{}'", selector));
@@ -309,7 +311,8 @@ namespace se
                             {
                                 return Err(std::string{ "slot must be 'mesh' or 'albedo'" });
                             }
-                            return json{ { "id", match->id.value }, { "name", match->name }, { "slot", slot } };
+                            ctx.sceneEdit.sceneVersion += 1;
+                            return json{ { "id", uuidToJson(match->id.value) }, { "name", match->name }, { "slot", slot } };
                         });
 
         registerCommand(reg, "save-scene", "save-scene {path}",
