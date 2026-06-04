@@ -10,6 +10,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { client } from "../control/client";
 import { startReconcile, useEditorStore } from "../state/store";
+import type { AssetEntry } from "../protocol";
 import { Topbar } from "../panels/Topbar";
 import { Layout } from "./Layout";
 import { WindowTitlebar } from "./WindowTitlebar";
@@ -17,8 +18,11 @@ import { useGizmoShortcuts } from "./useGizmoShortcuts";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ProjectStartupModal } from "./ProjectStartupModal";
 import type { ProjectInfo } from "../control/client";
+import { AssetPreview } from "../components/AssetViewer";
+import { emitLayoutSettled } from "./layoutBus";
 
 type EnginePhaseEvent = "starting" | "attaching";
+const PARKED_VIEWPORT_BOUNDS = { x: -10000, y: -10000, width: 1, height: 1 };
 
 let didRevealWindow = false;
 let revealWindowPromise: Promise<void> | null = null;
@@ -37,10 +41,19 @@ function revealEditorWindow(): Promise<void> {
 export function App() {
   const setPhase = useEditorStore((s) => s.setPhase);
   const setProject = useEditorStore((s) => s.setProject);
+  const setViewportHidden = useEditorStore((s) => s.setViewportHidden);
   const phase = useEditorStore((s) => s.engineStatus.phase);
   const uiFrameRateHz = useEditorStore((s) => s.uiFrameRateHz);
+  const activeViewTabId = useEditorStore((s) => s.activeViewTabId);
+  const activeAsset = useEditorStore((s) => {
+    const tab = s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId);
+    return tab?.kind === "asset"
+      ? (s.assets.find((asset) => asset.id === tab.assetId) ?? null)
+      : null;
+  });
   const [revealed, setRevealed] = useState(didRevealWindow);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const sceneTabActive = activeViewTabId === "scene";
 
   // W/E/R → translate/rotate/scale, gated off while a text field is focused.
   useGizmoShortcuts();
@@ -154,6 +167,16 @@ export function App() {
     setProjectModalOpen(false);
   };
 
+  useEffect(() => {
+    if (sceneTabActive) {
+      setViewportHidden(false);
+      requestAnimationFrame(() => emitLayoutSettled({ force: true }));
+      return;
+    }
+    setViewportHidden(true);
+    void client.resizeViewport(PARKED_VIEWPORT_BOUNDS).catch(() => {});
+  }, [sceneTabActive, setViewportHidden]);
+
   return (
     <TooltipProvider delayDuration={300}>
       <div
@@ -161,8 +184,14 @@ export function App() {
         style={{ opacity: revealed ? 1 : 0 }}
       >
         <WindowTitlebar />
-        <Topbar />
-        <Layout />
+        {sceneTabActive ? (
+          <>
+            <Topbar />
+            <Layout />
+          </>
+        ) : (
+          <AssetWorkspace asset={activeAsset} />
+        )}
         <ProjectStartupModal open={projectModalOpen} onProjectLoaded={handleProjectLoaded} />
         <footer className="flex h-[22px] flex-none items-center justify-end border-t border-border bg-card px-3">
           <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -171,5 +200,20 @@ export function App() {
         </footer>
       </div>
     </TooltipProvider>
+  );
+}
+
+function AssetWorkspace({ asset }: { asset: AssetEntry | null }) {
+  if (!asset) {
+    return (
+      <main className="flex min-h-0 flex-1 items-center justify-center bg-background text-xs italic text-muted-foreground">
+        Asset not found
+      </main>
+    );
+  }
+  return (
+    <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-background p-6">
+      <AssetPreview entry={asset} className="h-full max-h-full w-auto max-w-full" />
+    </main>
   );
 }
