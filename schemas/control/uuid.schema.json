@@ -1,8 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "uuid.schema.json",
-  "title": "Uuid",
-  "description": "Stable u64 id, carried on the wire as a decimal JSON string. Ids span the full u64 range and exceed JS's 2^53 safe integer, so a string is the only form that survives JSON.parse without precision loss.",
-  "type": "string",
-  "pattern": "^[0-9]+$"
-}
