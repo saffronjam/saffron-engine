@@ -9,8 +9,7 @@
 /// `assignAsset`, everything else (sky texture, future Uuid fields) through
 /// `setComponentField`. The picker is field-agnostic — it only emits `onChange`.
 ///
-/// Kept in the side docks (inspector / environment) so the popover never opens over
-/// the viewport rect, where the native X11 child would occlude it (see Risks).
+/// Lives in the side docks (inspector / environment); the popover anchors there.
 import { useEffect, useState } from "react";
 import { Box, Check, ChevronsUpDown, File, Image as ImageIcon } from "lucide-react";
 import { getThumbnailUrl, useEditorStore } from "../state/store";

@@ -1,15 +1,11 @@
 /// The asset View modal: a large (512 px) square preview of a single catalog asset
 /// (parity with `viewerPanel`, editor_panels.cpp:327-351, and the 512 re-render at
-/// editor_app.cppm:165). A shadcn Dialog, opened by a tile double-click.
-///
-/// OCCLUSION (the core viewport-bridge constraint): the native SaffronEngine window
-/// is reparented OVER the viewport div and ALWAYS paints on top of the webview — a
-/// centered modal over the viewport rect would be hidden behind the native child.
+/// editor_app.cppm:165). A shadcn Dialog, opened by a tile double-click. The native
+/// viewport is a reparented X11 child that always paints over the webview, so a
+/// dialog centered on the screen would be covered by it.
 /// So while the viewer is open we set `store.viewportHidden`, which the
-/// ViewportPanel reads to park the native window off-screen; closing the viewer
-/// clears the flag and the ViewportPanel re-glues the native window to its div. The
-/// preview itself is a base64 PNG fetched over the socket (no native surface), so it
-/// renders entirely in the webview and is never occluded.
+/// ViewportPanel reacts to by parking the native window off-screen. The preview is
+/// a base64 PNG fetched over the socket and rendered in the webview.
 import { useEffect, useState } from "react";
 import { client } from "../control/client";
 import { useEditorStore } from "../state/store";
@@ -44,8 +40,8 @@ export function AssetViewer({ entry, onClose }: AssetViewerProps) {
   const setViewportHidden = useEditorStore((s) => s.setViewportHidden);
   const open = entry !== null;
 
-  // Park the native viewport while the modal is open; always restore on close /
-  // unmount so a stuck flag can never leave the viewport hidden.
+  // Park the native viewport off-screen while the modal is open so the dialog is
+  // actually visible over the viewport rect; restore it on close/unmount.
   useEffect(() => {
     if (!open) {
       return;

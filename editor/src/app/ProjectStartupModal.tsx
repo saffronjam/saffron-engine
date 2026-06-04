@@ -36,6 +36,8 @@ export function ProjectStartupModal({
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // The reparented X11 viewport always paints over the webview; park it off-screen
+  // while this modal is open so the dialog is actually visible over the viewport rect.
   useEffect(() => {
     setViewportHidden(modalOpen);
     return () => setViewportHidden(false);
@@ -128,7 +130,7 @@ export function ProjectStartupModal({
 
   return (
     <Dialog open={modalOpen} onOpenChange={() => {}}>
-      <DialogContent showCloseButton={false} className="sm:max-w-[680px]">
+      <DialogContent showCloseButton={false} className="sm:max-w-[760px]">
         <DialogHeader>
           <DialogTitle>Open a project</DialogTitle>
           <DialogDescription>
@@ -136,8 +138,8 @@ export function ProjectStartupModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid min-h-[320px] gap-4 md:grid-cols-[1.1fr_0.9fr]">
-          <section className="min-h-0 rounded-md border border-border bg-card">
+        <div className="grid min-h-[320px] min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(160px,10rem)]">
+          <section className="min-h-0 min-w-0 rounded-md border border-border bg-card">
             <div className="flex h-9 items-center justify-between border-b border-border px-3">
               <span className="text-xs font-medium uppercase text-muted-foreground">Recent</span>
               <Button
@@ -162,12 +164,17 @@ export function ProjectStartupModal({
                     <button
                       key={project.path}
                       type="button"
-                      className="flex w-full flex-col gap-1 rounded-md px-3 py-2 text-left hover:bg-accent disabled:opacity-50"
+                      className="flex w-full min-w-0 flex-col gap-1 rounded-md px-3 py-2 text-left hover:bg-accent disabled:opacity-50"
                       disabled={busy}
                       onClick={() => void openProjectPath(project.path)}
                     >
-                      <span className="truncate text-sm font-medium">{project.displayName}</span>
-                      <span className="truncate font-mono text-[11px] text-muted-foreground">
+                      <span className="block max-w-full truncate text-sm font-medium">
+                        {project.displayName}
+                      </span>
+                      <span
+                        className="block max-w-full truncate font-mono text-[11px] text-muted-foreground"
+                        title={project.path}
+                      >
                         {project.path}
                       </span>
                     </button>
@@ -177,7 +184,7 @@ export function ProjectStartupModal({
             </div>
           </section>
 
-          <section className="space-y-4">
+          <section className="min-w-0 space-y-4">
             <div className="space-y-2">
               <Label htmlFor="project-name">Project name</Label>
               <Input
@@ -233,8 +240,11 @@ export function ProjectStartupModal({
           </section>
         </div>
 
-        <DialogFooter className="items-center justify-between gap-3 sm:justify-between">
-          <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+        <DialogFooter className="min-w-0 items-center justify-between gap-3 sm:justify-between">
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+            title={info?.userdataDir ?? ""}
+          >
             {info ? info.userdataDir : ""}
           </span>
           {status ? (
