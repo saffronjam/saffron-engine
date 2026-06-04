@@ -11,6 +11,7 @@ module;
 module Saffron.Control;
 
 import Saffron.Core;
+import Saffron.Json;
 import Saffron.Rendering;
 import Saffron.Scene;
 import Saffron.SceneEdit;
@@ -57,7 +58,7 @@ namespace se
                 forEach<IdComponent, NameComponent>(ctx.sceneEdit.scene,
                     [&](Entity, IdComponent& id, NameComponent& name)
         {
-                        entities.push_back(json{ { "id", id.id.value }, { "name", name.name } });
+                        entities.push_back(json{ { "id", uuidToJson(id.id.value) }, { "name", name.name } });
                     });
                 return json{ { "entities", std::move(entities) } };
             });
@@ -78,6 +79,7 @@ namespace se
             {
                 const std::string name = asString(positionalOr(params, "name", 0), "Entity");
                 Entity entity = createEntity(ctx.sceneEdit.scene, name);
+                ctx.sceneEdit.sceneVersion += 1;
                 return entityRef(ctx.sceneEdit.scene, entity);
             });
 
@@ -96,7 +98,7 @@ namespace se
                 }
                 destroyEntity(ctx.sceneEdit.scene, *entity);
                 ctx.sceneEdit.sceneVersion += 1;
-                return json{ { "destroyed", id } };
+                return json{ { "destroyed", uuidToJson(id) } };
             });
 
         registerCommand(reg, "add-component", "add-component {entity, component}",
@@ -118,6 +120,7 @@ namespace se
                     return Err(std::format("entity already has '{}'", name));
                 }
                 row->addDefault(ctx.sceneEdit.scene, *entity);
+                ctx.sceneEdit.sceneVersion += 1;
                 return json{ { "added", row->name } };
             });
 
@@ -140,6 +143,7 @@ namespace se
                     return Err(std::format("component '{}' is not removable", row->name));
                 }
                 row->remove(ctx.sceneEdit.scene, *entity);
+                ctx.sceneEdit.sceneVersion += 1;
                 return json{ { "removed", row->name } };
             });
 
@@ -165,6 +169,7 @@ namespace se
                 {
                     return Err(result.error());
                 }
+                ctx.sceneEdit.sceneVersion += 1;
                 return json{ { "set", row->name } };
             });
 
@@ -198,6 +203,7 @@ namespace se
                 {
                     return Err(result.error());
                 }
+                ctx.sceneEdit.sceneVersion += 1;
                 return entityRef(ctx.sceneEdit.scene, *entity);
             });
 
@@ -226,8 +232,8 @@ namespace se
                 if (params.contains("baseColor")) { body["baseColor"] = params["baseColor"]; }
                 if (params.contains("albedoTexture"))
                 {
-                    // The se CLI passes a bare uuid as a string; coerce it to a number so
-                    // the component's value<u64> deserialize doesn't abort (JSON_NOEXCEPTION).
+                    // The se CLI passes a bare uuid as a string; store it as the numeric id
+                    // the Material's serialized form uses for albedoTexture.
                     const json& a = params["albedoTexture"];
                     if (a.is_string())
                     {
@@ -269,6 +275,7 @@ namespace se
                 {
                     return Err(result.error());
                 }
+                ctx.sceneEdit.sceneVersion += 1;
                 return entityRef(ctx.sceneEdit.scene, *entity);
             });
 
@@ -317,6 +324,7 @@ namespace se
                 {
                     return Err(result.error());
                 }
+                ctx.sceneEdit.sceneVersion += 1;
                 return entityRef(ctx.sceneEdit.scene, target);
             });
 
@@ -360,7 +368,7 @@ namespace se
                 }
 
                 const Entity hit = pickEntity(ctx.sceneEdit.scene, ctx.assets, ctx.renderer, cam,
-                                              glm::vec2{ u * 2.0f - 1.0f, v * 2.0f - 1.0f });
+                                              glm::vec2{ u * 2.0f - 1.0f, 1.0f - v * 2.0f });
                 setSelection(ctx.sceneEdit, hit);
                 if (hit.handle == entt::null)
                 {
@@ -442,6 +450,7 @@ namespace se
                 if (params.contains("ambientColor")) { body["ambientColor"] = params["ambientColor"]; }
                 if (params.contains("ambientIntensity")) { body["ambientIntensity"] = params["ambientIntensity"]; }
                 ctx.sceneEdit.scene.environment = environmentFromJson(body);
+                ctx.sceneEdit.sceneVersion += 1;
                 return environmentToJson(ctx.sceneEdit.scene.environment);
             });
 
@@ -548,6 +557,21 @@ namespace se
                 return entityRef(scene, fresh);
             });
 
+        registerCommand(reg, "rename-entity", "rename-entity {entity, name} — set its Name component",
+            [](EngineContext& ctx, const json& params) -> Result<json>
+            {
+                auto entity = resolveEntity(ctx, params);
+                if (!entity) { return Err(entity.error()); }
+                const std::string name = asString(positionalOr(params, "name", 1), "");
+                if (name.empty())
+                {
+                    return Err(std::string{ "usage: rename-entity {entity, name}" });
+                }
+                getComponent<NameComponent>(ctx.sceneEdit.scene, *entity).name = name;
+                ctx.sceneEdit.sceneVersion += 1;
+                return entityRef(ctx.sceneEdit.scene, *entity);
+            });
+
         registerCommand(reg, "set-component-field",
             "set-component-field {entity, component, field, value} — merge one field "
             "(value may be a uuid string, number, bool, or json object)",
@@ -569,8 +593,8 @@ namespace se
                 }
                 json body = row->serialize(ctx.sceneEdit.scene, *entity);
                 json value = positionalOr(params, "value", 3);
-                // The CLI passes a bare uuid as a string; coerce a fully-numeric string to u64
-                // so a value<u64> deserialize does not abort under JSON_NOEXCEPTION.
+                // The CLI passes every value as a string; a fully-numeric one becomes a u64 so
+                // numeric/id fields land as numbers, while non-numeric strings pass through.
                 if (value.is_string())
                 {
                     const std::string s = value.get<std::string>();
@@ -581,6 +605,7 @@ namespace se
                 body[field] = value;
                 auto result = row->deserialize(ctx.sceneEdit.scene, *entity, body);
                 if (!result) { return Err(result.error()); }
+                ctx.sceneEdit.sceneVersion += 1;
                 return json{ { "set", row->name }, { "field", field } };
             });
 
