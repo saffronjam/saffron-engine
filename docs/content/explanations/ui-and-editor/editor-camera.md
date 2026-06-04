@@ -11,7 +11,7 @@ while the editor camera only controls the editing viewpoint. The scene, the [giz
 and [picking](../selection/) all draw and project through it.
 
 The camera is engine state, not part of the webview. The engine owns the eye, runs the look and move
-input, and renders the scene through it via the [present-only path](../tauri-editor-and-x11-bridge/).
+input, and renders the scene through it via the [present-only path](../tauri-editor-and-viewport-transport/).
 Camera, gizmo, and meshes line up because they share one `CameraView`, with no second projection to
 keep in sync.
 

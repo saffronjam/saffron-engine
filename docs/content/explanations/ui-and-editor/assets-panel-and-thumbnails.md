@@ -51,7 +51,7 @@ Each tile is also an HTML5 drag *source* on a distinct channel, `application/x-s
 
 ## The View modal
 
-Double-clicking a tile opens a 512px preview in a shadcn `Dialog` (`view-asset`, the same readback path as `get-thumbnail`). The modal meets the core viewport-bridge constraint: the reparented native window always paints on top of its rect, so a dialog centered over the viewport would be hidden behind it. While the viewer is open the panel sets `store.viewportHidden`, which the [viewport panel](../viewport-panel/) reads to park the native window off-screen. Closing the modal clears the flag, and the native window re-glues to its div. The preview PNG renders in the webview, so it is never occluded.
+Double-clicking a tile opens a 512px preview in a shadcn `Dialog` (`view-asset`, the same readback path as `get-thumbnail`). The [viewport](../viewport-panel/) is a `<canvas>` the webview paints, so the dialog stacks over it by `z-index` like any other modal — there is no foreign window to occlude it and nothing to park.
 
 ## In the code
 
@@ -60,7 +60,7 @@ Double-clicking a tile opens a 512px preview in a shadcn `Dialog` (`view-asset`,
 | Tile grid + import + drop | `editor/src/panels/AssetsPanel.tsx` | `AssetsPanel`, `importPath`, `isInsidePanel` |
 | Tile + rename + drag source | `editor/src/components/AssetTile.tsx` | `AssetTile`, `RenameInput`, `ASSET_DND_MIME` |
 | Thumbnail blob-URL cache | `editor/src/state/store.ts` | `getThumbnailUrl`, `invalidateThumbnails`, `thumbnailCache` |
-| The View modal + park | `editor/src/components/AssetViewer.tsx` | `AssetViewer`, `viewportHidden` |
+| The View modal | `editor/src/components/AssetViewer.tsx` | `AssetViewer`, `viewAsset` |
 | Readback (engine) | `control_commands_asset.cpp` | `get-thumbnail`, `view-asset`, `list-assets`, `rename-asset` |
 
 ## Related

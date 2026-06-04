@@ -13,7 +13,7 @@ The panel renders directly from the store's `entities` slice and never fetches o
 
 The list comes from `store.entities`, which the reconcile poll refreshes only when `sceneVersion` changes. Each entity is a row: a left-click selects it, a right-click opens a Radix context menu with Copy and Delete. The header carries a Create dropdown, [the same preset list](#creating-entities) the menu bar uses.
 
-The context menu and Create dropdown are Radix portals, so they must render in a non-viewport region to avoid being hidden behind the reparented native viewport window. The Hierarchy lives in the left dock, so its menus open over the sidebar and are never occluded.
+The context menu and Create dropdown are Radix portals to the document root. The [viewport](../viewport-panel/) is a `<canvas>` the webview paints, so these menus stack over it by `z-index` like any other DOM overlay.
 
 ## Selection is optimistic
 

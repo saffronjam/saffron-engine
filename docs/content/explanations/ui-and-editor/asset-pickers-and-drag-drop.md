@@ -37,10 +37,6 @@ const onDrop = (event) => {
 
 Dragging a texture onto a Mesh field does nothing: the same type comparison guards both the combo filter and the drop, so a mismatched drop cannot land. This is a distinct channel from the OS file drop the [Assets panel](../assets-panel-and-thumbnails/) listens for, which imports a new asset rather than assigning an existing one.
 
-## Kept out of the viewport
-
-Like every Radix popover in the editor, the picker's dropdown is portalled to the document root. It must open over a non-viewport region, or the reparented native window would occlude it. The pickers therefore live in the side docks (inspector and environment), where their popovers open over the sidebar. The same rule governs the menus and the loading overlay — the [native bridge](../tauri-editor-and-x11-bridge/) page covers why.
-
 ## In the code
 
 | What | File | Symbols |

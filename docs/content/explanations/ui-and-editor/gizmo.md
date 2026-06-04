@@ -7,7 +7,7 @@ weight = 4
 
 A transform gizmo is an on-screen widget that edits a selected entity's translation, rotation, or scale by dragging handles drawn over it in the viewport. It is the direct-manipulation alternative to typing transform values into a panel.
 
-The gizmo is rendered by the engine, not the UI. Under [present-only mode](../tauri-editor-and-x11-bridge/) ImGui is skipped, so there is no ImGuizmo path; the engine draws the handles itself and the webview forwards pointer intent and the chosen mode over the control socket.
+The gizmo is rendered by the engine, not the UI. Under [present-only mode](../tauri-editor-and-viewport-transport/) ImGui is skipped, so there is no ImGuizmo path; the engine draws the handles itself and the webview forwards pointer intent and the chosen mode over the control socket.
 
 ## Engine-rendered overlay
 
@@ -17,7 +17,7 @@ The light and camera billboards are drawn the same way. The engine projects each
 
 ## The gizmo-pointer command
 
-The webview owns the DOM and its pointer events; the reparented native window receives no raw mouse from it. The [viewport panel](../viewport-panel/) therefore translates each pointer phase into NDC and forwards it with the `gizmo-pointer` command:
+The handles are drawn into the frame stream the webview paints, so the engine receives no raw mouse from the canvas. The [viewport panel](../viewport-panel/) therefore translates each pointer phase into NDC and forwards it with the `gizmo-pointer` command:
 
 ```ts
 gizmoPointer(phase: GizmoPointerPhase, x: number, y: number): Promise<unknown> {

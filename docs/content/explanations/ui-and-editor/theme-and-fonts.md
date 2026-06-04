@@ -43,10 +43,7 @@ The theme defaults to system sans and monospace stacks. Roboto and Roboto Mono r
 
 ## Layout: a resizable dock
 
-The dock is reproduced with `react-resizable-panels` (shadcn's `resizable`): Hierarchy plus a tabbed Inspector/Environment/Stats column on the left, Assets along the bottom, [Viewport](../viewport-panel/) in the center. The split ratios are left 0.20, bottom 0.28, and a 0.45/0.55 split within the left column. Render Stats is tabbed next to Inspector and Environment, which keeps every panel in a non-viewport region.
-
-> [!NOTE]
-> Every panel, handle, and Radix portal lives outside the viewport rect on purpose. The reparented native window always paints over its rect, so the dock arrangement is also the occlusion strategy — see [the native bridge](../tauri-editor-and-x11-bridge/) page.
+The dock is reproduced with `react-resizable-panels` (shadcn's `resizable`): Hierarchy plus a tabbed Inspector/Environment/Stats column on the left, Assets along the bottom, [Viewport](../viewport-panel/) in the center. The split ratios are left 0.20, bottom 0.28, and a 0.45/0.55 split within the left column. Render Stats is tabbed next to Inspector and Environment. The viewport is a `<canvas>` the webview paints, so panels, popovers, and modals stack over it by `z-index` like any other DOM element — the chrome and the viewport are one composited surface.
 
 ## In the code
 
@@ -59,6 +56,6 @@ The dock is reproduced with `react-resizable-panels` (shadcn's `resizable`): Hie
 
 ## Related
 
-- [Tauri editor and the X11 bridge](../tauri-editor-and-x11-bridge/) — the shell the theme dresses + the occlusion rule
+- [Tauri editor and the viewport transport](../tauri-editor-and-viewport-transport/) — the shell the theme dresses
 - [Viewport panel](../viewport-panel/) — the panel that fills the dock center
 - [Inspector](../inspector/) — uses the mono font for its data fields
