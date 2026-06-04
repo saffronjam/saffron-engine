@@ -198,9 +198,36 @@ export namespace se
                                              { "name", entry.name },
                                              { "type", assetTypeName(entry.type) },
                                              { "path", entry.path },
+                                             { "folder", entry.folder },
                                              { "hdr", entry.hdr } });
         }
         return assets;
+    }
+
+    auto catalogFoldersToJson(const AssetCatalog& catalog) -> nlohmann::json
+    {
+        nlohmann::json folders = nlohmann::json::array();
+        for (const std::string& folder : catalog.folders)
+        {
+            folders.push_back(folder);
+        }
+        return folders;
+    }
+
+    void catalogFoldersFromJson(AssetCatalog& catalog, const nlohmann::json& folders)
+    {
+        catalog.folders.clear();
+        if (!folders.is_array())
+        {
+            return;
+        }
+        for (const nlohmann::json& folder : folders)
+        {
+            if (folder.is_string())
+            {
+                catalog.folders.push_back(folder.get<std::string>());
+            }
+        }
     }
 
     void catalogFromJson(AssetCatalog& catalog, const nlohmann::json& assets)
@@ -222,6 +249,7 @@ export namespace se
             parsed.name = jsonStringOr(entry, "name", std::string{});
             parsed.type = assetTypeFromName(jsonStringOr(entry, "type", std::string{ "mesh" }));
             parsed.path = jsonStringOr(entry, "path", std::string{});
+            parsed.folder = jsonStringOr(entry, "folder", std::string{});
             parsed.hdr = jsonBoolOr(entry, "hdr", false);
             if (parsed.id.value != 0)
             {
@@ -316,6 +344,7 @@ export namespace se
         doc["name"] = project.name;
         doc["displayName"] = project.displayName;
         doc["assets"] = catalogToJson(assets.catalog);
+        doc["assetFolders"] = catalogFoldersToJson(assets.catalog);
         doc["scene"] = sceneToJson(reg, scene);
 
         const std::filesystem::path parent = std::filesystem::path(target).parent_path();
@@ -367,6 +396,7 @@ export namespace se
         project = projectInfoFromPath(path, doc);
         setAssetRoot(assets, (std::filesystem::path(project.root) / "assets").string());
         catalogFromJson(assets.catalog, doc.value("assets", nlohmann::json::array()));
+        catalogFoldersFromJson(assets.catalog, doc.value("assetFolders", nlohmann::json::array()));
         return sceneFromJson(reg, scene, doc.value("scene", nlohmann::json::object()));
     }
 
@@ -390,6 +420,7 @@ export namespace se
         waitGpuIdle(renderer);
         scene = Scene{};
         assets.catalog.entries.clear();
+        assets.catalog.folders.clear();
         assets.catalog.byId.clear();
         clearAssetCaches(assets);
         setAssetRoot(assets, (root / "assets").string());
@@ -441,7 +472,8 @@ export namespace se
         {
             return Err(std::format("write failed for texture '{}'", relativePath));
         }
-        putAsset(assets.catalog, AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath });
+        putAsset(assets.catalog,
+                 AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath, std::string{} });
         assets.textureRefByUuid[id.value] = *texture;
         return id;
     }
@@ -474,8 +506,8 @@ export namespace se
         {
             return Err(std::format("write failed for texture '{}'", relativePath));
         }
-        putAsset(assets.catalog,
-                 AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath, true });
+        putAsset(assets.catalog, AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath,
+                                             std::string{}, true });
         assets.textureRefByUuid[id.value] = *texture;
         return id;
     }
@@ -595,8 +627,8 @@ export namespace se
         {
             return Err(meshRef.error());
         }
-        putAsset(assets.catalog,
-                 AssetEntry{ meshId, uniqueName(assets.catalog, baseName), AssetType::Mesh, relativePath });
+        putAsset(assets.catalog, AssetEntry{ meshId, uniqueName(assets.catalog, baseName), AssetType::Mesh,
+                                             relativePath, std::string{} });
         assets.meshRefByUuid[meshId.value] = *meshRef;
 
         ImportResult result;
