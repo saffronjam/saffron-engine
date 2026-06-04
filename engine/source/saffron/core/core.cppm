@@ -2,6 +2,29 @@ export module Saffron.Core;
 
 import std;
 
+namespace se
+{
+    // Maps a caller's source path to its module directory under source/saffron/
+    // ("rendering", "scene", …) — the default subsystem tag for the log functions.
+    auto logSubsystem(std::source_location location) -> std::string_view
+    {
+        std::string_view path = location.file_name();
+        constexpr std::string_view root = "source/saffron/";
+        const std::size_t rootAt = path.rfind(root);
+        if (rootAt == std::string_view::npos)
+        {
+            return "engine";
+        }
+        path.remove_prefix(rootAt + root.size());
+        const std::size_t slash = path.find('/');
+        if (slash == std::string_view::npos)
+        {
+            return "engine";
+        }
+        return path.substr(0, slash);
+    }
+}
+
 export namespace se
 {
     // Fixed-width aliases — short, Go-like spellings.
@@ -96,18 +119,43 @@ export namespace se
         return out;
     }
 
-    void logInfo(std::string_view message)
+    /// Severity of a log line; Warn and Error insert their level before the message.
+    enum class LogLevel
     {
-        std::println("[saffron] {}", message);
+        Info,
+        Warn,
+        Error,
+    };
+
+    /// Prints one stdout line `[saffron:subsystem] message` (`warn:` / `error:` ahead of
+    /// the message for the non-info levels) — the prefix keeps engine output grep-able.
+    /// Callers reporting on another component's behalf (e.g. the Vulkan debug messenger)
+    /// pass the subsystem explicitly; everything else uses the wrappers below.
+    void log(LogLevel level, std::string_view subsystem, std::string_view message)
+    {
+        switch (level)
+        {
+            case LogLevel::Info: std::println("[saffron:{}] {}", subsystem, message); return;
+            case LogLevel::Warn: std::println("[saffron:{}] warn: {}", subsystem, message); return;
+            case LogLevel::Error: std::println("[saffron:{}] error: {}", subsystem, message); return;
+        }
     }
 
-    void logWarn(std::string_view message)
+    /// Logs at info, tagged with the calling module's subsystem.
+    void logInfo(std::string_view message, std::source_location location = std::source_location::current())
     {
-        std::println("[saffron] warn: {}", message);
+        log(LogLevel::Info, logSubsystem(location), message);
     }
 
-    void logError(std::string_view message)
+    /// Logs at warn, tagged with the calling module's subsystem.
+    void logWarn(std::string_view message, std::source_location location = std::source_location::current())
     {
-        std::println("[saffron] error: {}", message);
+        log(LogLevel::Warn, logSubsystem(location), message);
+    }
+
+    /// Logs at error, tagged with the calling module's subsystem.
+    void logError(std::string_view message, std::source_location location = std::source_location::current())
+    {
+        log(LogLevel::Error, logSubsystem(location), message);
     }
 }

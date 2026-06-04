@@ -17,7 +17,9 @@ failure surfaces as a readable message rather than a crash.
 ## Instance and surface
 
 `vkb::InstanceBuilder` sets the app and engine names, requires API version 1.4, turns on validation
-layers, and installs the default debug messenger. SDL3 supplies the platform surface extensions via
+layers, and installs the engine's debug callback, which prints messenger output as one
+`[saffron:vulkan] …` line and filters known noise — see [Logging](../../core-and-conventions/logging/).
+SDL3 supplies the platform surface extensions via
 `SDL_Vulkan_GetInstanceExtensions`. The window surface comes from SDL directly: `SDL_Vulkan_CreateSurface`
 produces a raw `VkSurfaceKHR`, wrapped as `vk::SurfaceKHR`.
 

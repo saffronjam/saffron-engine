@@ -38,15 +38,17 @@ math = false
 |---|---|---|
 | `TimeSpan` | `f32 seconds = 0.0f` | span of time |
 | `Uuid` | `u64 value = 0` | stable 64-bit identity (entt ids are not stable across runs) |
+| `LogLevel` | `Info`, `Warn`, `Error` | severity passed to `log` |
 
 ## Functions
 | Symbol | Signature | Effect |
 |---|---|---|
 | `toMilliseconds` | `constexpr auto toMilliseconds(TimeSpan span) -> f32` | `span.seconds * 1000` |
 | `newUuid` | `auto newUuid() -> Uuid` | random nonzero u64 |
-| `logInfo` | `void logInfo(std::string_view)` | `[saffron] …` |
-| `logWarn` | `void logWarn(std::string_view)` | `[saffron] warn: …` |
-| `logError` | `void logError(std::string_view)` | `[saffron] error: …` |
+| `log` | `void log(LogLevel, std::string_view subsystem, std::string_view)` | `[saffron:subsystem] …` with `warn:` / `error:` for the non-info levels |
+| `logInfo` | `void logInfo(std::string_view, std::source_location = current())` | `[saffron:<caller's module>] …` |
+| `logWarn` | `void logWarn(std::string_view, std::source_location = current())` | `[saffron:<caller's module>] warn: …` |
+| `logError` | `void logError(std::string_view, std::source_location = current())` | `[saffron:<caller's module>] error: …` |
 
 ## Constants
 | Symbol | Value |
