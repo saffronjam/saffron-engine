@@ -131,10 +131,15 @@ namespace se
         return found;
     }
 
+    auto entityRefDto(Scene& scene, Entity entity) -> EntityRef
+    {
+        return EntityRef{ WireUuid{ getComponent<IdComponent>(scene, entity).id.value },
+                          getComponent<NameComponent>(scene, entity).name };
+    }
+
     auto entityRef(Scene& scene, Entity entity) -> json
     {
-        return json{ { "id", std::to_string(getComponent<IdComponent>(scene, entity).id.value) },
-                     { "name", getComponent<NameComponent>(scene, entity).name } };
+        return dtoToJson(entityRefDto(scene, entity));
     }
 
     void registerBuiltinCommands(CommandRegistry& reg)
