@@ -6,7 +6,7 @@
  */
 
 /**
- * Stable u64 id. Emitted as a JSON number on the wire (may exceed 2^53); typed as string in TS (tsType) and string-preserve-parsed to avoid precision loss.
+ * Stable u64 id, carried on the wire as a decimal JSON string. Ids span the full u64 range and exceed JS's 2^53 safe integer, so a string is the only form that survives JSON.parse without precision loss.
  *
  * This interface was referenced by `Protocol`'s JSON-Schema
  * via the `definition` "Uuid".
@@ -301,6 +301,9 @@ export interface RenderStats {
   drawCalls: number;
   batches: number;
   instances: number;
+  frameMs: number;
+  fps: number;
+  gpuMs: number;
   blasCount: number;
   pipelines: number;
   clustered: boolean;
@@ -351,6 +354,8 @@ export interface CommandResultMap {
   "add-entity": EntityRef;
   "copy-entity": EntityRef;
   "create-entity": EntityRef;
+  "rename-entity": EntityRef;
+  focus: EntityRef;
   "get-selection": Selection;
   inspect: InspectResult;
   "list-entities": EntityList;

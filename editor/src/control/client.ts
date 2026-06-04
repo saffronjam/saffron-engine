@@ -110,8 +110,16 @@ export const client = {
   addEntity(preset: EntityPreset): Promise<EntityRef> {
     return call("add-entity", { preset });
   },
+  /// Create an empty named entity; the engine returns its ref (no auto-select).
+  createEntity(name: string): Promise<EntityRef> {
+    return call("create-entity", { name });
+  },
   copyEntity(id: string): Promise<EntityRef> {
     return call("copy-entity", { entity: id });
+  },
+  /// Set the entity's Name component; echoes the updated ref.
+  renameEntity(id: string, name: string): Promise<EntityRef> {
+    return call("rename-entity", { entity: id, name });
   },
 
   // --- transform / components ---
@@ -160,6 +168,10 @@ export const client = {
   },
 
   // --- editor camera ---
+  /// Aim the editor camera at the entity (the F shortcut / hierarchy Focus).
+  focus(id: string): Promise<EntityRef> {
+    return call("focus", { entity: id });
+  },
   getCamera(): Promise<EditorCamera> {
     return call("get-camera");
   },

@@ -18,9 +18,7 @@ type AnySchema = Record<string, unknown>;
 
 /// Map a schema file name (e.g. "entity-ref.schema.json") to its title by reading it.
 async function loadSchemas(): Promise<Map<string, AnySchema>> {
-  const files = (await readdir(schemaDir))
-    .filter((f) => f.endsWith(".schema.json"))
-    .sort();
+  const files = (await readdir(schemaDir)).filter((f) => f.endsWith(".schema.json")).sort();
   const byFile = new Map<string, AnySchema>();
   for (const file of files) {
     const text = await readFile(join(schemaDir, file), "utf8");
@@ -73,6 +71,8 @@ export interface CommandResultMap {
   "add-entity": EntityRef;
   "copy-entity": EntityRef;
   "create-entity": EntityRef;
+  "rename-entity": EntityRef;
+  focus: EntityRef;
   "get-selection": Selection;
   inspect: InspectResult;
   "list-entities": EntityList;
