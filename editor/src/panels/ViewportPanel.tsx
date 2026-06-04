@@ -152,7 +152,7 @@ export function ViewportPanel() {
       // socket. Retry on a timer until it does, then attach. (`cancelled` makes any
       // pending retry a no-op after unmount.)
       try {
-        await client.raw("viewport-native-info");
+        await client.viewportNativeInfo();
       } catch {
         if (cancelled) {
           return;
