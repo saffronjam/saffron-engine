@@ -24,6 +24,11 @@ export interface CoalescerOptions<T> {
   send: (latest: T) => Promise<unknown>;
 }
 
+/// Minimum gap between two logged coalesced-write rejections, so a sustained
+/// failure during a scrub stream produces at most one console.error per window
+/// instead of one per dropped frame.
+const ERROR_LOG_THROTTLE_MS = 2000;
+
 export function makeCoalescer<T>(options: CoalescerOptions<T>): Coalescer<T> {
   const throttleMs = options.throttleMs ?? 4;
   const { send } = options;
@@ -34,6 +39,20 @@ export function makeCoalescer<T>(options: CoalescerOptions<T>): Coalescer<T> {
   let completed = 0;
   let inFlight = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let lastErrorLoggedAt = 0;
+
+  // A coalesced write is the tail of a scrub/drag stream, so a per-rejection toast
+  // would spam. Drop the value (the next push supersedes it) but log at most once
+  // per ERROR_LOG_THROTTLE_MS so a persistent failure is not fully silent.
+  function logRejection(err: unknown): void {
+    const now = performance.now();
+    if (now - lastErrorLoggedAt < ERROR_LOG_THROTTLE_MS) {
+      return;
+    }
+    lastErrorLoggedAt = now;
+    // eslint-disable-next-line no-console
+    console.error("coalesced write rejected:", err);
+  }
 
   function flush(): void {
     const buffered = pending;
@@ -45,7 +64,7 @@ export function makeCoalescer<T>(options: CoalescerOptions<T>): Coalescer<T> {
     sent += 1;
     inFlight += 1;
     void Promise.resolve(send(buffered.value))
-      .catch(() => {})
+      .catch(logRejection)
       .finally(() => {
         completed += 1;
         inFlight = Math.max(0, inFlight - 1);
