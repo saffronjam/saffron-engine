@@ -1,6 +1,6 @@
 # Phase 3 — Input/coords re-point, lifecycle without attach, drop the X11 force
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 **Depends on:** phase 2
 

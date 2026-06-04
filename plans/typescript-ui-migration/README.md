@@ -52,11 +52,14 @@ phase 10 (where the host target relocates to a surviving location, not deleted).
 
 ## Working approach (resolved decisions)
 
-- **X11-reparent + `presentViewportOnly` is the sole production bridge.** The
+- **X11-reparent + `presentViewportOnly` was the sole production bridge.** The
   fd-export/DMA-BUF path (`wt:editor/src-tauri/src/viewport_bridge.rs`, 417 lines, GTK4,
   never spawned) is **not forward-ported at all** — there is nothing to "quarantine" on
-  `main` since those pieces never existed there. Wayland is XWayland-only (the parent XID
-  hard-requires Xlib, `wt:lib.rs:89-97`).
+  `main` since those pieces never existed there. Wayland was XWayland-only (the parent XID
+  hard-required Xlib, `wt:lib.rs:89-97`). **Superseded by
+  [`../viewport-presentation`](../viewport-presentation/README.md):** the X11 reparent is
+  gone — the engine renders windowless and streams frames to an in-webview `<canvas>`, so the
+  editor runs the session's native Wayland with no `GDK_BACKEND`/`SDL_VIDEODRIVER` force.
 - **One generic Rust `control(cmd, params)` passthrough** replaces the 8 bespoke MVP shims;
   Rust keeps only the window-handle commands (spawn / attach / resize / quit). Adding any
   new `se` command then needs zero Rust change.
@@ -286,7 +289,9 @@ State these explicitly so they are not mistaken for gaps or read as regressions:
 - **Undo/redo.**
 - **Scene-graph parenting / `resolveRefs`.**
 - **Multi-viewport** (and multi-viewport gizmo).
-- **Native Wayland** (XWayland-only; the parent XID hard-requires Xlib).
+- ~~**Native Wayland** (XWayland-only; the parent XID hard-requires Xlib).~~ Superseded — it
+  shipped: [`../viewport-presentation`](../viewport-presentation/README.md) dropped the X11
+  reparent, so the editor now runs the session's native Wayland (no parent XID, no Xlib).
 - The **fd-export/DMA-BUF** viewport path (confirmed not forward-ported).
 
 ## Open questions
@@ -306,8 +311,11 @@ State these explicitly so they are not mistaken for gaps or read as regressions:
    begin/drag/end-drag + hover via a `gizmo-pointer` control command (robust, NDC) vs forward
    raw SDL pointer to the child window. Plan defaults to command-driven with raw-pointer as
    an optimization.
-4. **fd-export/DMA-BUF:** confirmed not forward-ported. Revisit only if native Wayland
-   (cannot `XReparent`) becomes a hard requirement. Plan accepts X11/XWayland-only.
+4. **fd-export/DMA-BUF:** confirmed not forward-ported. **Resolved by
+   [`../viewport-presentation`](../viewport-presentation/README.md):** the viewport now
+   streams frames through a shared-memory ring onto an in-webview `<canvas>`, dropping the
+   X11 reparent entirely (native Wayland, no `GDK_BACKEND`/`SDL_VIDEODRIVER` force); a
+   zero-copy dmabuf/Wayland-subsurface path stays a measurement-gated optional optimization.
 5. **Shared types:** schema-first accepted as the durable contract; introducing named C++ DTO
    structs now (to enable `reflect-cpp` as origin) is deferred because it would refactor every
    inline-json command body. Confirm schema-first + contract test is sufficient long-term.

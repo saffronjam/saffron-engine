@@ -1,6 +1,6 @@
 # Phase 2 — Frame transport + in-webview canvas surface
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 **Depends on:** phase 1
 

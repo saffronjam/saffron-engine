@@ -1,6 +1,6 @@
 # Phase 1 — Windowless offscreen viewport + async readback ring
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 **Depends on:** —
 
@@ -35,10 +35,11 @@ The render already terminates in an offscreen image and only *then* reaches the 
    (`renderer_detail.cppm:104`), the `vkAcquireNextImageKHR`/`presentKHR` calls
    (`renderer.cppm:573`,`:1718`), and `presentViewportToSwapchain` so they are skipped.
 
-2. **Resolve offscreen `R16F` → `RGBA8` sRGB** into a per-ring image. Reuse the same
-   conversion the swapchain blit performs (`vkCmdBlitImage`, Nearest, format change), but
-   target an `RGBA8_UNORM`/`SRGB` image instead of a `B8G8R8A8` swapchain image. Confirm
-   premultiplied-alpha + sRGB encoding (Open Question #3).
+2. **Resolve offscreen `R16F` → `RGBA8` UNORM** into a per-ring image. Reuse the same
+   `vkCmdBlitImage` (Nearest, format change) the swapchain path performs, but target an
+   `RGBA8_UNORM` image instead of a `B8G8R8A8` swapchain image. UNORM, not sRGB: the offscreen
+   is already post-tonemap display-encoded, so the blit is a straight byte copy — an sRGB
+   target would re-apply the transfer and double-encode (Open Question #3, resolved).
 
 3. **Async readback ring (N = 2–3 frames).** Per ring slot: a host-visible mapped buffer
    (`newHostCaptureBuffer`) + its own fence. Each frame: record `captureImageToBuffer` into

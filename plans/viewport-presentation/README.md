@@ -5,7 +5,11 @@ webview**, and instead give the webview an unobstructed surface that shows the e
 rendered frames. This removes the single thing that drags the whole editor UI below its
 refresh rate.
 
-**Status:** NOT STARTED
+**Status:** NOT STARTED (a first implementation of phases 1-3 was built but crashed the
+webview with a Wayland protocol error on every `make run` and was rolled back — see
+[`revert-to-x11-child.md`](revert-to-x11-child.md). The editor is back on the reparented
+X11 child window. A retry should keep `GDK_BACKEND=x11` for the webview while swapping the
+viewport transport, so the canvas path is isolated from the backend change.)
 
 ## Why (measured, not theorised)
 
@@ -106,17 +110,27 @@ measurement-gated optimization, not a prerequisite.
 ## Open questions
 
 1. **Readback latency (gates phase 4):** is one frame of GPU→CPU→upload latency acceptable
-   for camera-orbit and gizmo-drag at 1080p/1440p viewport sizes on the 3070 Ti? Phase 2
-   instruments this (readback ms, end-to-end latency); the number decides whether phase 4
-   runs.
+   for camera-orbit and gizmo-drag at 1080p/1440p viewport sizes on the 3070 Ti?
+   **Instrumented, not yet measured on real hardware.** The engine logs the readback
+   publish/copy/lag figures every 120 frames (`renderer.cppm`, `publishViewportFrame`), and
+   the webview console-logs fetch/upload-draw/lag/fps (`ViewportPanel.tsx`, `logStats`). No
+   representative number exists here: the toolbox runs software llvmpipe, where GPU→CPU
+   readback cost is not comparable to a discrete GPU. Phase 4 is deferred on the assumption
+   that one-frame latency is fine on the target 3070 Ti. **Remains to measure:** end-to-end
+   seqno→draw latency at 1080p/1440p on real hardware before either building or finally
+   deleting phase 4.
 2. **Transport for the frame bytes (phase 2):** shared-memory file (`memfd`/shm in
    `XDG_RUNTIME_DIR`) mmap'd by both engine and the Rust shell, surfaced to the webview via a
    Tauri custom URI scheme returning raw bytes — vs. a second binary unix socket. Default:
    shm + custom protocol + a seqno header the webview polls; avoids base64 and JSON for the
    hot payload.
-3. **Color/transfer on the wire (phase 1/2):** the offscreen is post-tonemap display-referred
-   `R16F`; readback resolves to `RGBA8` sRGB (one blit, same conversion the swapchain blit
-   already does). Confirm premultiplied-alpha + sRGB handling matches `<canvas>` expectations.
+3. **Color/transfer on the wire (phase 1/2):** **Resolved — `RGBA8` UNORM, not sRGB.** The
+   offscreen is already post-tonemap display-encoded, so the readback image is
+   `R8G8B8A8_UNORM` (`newReadbackImage`, `renderer_detail.cppm`): the blit is a straight byte
+   copy, not a transfer-function conversion. Targeting an sRGB image would re-apply the EOTF
+   and double-encode the already-encoded bytes. The webview uploads the plane as a plain
+   `RGBA8` WebGL texture with no premultiply or sRGB step; the e2e contract pins this as
+   `format 1 // RGBA8, display-encoded` (`viewport.test.ts`).
 4. **Subsurface viability (phase 4 spike):** can wry/gdk expose the webview's `wl_surface`
    for a child subsurface, with correct stacking/clipping under the viewport rect and pointer
    routing? The old `viewport_bridge.rs` is a starting reference, not a drop-in.
