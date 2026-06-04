@@ -220,6 +220,25 @@ export namespace se
         Procedural,
     };
 
+    // Physically based atmosphere parameters (Hillaire 2020). When enabled, the
+    // atmosphere LUT chain replaces the gradient ibl_skygen as the envCube source, so the
+    // visible sky and the IBL convolutions both become the atmosphere. Coefficients are in
+    // 1/Mm at sea level; lengths in km.
+    struct AtmosphereSettings
+    {
+        bool enabled = false;
+        f32 planetRadius = 6360.0f;
+        f32 atmosphereHeight = 100.0f;
+        glm::vec3 rayleighScattering{ 5.802f, 13.558f, 33.1f };
+        f32 rayleighScaleHeight = 8.0f;
+        f32 mieScattering = 3.996f;
+        f32 mieScaleHeight = 1.2f;
+        f32 mieAnisotropy = 0.8f;
+        glm::vec3 ozoneAbsorption{ 0.650f, 1.881f, 0.085f };
+        f32 sunDiskAngularRadius = 0.00465f;
+        f32 sunDiskIntensity = 20.0f;
+    };
+
     // Scene-wide environment / sky state. Global frame state (no transform, not picked,
     // not in the hierarchy), so it lives on the Scene rather than as an entity component.
     // The renderer resolves it into a SkyRenderSettings each frame (see renderScene).
@@ -235,6 +254,7 @@ export namespace se
         bool useSkyForAmbient = true;                 // drive fallback ambient from ambientColor below
         glm::vec3 ambientColor{ 1.0f };               // non-IBL fallback ambient tint
         f32 ambientIntensity = 0.15f;
+        AtmosphereSettings atmosphere;                // physically based envCube source (off = gradient)
     };
 
     struct Scene
@@ -373,63 +393,26 @@ export namespace se
                           jsonF32Or(j, "z", 1.0f), jsonF32Or(j, "w", 1.0f) };
     }
 
-    auto skyModeName(SkyMode mode) -> const char*
-    {
-        switch (mode)
-        {
-            case SkyMode::Color: return "color";
-            case SkyMode::Texture: return "texture";
-            case SkyMode::Procedural: return "procedural";
-        }
-        return "procedural";
-    }
-
-    auto skyModeFromName(const std::string& name) -> SkyMode
-    {
-        if (name == "color") { return SkyMode::Color; }
-        if (name == "texture") { return SkyMode::Texture; }
-        if (name == "procedural") { return SkyMode::Procedural; }
-        logWarn(std::format("unknown sky mode '{}', defaulting to procedural", name));
-        return SkyMode::Procedural;
-    }
-
-    auto environmentToJson(const SceneEnvironment& env) -> nlohmann::json
-    {
-        return nlohmann::json{
-            { "skyMode", skyModeName(env.skyMode) },
-            { "clearColor", vec3ToJson(env.clearColor) },
-            { "skyTexture", uuidToJson(env.skyTexture.value) },
-            { "skyIntensity", env.skyIntensity },
-            { "skyRotation", env.skyRotation },
-            { "exposure", env.exposure },
-            { "visible", env.visible },
-            { "useSkyForAmbient", env.useSkyForAmbient },
-            { "ambientColor", vec3ToJson(env.ambientColor) },
-            { "ambientIntensity", env.ambientIntensity },
-        };
-    }
-
-    // Reads an environment block, filling defaults for any missing field (so a partial or
-    // absent block — e.g. a migrated v1 scene — yields a sensible default environment).
-    auto environmentFromJson(const nlohmann::json& j) -> SceneEnvironment
-    {
-        SceneEnvironment env;
-        if (!j.is_object())
-        {
-            return env;
-        }
-        env.skyMode = skyModeFromName(jsonStringOr(j, "skyMode", "procedural"));
-        if (j.contains("clearColor")) { env.clearColor = vec3FromJson(j["clearColor"]); }
-        env.skyTexture = Uuid{ jsonU64Or(j, "skyTexture", 0) };
-        env.skyIntensity = jsonF32Or(j, "skyIntensity", 1.0f);
-        env.skyRotation = jsonF32Or(j, "skyRotation", 0.0f);
-        env.exposure = jsonF32Or(j, "exposure", 1.0f);
-        env.visible = jsonBoolOr(j, "visible", true);
-        env.useSkyForAmbient = jsonBoolOr(j, "useSkyForAmbient", true);
-        if (j.contains("ambientColor")) { env.ambientColor = vec3FromJson(j["ambientColor"]); }
-        env.ambientIntensity = jsonF32Or(j, "ambientIntensity", 0.15f);
-        return env;
-    }
+    auto nameComponentToJson(const NameComponent& c) -> nlohmann::json;
+    auto nameComponentFromJson(NameComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto transformComponentToJson(const TransformComponent& t) -> nlohmann::json;
+    auto transformComponentFromJson(TransformComponent& t, const nlohmann::json& j) -> Result<void>;
+    auto meshComponentToJson(const MeshComponent& c) -> nlohmann::json;
+    auto meshComponentFromJson(MeshComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto cameraComponentToJson(const CameraComponent& c) -> nlohmann::json;
+    auto cameraComponentFromJson(CameraComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto materialComponentToJson(const MaterialComponent& c) -> nlohmann::json;
+    auto materialComponentFromJson(MaterialComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto directionalLightComponentToJson(const DirectionalLightComponent& c) -> nlohmann::json;
+    auto directionalLightComponentFromJson(DirectionalLightComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto pointLightComponentToJson(const PointLightComponent& c) -> nlohmann::json;
+    auto pointLightComponentFromJson(PointLightComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto spotLightComponentToJson(const SpotLightComponent& c) -> nlohmann::json;
+    auto spotLightComponentFromJson(SpotLightComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto reflectionProbeComponentToJson(const ReflectionProbeComponent& c) -> nlohmann::json;
+    auto reflectionProbeComponentFromJson(ReflectionProbeComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto environmentToJson(const SceneEnvironment& env) -> nlohmann::json;
+    auto environmentFromJson(const nlohmann::json& j) -> SceneEnvironment;
 
     // ComponentTraits is a struct of std::function fields (a Go-interface itable);
     // every cross-cutting feature dispatches through it instead of a switch.
@@ -679,28 +662,13 @@ export namespace se
         ComponentRegistry reg;
         registerComponent<NameComponent>(reg, "Name",
             [](Scene&, Entity) {},
-            [](const NameComponent& c) -> nlohmann::json { return nlohmann::json{ { "name", c.name } }; },
-            [](NameComponent& c, const nlohmann::json& j) -> Result<void>
-            {
-                c.name = jsonStringOr(j, "name", std::string{});
-                return {};
-            },
+            nameComponentToJson,
+            nameComponentFromJson,
             false);
         registerComponent<TransformComponent>(reg, "Transform",
             [](Scene&, Entity) {},
-            [](const TransformComponent& t)
-            -> nlohmann::json {
-                return nlohmann::json{ { "translation", vec3ToJson(t.translation) },
-                                       { "scale", vec3ToJson(t.scale) },
-                                       { "rotation", vec3ToJson(t.rotation) } };
-            },
-            [](TransformComponent& t, const nlohmann::json& j) -> Result<void>
-            {
-                t.translation = vec3FromJson(j.value("translation", nlohmann::json::object()));
-                t.scale = vec3FromJson(j.value("scale", nlohmann::json::object()));
-                t.rotation = vec3FromJson(j.value("rotation", nlohmann::json::object()));
-                return {};
-            },
+            transformComponentToJson,
+            transformComponentFromJson,
             false);
 
         Scene scene;
