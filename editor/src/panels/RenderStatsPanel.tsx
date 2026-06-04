@@ -1,11 +1,14 @@
 /// The Render Stats panel: a live readout of `render-stats` (counters + active
 /// feature toggles) plus the render toggles that drive them. Mirrors the C++
-/// render-stats / toggle surface, with one important honesty caveat:
+/// render-stats / toggle surface.
 ///
-///   - There is NO engine frame rate on the control wire. The "UI poll" rate is
-///     the WEBVIEW reconcile cadence (a client-side EMA), NOT the renderer's fps —
-///     the native viewport paints independently of this webview. It is labelled as
-///     such, never as engine fps.
+/// The stats card carries two timing families that must not be conflated:
+///   - "Engine frame" / "GPU" come from `render-stats` (the renderer's own fps,
+///     CPU frame time, and GPU pass time). GPU time is "—" until the engine has a
+///     timestamp readback.
+///   - "UI poll" / "UI frame" are client-side: the webview reconcile cadence and
+///     the webview repaint rate. The native viewport paints independently of the
+///     webview, so these are separate from the engine frame timing.
 ///
 /// The RT-gated toggles (`rtShadows`, `restir`) are DISABLED when
 /// `rtSupported === false`; even when enabled, a `set-*` may still reject with the
@@ -30,11 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type AaMode = RenderStats["aa"];
 
@@ -194,10 +193,13 @@ export function RenderStatsPanel() {
             <Stat label="Exposure (EV)" value={stats.exposureEv.toFixed(2)} />
             <Stat label="HDR" value={stats.hdr ? "yes" : "no"} />
             <Stat label="RT supported" value={stats.rtSupported ? "yes" : "no"} />
+            <Separator className="my-1" />
             <Stat
-              label="UI poll"
-              value={pollRateHz > 0 ? `${pollRateHz.toFixed(1)} Hz` : "—"}
+              label="Engine frame"
+              value={`${stats.fps.toFixed(0)} fps / ${stats.frameMs.toFixed(2)} ms`}
             />
+            <Stat label="GPU" value={stats.gpuMs > 0 ? `${stats.gpuMs.toFixed(2)} ms` : "—"} />
+            <Stat label="UI poll" value={pollRateHz > 0 ? `${pollRateHz.toFixed(1)} Hz` : "—"} />
             <Stat
               label="UI frame"
               value={
@@ -209,7 +211,8 @@ export function RenderStatsPanel() {
           </section>
 
           <p className="px-0.5 text-[10px] italic leading-tight text-muted-foreground">
-            UI frame is the webview repaint rate. UI poll is the reconcile rate. Neither is engine fps.
+            Engine frame and GPU are the renderer's timings. UI poll is the reconcile rate and UI
+            frame is the webview repaint rate — both client-side, independent of the viewport.
           </p>
 
           <Separator className="my-0.5" />
