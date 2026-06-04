@@ -17,6 +17,7 @@ added.
 | `ecs-architecture` | entt `Scene`/`Entity`, value components, `forEach` | `scene.cppm` |
 | `built-in-components` | Id, Name, Transform, Mesh, Material, Camera, the three light types | `scene.cppm` |
 | `transform-and-matrices` | `TransformComponent` (Euler XYZ radians), matrix composition | `scene.cppm` · `transformMatrix` |
+| `scene-hierarchy` | parent/child via `RelationshipComponent`, cached world transforms, reparent + subtree destroy | `scene.cppm` · `setParent` |
 | `component-registry` | the closures itable, `registerComponent<C>`, lookup by name/id | `scene.cppm` · `ComponentRegistry` |
 | `scene-serialization` | registry-driven JSON save/load, UUID stability | `scene.cppm` |
 | `asset-catalog-in-scene` | `AssetCatalog` lives here; `Scene` borrows a `const AssetCatalog*` | `scene.cppm` · `AssetCatalog` |

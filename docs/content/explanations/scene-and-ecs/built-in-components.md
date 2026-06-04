@@ -45,6 +45,22 @@ struct TransformComponent
 };
 ```
 
+## Hierarchy
+
+`RelationshipComponent` makes the entity a node in the [scene tree](../scene-hierarchy/): a durable
+parent Uuid (0 means root) plus runtime `parentHandle`/`children` caches that never serialize. Every
+entity gets a root one from `createEntity`. It is registered non-removable, and parenting is edited
+through `setParent` rather than as a raw field.
+
+```cpp
+struct RelationshipComponent
+{
+    Uuid parent;                              // 0 == root
+    entt::entity parentHandle = entt::null;   // resolved cache
+    std::vector<entt::entity> children;       // derived cache
+};
+```
+
 ## Mesh and material
 
 `MeshComponent` references a mesh asset by [Uuid](../asset-catalog-in-scene/); the
@@ -123,6 +139,7 @@ the GPU light buffer.
 | What | File | Symbols |
 |---|---|---|
 | Identity + transform | `scene.cppm` | `IdComponent`, `NameComponent`, `TransformComponent` |
+| Hierarchy | `scene.cppm` | `RelationshipComponent` |
 | Renderables | `scene.cppm` | `MeshComponent`, `MaterialComponent` |
 | Camera | `scene.cppm` | `CameraComponent`, `primaryCamera` |
 | Lights | `scene.cppm` | `DirectionalLightComponent`, `PointLightComponent`, `SpotLightComponent` |

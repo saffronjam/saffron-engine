@@ -85,29 +85,32 @@ would mint fresh Uuids; it preserves the stored ids:
 
 ```cpp
 scene.registry.clear();
-std::unordered_map<u64, entt::entity> uuidToHandle;
 for (const nlohmann::json& entry : doc["entities"])
 {
     const u64 uuid = jsonU64Or(entry, "id", 0);
     entt::entity handle = scene.registry.create();
     scene.registry.emplace<IdComponent>(handle, Uuid{ uuid });
-    uuidToHandle.emplace(uuid, handle);
     // ... deserialize components ...
 }
+relinkHierarchy(scene);
 ```
 
 > [!NOTE]
-> The `uuidToHandle` map is built but not yet consumed. It is the seam for cross-entity references
-> (parenting, light targets) that resolve a stored Uuid to a live handle after every entity
-> exists. No reference-holding component exists yet, so the map is filled and left for the future.
+> Cross-entity references resolve only after the loop. The [scene hierarchy](../scene-hierarchy/)
+> stores each entity's parent as a Uuid, and a child's entry may precede its parent in the array,
+> so `relinkHierarchy` maps every stored parent Uuid to a live handle once all entities exist. A
+> pre-hierarchy document simply has no Relationship keys, and every entity loads as a root.
 
 ## Versioning
 
-The document carries `version` (`SceneVersion`, currently `1`). `sceneFromJson` rejects any other
-version up front rather than guessing at an old layout. Bumping the version announces a breaking
-layout change. A headless `runSceneSerializationSelfTest` registers Name and Transform, builds a
-two-entity scene, writes and reads it back, and confirms the cube's translation survived — a
-round-trip smoke test with no GPU.
+The document carries `version` (`SceneVersion`, currently `3`: 1 = entities only, 2 = adds the
+top-level environment block, 3 = adds the per-entity Relationship component). `sceneFromJson`
+rejects anything newer up front rather than guessing at an unknown layout, and migrates older
+documents by defaulting what they lack. Bumping the version announces a breaking layout change. A
+headless `runSceneSerializationSelfTest` registers Name, Transform, and Relationship, writes a
+scene and reads it back, and asserts the hierarchy cases too: parent uuids survive the round trip,
+a child entry before its parent still resolves, a v2 document migrates every entity to root, and a
+dangling parent downgrades to root with a warning — all with no GPU.
 
 > [!WARNING]
 > nlohmann/json is compiled `JSON_NOEXCEPTION`, which turns a would-be throw into `std::abort`.
