@@ -139,7 +139,7 @@ namespace
             for (const auto& e : result["entities"])
             {
                 std::printf("  %-24s  %s\n",
-                    std::to_string(e.value("id", std::uint64_t{ 0 })).c_str(),
+                    e.value("id", std::string{}).c_str(),
                     e.value("name", "").c_str());
             }
             return;
@@ -159,7 +159,7 @@ namespace
                 std::printf("  %-8s  %-32s  %s\n",
                     a.value("type", "").c_str(),
                     a.value("name", "").c_str(),
-                    std::to_string(a.value("id", std::uint64_t{ 0 })).c_str());
+                    a.value("id", std::string{}).c_str());
             }
             return;
         }
@@ -206,7 +206,7 @@ namespace
         if (cmd == "add-entity" || cmd == "copy-entity")
         {
             std::printf("%s  id=%s\n", result.value("name", "").c_str(),
-                std::to_string(result.value("id", std::uint64_t{ 0 })).c_str());
+                result.value("id", std::string{}).c_str());
             return;
         }
         if (cmd == "get-gizmo" || cmd == "set-gizmo")
@@ -229,7 +229,7 @@ namespace
                 std::printf("%s  %s  id=%s\n",
                     result.value("kind", "").c_str(),
                     result.value("name", "").c_str(),
-                    std::to_string(result.value("id", std::uint64_t{ 0 })).c_str());
+                    result.value("id", std::string{}).c_str());
             }
             else
             {
