@@ -160,6 +160,37 @@ static const float IblPrefilterMaxMip = 4.0;  // == IblPrefilterMips - 1 (render
 // loop when screenFlags.w != 0 (multiplied by albedo/PI for the diffuse direct term).
 [[vk::binding(0, 7)]] Sampler2D restirRadiance;
 
+// Spatial reflection probes share the IBL set (set 3, bindings 3-5) so the mesh layout stays
+// within the maxBoundDescriptorSets budget. probeCubes[i] is probe i's prefiltered specular
+// cube, probeIrradiance[i] its diffuse irradiance cube; probeMeta carries each probe's
+// origin/radius/box/intensity. The fragment picks the nearest probe whose influence sphere
+// contains the surface and blends its specular over the global IBL by an edge-soft weight.
+// Iterated for the first ProbeMeta.count probes (globals.ambientColor.w); 0 = pure global
+// fallback (byte-identical to no-probe rendering). Every array slot is seeded with the global
+// IBL cubes, so unused slots harmlessly resolve to the global env.
+struct ProbeMeta
+{
+    float4 originRadius;     // xyz = world origin, w = influence radius
+    float4 extentIntensity;  // xyz = box half-extents, w = intensity
+    uint4 flags;             // x = valid, y = boxProjection
+};
+[[vk::binding(3, 3)]] SamplerCube probeCubes[8];        // MaxReflectionProbes
+[[vk::binding(4, 3)]] SamplerCube probeIrradiance[8];
+[[vk::binding(5, 3)]] StructuredBuffer<ProbeMeta> probeMeta;
+
+// Parallax-corrected cubemap: re-project the reflection ray R against the probe's influence
+// box (origin +- extent), returning a sample direction relative to the probe center. Used
+// only when boxProjection is on; the infinite-distance cube uses R directly.
+float3 boxProject(float3 worldPos, float3 R, float3 origin, float3 extent)
+{
+    float3 invR = 1.0 / R;
+    float3 tMax = (origin + extent - worldPos) * invR;
+    float3 tMin = (origin - extent - worldPos) * invR;
+    float3 t = max(tMax, tMin);
+    float d = min(min(t.x, t.y), t.z);
+    return (worldPos + R * d) - origin;
+}
+
 // Set 6: the ray-tracing TLAS for inline ray-query shadows (pointShadowMeta.z gates it).
 // Present only when the device supports RT (the PSO layout omits set 6 otherwise), but the
 // binding compiles unconditionally — it is only accessed under the runtime flag.
@@ -459,9 +490,39 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         float3 F = fresnelSchlickRoughness(ndotv, F0, roughness);
         float3 kd = (1.0 - F) * (1.0 - metallic);
         float3 irradiance = irradianceMap.SampleLevel(n, 0.0).rgb;
-        float3 diffuseIBL = kd * irradiance * albedo;
         float3 R = reflect(-v, n);
         float3 prefiltered = prefilteredMap.SampleLevel(R, roughness * IblPrefilterMaxMip).rgb;
+
+        // Reflection probes: find the nearest covering probe and blend its prefiltered specular +
+        // irradiance over the global IBL by an edge-soft weight (1 at center, 0 at the boundary).
+        // ambientColor.w bit-packs the probe count (CPU bit_casts the u32, so read it back the
+        // same way); 0 leaves both terms exactly at the global value.
+        uint probeCount = asuint(globals.ambientColor.w);
+        int best = -1;
+        float bestDist = 1e30;
+        for (uint pi = 0; pi < probeCount; pi = pi + 1)
+        {
+            if (probeMeta[pi].flags.x == 0) { continue; }
+            float radius = probeMeta[pi].originRadius.w;
+            float d = distance(input.worldPos, probeMeta[pi].originRadius.xyz);
+            if (d < radius && d < bestDist) { bestDist = d; best = int(pi); }
+        }
+        if (best >= 0)
+        {
+            ProbeMeta pm = probeMeta[best];
+            float3 origin = pm.originRadius.xyz;
+            float radius = pm.originRadius.w;
+            float3 Rp = R;
+            if (pm.flags.y != 0) { Rp = boxProject(input.worldPos, R, origin, pm.extentIntensity.xyz); }
+            float3 probeSpec = probeCubes[best].SampleLevel(Rp, roughness * IblPrefilterMaxMip).rgb;
+            float3 probeIrr = probeIrradiance[best].SampleLevel(n, 0.0).rgb;
+            // Edge-soft weight: full inside ~60% of the radius, ramping to 0 at the boundary.
+            float w = saturate(1.0 - (bestDist / radius - 0.6) / 0.4) * pm.extentIntensity.w;
+            prefiltered = lerp(prefiltered, probeSpec, w);
+            irradiance = lerp(irradiance, probeIrr, w);
+        }
+
+        float3 diffuseIBL = kd * irradiance * albedo;
         float2 ab = brdfLut.SampleLevel(float2(ndotv, roughness), 0.0).rg;
         float3 specularIBL = prefiltered * (F0 * ab.x + ab.y);
         ambient = diffuseIBL + specularIBL;
