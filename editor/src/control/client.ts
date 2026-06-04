@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AssetList,
+  AssetUsagesResult,
   ComponentBody,
   CommandParamsMap,
   CommandResultMap,
@@ -193,6 +194,31 @@ export const client = {
   /// Rename a catalog entry. Returns the new {id, name}.
   renameAsset(id: string, newName: string): Promise<{ id: string; name: string }> {
     return call("rename-asset", { asset: id, name: newName });
+  },
+  createAssetFolder(folder: string): Promise<AssetList> {
+    return call("create-asset-folder", { folder });
+  },
+  renameAssetFolder(folder: string, name: string): Promise<AssetList> {
+    return call("rename-asset-folder", { folder, name });
+  },
+  deleteAssetFolder(folder: string): Promise<AssetList> {
+    return call("delete-asset-folder", { folder });
+  },
+  moveAsset(
+    id: string,
+    folder: string | null,
+  ): Promise<{ id: string; name: string; folder?: string }> {
+    const params: CommandParamsMap["move-asset"] = { asset: id };
+    if (folder) {
+      params.folder = folder;
+    }
+    return call("move-asset", params);
+  },
+  assetUsages(id: string): Promise<AssetUsagesResult> {
+    return call("asset-usages", { asset: id });
+  },
+  deleteAsset(id: string): Promise<CommandResultMap["delete-asset"]> {
+    return call("delete-asset", { asset: id });
   },
   /// Assign a mesh or albedo texture to an entity slot (adds the component if
   /// missing). The dedicated, minimal write for Mesh.mesh / Material.albedoTexture.
