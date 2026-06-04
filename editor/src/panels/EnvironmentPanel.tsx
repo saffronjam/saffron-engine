@@ -1,8 +1,8 @@
-/// The Environment panel: the React port of the C++ `environmentPanel`
-/// (editor_panels.cpp:191-224), bound to `get-environment` / `set-environment`.
-/// Sky Mode (Color/Texture/Procedural) gates the relevant fields; clearColor and
-/// ambientColor use ColorField; skyIntensity/ambientIntensity use NumberDrag; the
-/// sky texture uses the phase-7 AssetPicker (texture catalog).
+/// The Environment panel, bound to `get-environment` / `set-environment` (and
+/// `set-atmosphere` for the atmosphere block). Sky Mode (Color/Texture/Procedural)
+/// gates the relevant fields; clearColor and ambientColor use ColorField;
+/// skyIntensity/ambientIntensity use NumberDrag; the sky texture uses the AssetPicker
+/// (texture catalog). The Atmosphere section drives the physically based envCube source.
 ///
 /// Units (the 57x bug guard): skyRotation is RADIANS on the wire but shown in
 /// DEGREES in the UI — conversion happens ONLY at the rotation widget boundary
@@ -39,6 +39,7 @@ const RAD_TO_DEG = 180 / Math.PI;
 const DEG_TO_RAD = Math.PI / 180;
 
 type SkyMode = Environment["skyMode"];
+type Atmosphere = Environment["atmosphere"];
 
 const SKY_MODES: { value: SkyMode; label: string }[] = [
   { value: "color", label: "Color" },
@@ -110,6 +111,30 @@ export function EnvironmentPanel() {
     [],
   );
 
+  // Atmosphere fields route through `set-atmosphere` (a server-side merge over the
+  // current atmosphere block) rather than `set-environment`, since SetEnvironmentParams
+  // carries no atmosphere field. The merged environment is folded back like above.
+  const atmosCoalescers = useRef(new Map<keyof Atmosphere, Coalescer<Partial<Atmosphere>>>());
+  const atmosCoalescerFor = useMemo(
+    () =>
+      (field: keyof Atmosphere): Coalescer<Partial<Atmosphere>> => {
+        let c = atmosCoalescers.current.get(field);
+        if (!c) {
+          c = makeCoalescer<Partial<Atmosphere>>({
+            send: async (patch) => {
+              const merged = await client.setAtmosphere(patch);
+              if (!useEditorStore.getState().dragActive) {
+                useEditorStore.getState().setEnvironment(merged);
+              }
+            },
+          });
+          atmosCoalescers.current.set(field, c);
+        }
+        return c;
+      },
+    [],
+  );
+
   if (!environment) {
     return (
       <div className="flex h-full min-h-0 flex-col">
@@ -137,6 +162,20 @@ export function EnvironmentPanel() {
     (axis: string, value: number): void => {
       const next = { ...(env[field] as Vec3), [axis]: value } as Vec3;
       patch(field, next);
+    };
+
+  // Optimistic local write of one atmosphere field + a coalesced `set-atmosphere`
+  // merge (a Partial<Atmosphere>). The server folds it over the current block and
+  // re-bakes the LUT chain next frame; the merged environment round-trips back.
+  const atmos = env.atmosphere;
+  const patchAtmos = <K extends keyof Atmosphere>(field: K, value: Atmosphere[K]): void => {
+    setEnvironment({ ...env, atmosphere: { ...atmos, [field]: value } } as Environment);
+    atmosCoalescerFor(field).push({ [field]: value } as Partial<Atmosphere>);
+  };
+  const onAtmosVec =
+    (field: "rayleighScattering" | "ozoneAbsorption") =>
+    (axis: string, value: number): void => {
+      patchAtmos(field, { ...(atmos[field] as Vec3), [axis]: value } as Atmosphere[typeof field]);
     };
 
   return (
@@ -245,6 +284,99 @@ export function EnvironmentPanel() {
               onDragEnd={onDragEnd}
             />
           </Row>
+
+          <Separator className="my-1" />
+
+          <Row label="Atmosphere">
+            <Switch
+              checked={atmos.enabled}
+              onCheckedChange={(checked) => patchAtmos("enabled", checked)}
+            />
+          </Row>
+
+          {atmos.enabled ? (
+            <>
+              <Row label="Rayleigh">
+                <ColorField
+                  kind="color3"
+                  value={atmos.rayleighScattering as unknown as Record<string, number>}
+                  onChange={onAtmosVec("rayleighScattering")}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              </Row>
+
+              <Row label="Rayleigh Ht.">
+                <NumberDrag
+                  value={atmos.rayleighScaleHeight}
+                  min={0.1}
+                  max={60}
+                  step={0.1}
+                  onChange={(v) => patchAtmos("rayleighScaleHeight", v)}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              </Row>
+
+              <Row label="Mie">
+                <NumberDrag
+                  value={atmos.mieScattering}
+                  min={0}
+                  max={50}
+                  step={0.01}
+                  onChange={(v) => patchAtmos("mieScattering", v)}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              </Row>
+
+              <Row label="Mie Ht.">
+                <NumberDrag
+                  value={atmos.mieScaleHeight}
+                  min={0.1}
+                  max={20}
+                  step={0.05}
+                  onChange={(v) => patchAtmos("mieScaleHeight", v)}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              </Row>
+
+              <Row label="Mie Aniso.">
+                <NumberDrag
+                  value={atmos.mieAnisotropy}
+                  min={-0.99}
+                  max={0.99}
+                  step={0.005}
+                  onChange={(v) => patchAtmos("mieAnisotropy", v)}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              </Row>
+
+              <Row label="Ozone">
+                <ColorField
+                  kind="color3"
+                  value={atmos.ozoneAbsorption as unknown as Record<string, number>}
+                  onChange={onAtmosVec("ozoneAbsorption")}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              </Row>
+
+              <Row label="Sun Disk">
+                <NumberDrag
+                  value={atmos.sunDiskIntensity}
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  onChange={(v) => patchAtmos("sunDiskIntensity", v)}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              </Row>
+            </>
+          ) : null}
         </div>
       </ScrollArea>
     </div>
