@@ -1,7 +1,7 @@
 // Scene/entity operations, validated by READ-BACK through inspect/list/get — mutate, then
-// query and assert the observed state. Entities are addressed by NAME, not id: ids are u64
-// emitted as JSON numbers and the plain JSON.parse in the harness would corrupt ids > 2^53,
-// so name resolution is both safer here and a realistic client path.
+// query and assert the observed state. Entities are addressed by NAME, which keeps these
+// tests independent of the freshly minted u64 ids and exercises a realistic client path.
+// (Ids cross the wire as decimal strings, so a plain JSON.parse keeps them lossless.)
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Engine } from "./harness.ts";

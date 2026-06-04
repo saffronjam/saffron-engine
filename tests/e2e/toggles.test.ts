@@ -14,7 +14,8 @@ let engine: Engine;
 const stats = () => engine.call<RenderStats & Record<string, unknown>>("render-stats");
 
 beforeAll(async () => {
-  engine = await Engine.boot();
+  // import-model needs a loaded project; auto-create an empty one (under the gitignored appdata/).
+  engine = await Engine.boot({ SAFFRON_AUTO_EMPTY_PROJECT: "1" });
   await engine.call("import-model", { args: [CUBE] }); // geometry, so the passes actually run
 });
 afterAll(async () => {

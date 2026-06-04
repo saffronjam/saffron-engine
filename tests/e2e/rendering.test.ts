@@ -11,7 +11,8 @@ const CUBE = join(REPO, "build", "debug", "bin", "models", "cube.gltf");
 
 let engine: Engine;
 beforeAll(async () => {
-  engine = await Engine.boot();
+  // import-model needs a loaded project; auto-create an empty one (under the gitignored appdata/).
+  engine = await Engine.boot({ SAFFRON_AUTO_EMPTY_PROJECT: "1" });
 });
 afterAll(async () => {
   await engine?.shutdown();

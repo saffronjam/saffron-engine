@@ -54,7 +54,7 @@ export class Engine {
     return this.buf.split("\n").filter((line) => line.includes("[ERROR: Validation]"));
   }
 
-  static async boot(): Promise<Engine> {
+  static async boot(env: Record<string, string> = {}): Promise<Engine> {
     const runtime = process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.() ?? 1000}`;
     const stamp = `${process.pid}-${Date.now()}`;
     const wlSocket = `wl-e2e-${stamp}`;
@@ -74,6 +74,7 @@ export class Engine {
         WAYLAND_DISPLAY: wlSocket,
         SDL_VIDEODRIVER: "wayland",
         SAFFRON_CONTROL_SOCK: socketPath,
+        ...env,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
