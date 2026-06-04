@@ -14,6 +14,11 @@ export default defineConfig({
   server: {
     strictPort: true,
     port: 1420,
+    watch: {
+      // Rust's incremental build dir contains special tmp files that trigger EINVAL
+      // on Linux when chokidar/fs.watch tries to watch them.
+      ignored: ["**/src-tauri/target/**"],
+    },
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
