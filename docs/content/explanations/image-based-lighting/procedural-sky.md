@@ -40,7 +40,7 @@ outCube[tid] = float4(proceduralSky(dir), 1.0);
 
 ## Why analytic, not a loaded HDR
 
-An analytic sky has no asset dependency, costs nothing to ship, and is deterministic across platforms: the bake produces the same environment every run. It serves as a stand-in. The downstream pipeline does not depend on where the environment came from, so swapping in a loaded HDR equirect or a real skybox capture only changes what fills the environment cube. The skybox plan reserves that seam.
+An analytic sky has no asset dependency, costs nothing to ship, and is deterministic across platforms: the bake produces the same environment every run. It serves as a stand-in. The downstream pipeline does not depend on where the environment came from, so swapping in a loaded HDR equirect or a [physically based atmosphere](../procedural-atmosphere/) only changes what fills the environment cube — the convolutions, the BRDF lookup, and the visible-sky pass are unchanged.
 
 ## In the code
 
@@ -52,6 +52,7 @@ An analytic sky has no asset dependency, costs nothing to ship, and is determini
 
 ## Related
 
+- [Procedural atmosphere](../procedural-atmosphere/) — the physically based source that replaces this gradient
 - [Diffuse irradiance](../diffuse-irradiance/) — convolves this environment for diffuse
 - [Specular prefilter](../specular-prefilter/) — blurs this environment per roughness
 - [IBL bake pass](../ibl-bake-pass/) — runs skygen first, then the convolutions
