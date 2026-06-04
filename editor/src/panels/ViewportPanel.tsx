@@ -49,13 +49,7 @@ function eventToUv(el: HTMLElement, event: PointerEvent): Uv {
 }
 
 function boundsEqual(a: ViewportBounds | null, b: ViewportBounds): boolean {
-  return (
-    a !== null &&
-    a.x === b.x &&
-    a.y === b.y &&
-    a.width === b.width &&
-    a.height === b.height
-  );
+  return a !== null && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
 /// Read the div's CSS rect, scale to device pixels (HiDPI), and round.
@@ -222,7 +216,7 @@ export function ViewportPanel() {
     let lastLiveSent = 0;
     let liveTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const commit = async (): Promise<void> => {
+    const commit = async (force = false): Promise<void> => {
       if (cancelled || !attachedRef.current) {
         return;
       }
@@ -235,7 +229,7 @@ export function ViewportPanel() {
       if (cancelled || !bounds) {
         return;
       }
-      if (boundsEqual(lastBoundsRef.current, bounds)) {
+      if (!force && boundsEqual(lastBoundsRef.current, bounds)) {
         return;
       }
       lastBoundsRef.current = bounds;
@@ -248,13 +242,13 @@ export function ViewportPanel() {
 
     // Resize-end commit: a final exact bounds even if the throttle dropped the last
     // frame of a drag. Shared by the geometry observer and the layout bus.
-    const scheduleEndCommit = (): void => {
+    const scheduleEndCommit = (force = false): void => {
       if (debounceTimer !== null) {
         clearTimeout(debounceTimer);
       }
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        void commit();
+        void commit(force);
       }, RESIZE_END_DEBOUNCE_MS);
     };
 
@@ -285,7 +279,7 @@ export function ViewportPanel() {
     observer.observe(el);
     window.addEventListener("resize", onGeometryChange);
     // A panel-split drag-end fires onLayoutChanged; commit the exact bounds once.
-    const offLayout = onLayoutSettled(scheduleEndCommit);
+    const offLayout = onLayoutSettled((event) => scheduleEndCommit(event.force === true));
 
     return () => {
       cancelled = true;

@@ -18,11 +18,7 @@
 /// bus so the ViewportPanel commits an exact resize-end bounds for the native window
 /// once a split-drag settles.
 import { useEffect, useRef, useState } from "react";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HierarchyPanel } from "../panels/HierarchyPanel";
 import { InspectorPanel } from "../panels/InspectorPanel";
@@ -40,6 +36,7 @@ const VIEWPORT_MIN_WIDTH = 520;
 export function Layout() {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const syncViewportAfterLayout = (): void => emitLayoutSettled();
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent): void => {
@@ -80,15 +77,12 @@ export function Layout() {
     <ResizablePanelGroup
       orientation="vertical"
       className="min-h-0 flex-1"
-      onLayoutChanged={emitLayoutSettled}
+      onLayoutChanged={syncViewportAfterLayout}
     >
       <ResizablePanel defaultSize={72} minSize={30} className="min-h-0">
         <div className="flex h-full min-w-0">
-          <aside
-            className="min-h-0 flex-none bg-background"
-            style={{ width: `${sidebarWidth}px` }}
-          >
-            <ResizablePanelGroup orientation="vertical" onLayoutChanged={emitLayoutSettled}>
+          <aside className="min-h-0 flex-none bg-background" style={{ width: `${sidebarWidth}px` }}>
+            <ResizablePanelGroup orientation="vertical" onLayoutChanged={syncViewportAfterLayout}>
               <ResizablePanel defaultSize={45} minSize={15} className="min-h-0 bg-background">
                 <HierarchyPanel />
               </ResizablePanel>
@@ -131,8 +125,16 @@ function clampSidebarWidth(width: number): number {
 /// tabbing it here next to Inspector/Environment is the accepted parity choice
 /// (keeps every panel in a non-viewport region — see the file header).
 function LeftBottomTabs() {
+  const syncViewportAfterTabChange = (): void => {
+    requestAnimationFrame(() => emitLayoutSettled({ force: true }));
+  };
+
   return (
-    <Tabs defaultValue="inspector" className="flex h-full min-h-0 flex-col gap-0">
+    <Tabs
+      defaultValue="inspector"
+      className="flex h-full min-h-0 flex-col gap-0"
+      onValueChange={syncViewportAfterTabChange}
+    >
       <TabsList
         variant="line"
         className="h-10 flex-none justify-start gap-0 rounded-none border-b border-border bg-background px-2"

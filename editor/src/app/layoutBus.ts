@@ -4,10 +4,14 @@
 /// from the Zustand store on purpose: a panel-split layout change is a transient UI
 /// signal, not editor state, so it should not churn the store or trigger renders.
 ///
-/// The ViewportPanel's ResizeObserver already catches the host div's geometry change
-/// during a drag (throttled live sync); this bus only adds the *final exact* commit
-/// on drag-end, diff-guarded inside the subscriber.
-type LayoutListener = () => void;
+/// The ViewportPanel's ResizeObserver already catches host-div geometry changes
+/// during a drag. This bus covers non-resize layout events, including tab switches
+/// that can disturb the native child window without changing the measured rect.
+export interface LayoutSettledEvent {
+  force?: boolean;
+}
+
+type LayoutListener = (event: LayoutSettledEvent) => void;
 
 const listeners = new Set<LayoutListener>();
 
@@ -19,10 +23,9 @@ export function onLayoutSettled(listener: LayoutListener): () => void {
   };
 }
 
-/// Notify every subscriber that a dock layout just settled. Called from the
-/// `Layout` PanelGroup `onLayoutChanged` callbacks.
-export function emitLayoutSettled(): void {
+/// Notify every subscriber that a dock layout just settled.
+export function emitLayoutSettled(event: LayoutSettledEvent = {}): void {
   for (const listener of listeners) {
-    listener();
+    listener(event);
   }
 }
