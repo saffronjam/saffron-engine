@@ -11,7 +11,9 @@ a single 4x4 model matrix. Every renderable and the camera share the same repres
 function builds the matrix they all use.
 
 In Saffron a `TransformComponent` holds three vectors: translation, scale, and rotation stored as
-Euler XYZ angles in radians. `transformMatrix` composes them into the model matrix.
+Euler XYZ angles in radians. `transformMatrix` composes them into the model matrix. The result is
+local to the entity's parent; the [scene hierarchy](../scene-hierarchy/) composes the parent chain
+into the cached world matrix that rendering, picking, and the gizmo actually consume.
 
 ## The composition
 

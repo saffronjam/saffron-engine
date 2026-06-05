@@ -140,6 +140,7 @@ the GPU light buffer.
 |---|---|---|
 | Identity + transform | `scene.cppm` | `IdComponent`, `NameComponent`, `TransformComponent` |
 | Hierarchy | `scene.cppm` | `RelationshipComponent` |
+| Skeleton | `scene.cppm` | `SkinnedMeshComponent`, `BoneComponent` |
 | Renderables | `scene.cppm` | `MeshComponent`, `MaterialComponent` |
 | Camera | `scene.cppm` | `CameraComponent`, `primaryCamera` |
 | Lights | `scene.cppm` | `DirectionalLightComponent`, `PointLightComponent`, `SpotLightComponent` |

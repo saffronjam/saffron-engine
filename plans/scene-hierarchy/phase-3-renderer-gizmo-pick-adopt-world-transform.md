@@ -1,6 +1,6 @@
 # Phase 3: Adopt world transform across renderer, picking, camera, gizmo, billboards
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 <!-- Flip to COMPLETED when every "## Done when" box is checked and a headless SAFFRON_EXIT_AFTER_FRAMES run is validation-clean. Delete this file only after COMPLETED + merged. -->
 
 ## Goal

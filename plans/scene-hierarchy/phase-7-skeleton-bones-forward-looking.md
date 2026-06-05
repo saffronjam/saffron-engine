@@ -1,6 +1,12 @@
 # Phase 7: Forward-looking: glTF skin import + bones-as-entities + skinning pass (research-gated)
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (2026-06-05) — v1 scope: skinned draws render in the scene pass only
+(no shadow casting / prepass / motion / RT occlusion), single-skin glTF imports, and skinned
+meshes are tree-selectable but not ray-pickable. The research gate passed twice over: the
+hierarchy self-test asserts the exact joint math (bind-pose identity, moved-joint deformation,
+ignored node transform) and `tests/e2e/skinning.test.ts` proves the GPU half against the
+`fixtures/skinned-strip.gltf` reference (bind pose renders, a moved joint changes the frame,
+`set-skinning 0` removes the draw).
 <!-- Flip to COMPLETED when the Done-when checklist passes validation-clean (round-trip + headless deform + se reparent/inspect). Delete this file only after COMPLETED + merged. -->
 
 ## Goal

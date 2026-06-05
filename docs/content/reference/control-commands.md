@@ -15,10 +15,11 @@ Entity and asset ids are u64, carried on the wire as decimal JSON strings (see [
 
 | Command | Params | Effect |
 |---|---|---|
-| `list-entities` | — | all entities `{id, name}` |
+| `list-entities` | — | all entities `{id, name, parentId?, bone?}` (`parentId` absent for roots; `bone` only on skeleton joints) |
 | `list-components` | — | registered component type names |
 | `create-entity` | `{name=Entity}` | create an entity, return its ref |
-| `destroy-entity` | `{entity}` | destroy it (deselects if selected) |
+| `destroy-entity` | `{entity}` | destroy it and its subtree (deselects if the selection was inside) |
+| `set-parent` | `{entity, parent?}` | reparent, keeping the world transform (cycle-guarded); absent/`0` parent detaches to root |
 | `add-component` | `{entity, component}` | add a default-constructed component |
 | `remove-component` | `{entity, component}` | remove it (errors if not removable) |
 | `set-component` | `{entity, component, json}` | apply a serialized component body |
@@ -58,6 +59,7 @@ Entity and asset ids are u64, carried on the wire as decimal JSON strings (see [
 | `set-restir` | `{0\|1}` | ReSTIR many-light direct (errors if RT unsupported) |
 | `set-gi` | `{off\|ddgi}` | DDGI probe GI (multi-bounce) |
 | `set-shadows` | `{0\|1}` | directional shadow map |
+| `set-skinning` | `{0\|1}` | the GPU skinning path (off = skinned meshes do not gather) |
 | `set-exposure` | `{ev}` | tonemap exposure in stops (`exp2(ev)`) |
 | `set-depth-prepass` | `{0\|1}` | depth pre-pass |
 | `viewport-native-info` | — | viewport surface status `{platform, transport, status, controlSocket, width, height, message}`; `transport` is `shm` under the readback transport (frames stream into the editor webview canvas), else `swapchain` (standalone window) |

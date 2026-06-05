@@ -1,6 +1,6 @@
 # Phase 4: Control-plane: parentId on list-entities, set-parent command, schema + contract test + se CLI
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 <!-- Flip to COMPLETED when the Done-when checklist passes validation-clean (tools/ci/check.sh schema/contract stage green, the generated control outputs regenerated and committed). Delete this file only after COMPLETED + merged. -->
 

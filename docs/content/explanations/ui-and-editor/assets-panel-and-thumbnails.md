@@ -15,6 +15,8 @@ Thumbnails are PNGs fetched over the control socket and cached as blob URLs, bec
 
 Right-clicking the asset background opens commands for **New Folder** and **Import**. Right-clicking a folder opens **Rename** and **Delete**; Delete removes the virtual folder and moves its assets back to Root. Right-clicking an asset opens **View** and **Delete**; Delete asks the engine for `asset-usages` first, shows an in-place confirmation with affected slots, then calls `delete-asset`.
 
+Asset selection is local editor state. A click selects one tile, Ctrl-click toggles a tile, Shift-click adds the range from the last clicked tile through the current tile, and dragging on empty panel space draws a marquee that selects intersecting asset tiles. Dragging any selected tile writes the selected asset ids into the asset drag payload, so a folder drop moves the whole selection.
+
 ## Thumbnails over the socket
 
 A thumbnail travels as data rather than a registered descriptor, since no GPU context is shared. `get-thumbnail` renders the asset to a small offscreen and reads it back as a **base64 PNG** in the JSON result; the client decodes it to a `Blob` and an object URL:

@@ -1,6 +1,6 @@
 # Phase 6: Optional: selected-entity component subrows in the tree
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (2026-06-05)
 
 <!-- Flip to COMPLETED when the Done-when checklist passes validation-clean (engine build, e2e/contract, `bun run check`). Delete this file only after COMPLETED + merged. -->
 

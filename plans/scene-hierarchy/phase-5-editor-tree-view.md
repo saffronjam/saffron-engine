@@ -1,6 +1,6 @@
 # Phase 5: Editor: tree-view outliner with drag-reparent and the pinned Environment node
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (2026-06-05)
 
 <!-- Flip to COMPLETED (with a dated note) once every "Done when" box is checked and the run is validation-clean. Delete this file only after COMPLETED + merged. -->
 

@@ -71,6 +71,28 @@ legacy entity to root; a dangling parent uuid downgrades to root with a warning 
 the load. Raw `set-component` writes of a Relationship trigger the same relink, so a cyclic parent
 written over the wire is cut back to root rather than trusted.
 
+## Skeletons ride the same tree
+
+A skeleton is not a special structure: every glTF joint imports as an ordinary entity
+(`BoneComponent` is just a filter tag), parented through the same `RelationshipComponent` as
+everything else. The renderable carries a `SkinnedMeshComponent` — the mesh asset plus the
+ordered joint list **by uuid** (glTF joint order, parallel to the inverse bind matrices) and a
+non-serialized `boneHandles` cache that `relinkHierarchy` resolves alongside the parent links.
+
+Skinning consumes the hierarchy's one propagation pass: after `updateWorldTransforms`,
+`jointMatrices` fills the GPU palette with
+
+$$ joint_i = world(bone_i) \cdot inverseBind_i $$
+
+so at bind pose every palette entry is the identity, and posing a joint is just moving an
+entity. The skinned node's own transform never composes in (per glTF, joints place the
+vertices entirely), and the skinned draw goes through a dedicated PSO that blends the palette
+per vertex (`vertexMainSkinned`, a second `VertexSkin` vertex stream, the palette on set 2
+binding 1). The path is gated by `set-skinning`; v1 skinned draws render in the scene pass
+only — no shadow casting, prepass, motion vectors, or ray-traced occlusion. Reparenting a
+joint out of its skeleton is allowed (bones are entities) and simply changes its world matrix,
+hence the deformation.
+
 ## In the code
 
 | What | File | Symbols |
@@ -79,7 +101,10 @@ written over the wire is cut back to root rather than trusted.
 | Cache rebuild + cycle cut | `scene.cppm` | `relinkHierarchy` |
 | Per-frame flatten + accessors | `scene.cppm` | `updateWorldTransforms`, `worldMatrix`, `composeWorldMatrix` |
 | Reparent + subtree destroy | `scene.cppm` | `setParent`, `destroyEntity` |
-| Generated serde | `scene_component_serde.generated.cpp` | `relationshipComponentToJson`, `relationshipComponentFromJson` |
+| Skeleton + joint palette | `scene.cppm` | `SkinnedMeshComponent`, `BoneComponent`, `jointMatrices` |
+| Skin import + bone spawn | `geometry.cppm` · `assets.cppm` | `ImportedSkin`, `saveMeshSkinned`, `spawnSkinnedModel` |
+| Skinned draw path | `renderer_pipelines.cpp` · `mesh.slang` | `requestMeshPipeline(skinned)`, `vertexMainSkinned` |
+| Generated serde | `scene_component_serde.generated.cpp` | `relationshipComponentToJson`, `skinnedMeshComponentToJson` |
 | Self-tests | `scene.cppm` | `runSceneHierarchySelfTest`, `runSceneSerializationSelfTest` |
 
 ## Related
