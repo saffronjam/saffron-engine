@@ -1,9 +1,8 @@
-/// The resizable dock layout, reproducing the C++ editor's default DockBuilder
-/// arrangement (ui.cppm:568-577): Hierarchy + a tabbed Inspector/Environment/Stats
+/// The resizable dock layout: Hierarchy + a tabbed Inspector/Environment/Stats
 /// column on the LEFT, Assets along the BOTTOM, Viewport in the CENTER. The split
-/// ratios follow the DockBuilder shape — Assets bottom 0.28, leftBottom 0.55
-/// (so Hierarchy is the top 0.45 of the left column). The left sidebar uses a
-/// pixel width so it cannot collapse while the native viewport is attaching.
+/// ratios are Assets bottom 0.28 and leftBottom 0.55 (so Hierarchy is the top 0.45
+/// of the left column). The left sidebar uses a pixel width so it cannot collapse
+/// while the native viewport is attaching.
 ///
 /// Nested ResizablePanelGroups (react-resizable-panels via the shadcn wrapper):
 ///   outer vertical  : top region (~72) + Assets bottom (~28)
@@ -121,10 +120,9 @@ function clampSidebarWidth(width: number): number {
   return Math.min(Math.max(width, SIDEBAR_MIN_WIDTH), max);
 }
 
-/// The left-bottom dock node: ImGui tabs Inspector + Environment into one node
-/// (ui.cppm:573-574). The C++ editor floats Render Stats as a separate window;
-/// tabbing it here next to Inspector/Environment is the accepted parity choice
-/// (keeps every panel in a non-viewport region — see the file header).
+/// The left-bottom dock node: Inspector, Environment, and Render Stats tabbed into
+/// one node. Keeping every panel in a non-viewport region avoids the native viewport
+/// painting over them (see the file header).
 function LeftBottomTabs() {
   // Store-controlled so the hierarchy's Environment sentinel row can switch tabs;
   // manual tab clicks route through the same slice (which also clears the sentinel
