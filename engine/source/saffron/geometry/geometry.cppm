@@ -6,6 +6,9 @@ module;
 #include <tiny_obj_loader.h>
 #include <stb_image.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_precision.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 
 #include <array>
 #include <cctype>
@@ -49,7 +52,41 @@ export namespace se
         std::vector<Submesh> submeshes;
     };
 
+    // Per-vertex skin influences, a second stream parallel to Mesh.vertices (empty ==
+    // unskinned). Kept out of Vertex so the unskinned layout and v1 .smesh stay intact.
+    struct VertexSkin
+    {
+        glm::u16vec4 joints{ 0 };   // indices into the skin's joint list
+        glm::vec4 weights{ 0.0f };  // normalized blend weights
+    };
+
+    // One glTF node of the imported scene graph: name, parent index (-1 == root), and
+    // the local TRS (rotation as the source quaternion; consumers convert to their
+    // own Euler convention).
+    struct ImportedNode
+    {
+        std::string name;
+        i32 parent = -1;
+        glm::vec3 translation{ 0.0f };
+        glm::quat rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+        glm::vec3 scale{ 1.0f };
+    };
+
+    // One glTF skin: the ordered joint node indices (the jointMatrices[] order) and
+    // the parallel inverse bind matrices. meshNode is the node carrying the skinned
+    // mesh; skeletonRoot is the skin's declared root (-1 == unspecified).
+    struct ImportedSkin
+    {
+        std::vector<i32> joints;
+        std::vector<glm::mat4> inverseBind;
+        i32 skeletonRoot = -1;
+        i32 meshNode = -1;
+    };
+
+    // .smesh version 1 is the unskinned three-section layout; version 2 appends a
+    // VertexSkin section after the submeshes (same header, same first three sections).
     inline constexpr u32 MeshFormatVersion = 1;
+    inline constexpr u32 MeshFormatVersionSkinned = 2;
 
     // The primary material extracted from a model: a base color factor and, if any,
     // the encoded (png/jpg) albedo bytes (read from an external file or embedded).
@@ -65,6 +102,13 @@ export namespace se
     {
         Mesh mesh;
         ImportedMaterial material;
+        // Skin payload (glTF only): hasSkin gates all three. `skin` parallels
+        // mesh.vertices; `nodes` is the source node forest; `skinDesc.joints` indexes
+        // into `nodes` in glTF joint order — the single source of jointMatrices order.
+        bool hasSkin = false;
+        std::vector<VertexSkin> skin;
+        std::vector<ImportedNode> nodes;
+        ImportedSkin skinDesc;
     };
 
     // Decoded RGBA8 pixels, tightly packed (width*height*4 bytes).
@@ -97,6 +141,11 @@ export namespace se
 
     auto saveMesh(const Mesh& mesh, const std::string& path) -> Result<void>;  // baked .smesh
     auto loadMesh(const std::string& path) -> Result<Mesh>;
+    // Skinned bake: v1 layout plus a VertexSkin section (skin must parallel vertices).
+    auto saveMeshSkinned(const Mesh& mesh, const std::vector<VertexSkin>& skin, const std::string& path)
+        -> Result<void>;
+    // The skin stream of a v2 .smesh; empty (not an error) for a v1 file.
+    auto loadMeshSkin(const std::string& path) -> Result<std::vector<VertexSkin>>;
 
     // Recomputes smooth vertex normals from the triangles. Used when a source omits them.
     void generateNormals(Mesh& mesh);
@@ -110,6 +159,7 @@ namespace se
 {
     static_assert(sizeof(Vertex) == 32, "Vertex must stay 32 bytes (the .smesh on-disk stride)");
     static_assert(sizeof(Submesh) == 16, "Submesh must stay 16 bytes (baked directly into .smesh)");
+    static_assert(sizeof(VertexSkin) == 24, "VertexSkin must stay 24 bytes (the .smesh v2 skin stride)");
 
     namespace
     {
@@ -264,6 +314,9 @@ namespace se
         }
 
         Mesh mesh;
+        std::vector<VertexSkin> vertexSkins;  // parallel to mesh.vertices when skinned
+        bool sawSkinnedPrimitive = false;
+        bool sawUnskinnedPrimitive = false;
         const cgltf_material* primaryMaterial = nullptr;
         for (cgltf_size m = 0; m < data->meshes_count; m = m + 1)
         {
@@ -279,6 +332,8 @@ namespace se
                 const cgltf_accessor* positions = nullptr;
                 const cgltf_accessor* normals = nullptr;
                 const cgltf_accessor* texcoords = nullptr;
+                const cgltf_accessor* jointIndices = nullptr;
+                const cgltf_accessor* jointWeights = nullptr;
                 for (cgltf_size a = 0; a < prim.attributes_count; a = a + 1)
                 {
                     const cgltf_attribute& attr = prim.attributes[a];
@@ -294,10 +349,26 @@ namespace se
                     {
                         texcoords = attr.data;
                     }
+                    else if (attr.type == cgltf_attribute_type_joints && attr.index == 0)
+                    {
+                        jointIndices = attr.data;
+                    }
+                    else if (attr.type == cgltf_attribute_type_weights && attr.index == 0)
+                    {
+                        jointWeights = attr.data;
+                    }
                 }
                 if (positions == nullptr)
                 {
                     continue;
+                }
+                if (jointIndices != nullptr && jointWeights != nullptr)
+                {
+                    sawSkinnedPrimitive = true;
+                }
+                else
+                {
+                    sawUnskinnedPrimitive = true;
                 }
                 if (primaryMaterial == nullptr && prim.material != nullptr)
                 {
@@ -325,6 +396,17 @@ namespace se
                         vertex.uv0 = glm::vec2(uv[0], uv[1]);
                     }
                     mesh.vertices.push_back(vertex);
+                    VertexSkin influence;
+                    if (jointIndices != nullptr && jointWeights != nullptr)
+                    {
+                        cgltf_uint joints[4] = { 0, 0, 0, 0 };
+                        cgltf_accessor_read_uint(jointIndices, i, joints, 4);
+                        cgltf_float weights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                        cgltf_accessor_read_float(jointWeights, i, weights, 4);
+                        influence.joints = glm::u16vec4(joints[0], joints[1], joints[2], joints[3]);
+                        influence.weights = glm::vec4(weights[0], weights[1], weights[2], weights[3]);
+                    }
+                    vertexSkins.push_back(influence);
                 }
 
                 if (prim.indices != nullptr)
@@ -397,6 +479,81 @@ namespace se
                 }
             }
         }
+        // Skin payload: only when the FIRST skin covers every triangle primitive (a
+        // mixed skinned/unskinned model would deform unweighted vertices to the origin,
+        // so it imports as plain geometry instead).
+        ImportedModel model;
+        if (data->skins_count > 0 && sawSkinnedPrimitive && !sawUnskinnedPrimitive)
+        {
+            const cgltf_skin& gltfSkin = data->skins[0];
+            model.nodes.reserve(data->nodes_count);
+            for (cgltf_size n = 0; n < data->nodes_count; n = n + 1)
+            {
+                const cgltf_node& node = data->nodes[n];
+                ImportedNode imported;
+                imported.name = node.name != nullptr ? node.name : std::format("Node {}", n);
+                imported.parent = node.parent != nullptr ? static_cast<i32>(node.parent - data->nodes) : -1;
+                if (node.has_matrix)
+                {
+                    glm::mat4 local;
+                    std::memcpy(&local, node.matrix, sizeof(local));
+                    glm::vec3 skew;
+                    glm::vec4 perspective;
+                    glm::decompose(local, imported.scale, imported.rotation, imported.translation, skew,
+                                   perspective);
+                }
+                else
+                {
+                    if (node.has_translation)
+                    {
+                        imported.translation = glm::vec3(node.translation[0], node.translation[1],
+                                                         node.translation[2]);
+                    }
+                    if (node.has_rotation)
+                    {
+                        // glTF stores (x, y, z, w); glm::quat takes (w, x, y, z).
+                        imported.rotation = glm::quat(node.rotation[3], node.rotation[0], node.rotation[1],
+                                                      node.rotation[2]);
+                    }
+                    if (node.has_scale)
+                    {
+                        imported.scale = glm::vec3(node.scale[0], node.scale[1], node.scale[2]);
+                    }
+                }
+                model.nodes.push_back(std::move(imported));
+            }
+            model.skinDesc.joints.reserve(gltfSkin.joints_count);
+            for (cgltf_size j = 0; j < gltfSkin.joints_count; j = j + 1)
+            {
+                model.skinDesc.joints.push_back(static_cast<i32>(gltfSkin.joints[j] - data->nodes));
+            }
+            model.skinDesc.inverseBind.assign(gltfSkin.joints_count, glm::mat4(1.0f));
+            if (gltfSkin.inverse_bind_matrices != nullptr)
+            {
+                for (cgltf_size j = 0; j < gltfSkin.joints_count; j = j + 1)
+                {
+                    cgltf_float m[16];
+                    cgltf_accessor_read_float(gltfSkin.inverse_bind_matrices, j, m, 16);
+                    std::memcpy(&model.skinDesc.inverseBind[j], m, sizeof(glm::mat4));
+                }
+            }
+            model.skinDesc.skeletonRoot =
+                gltfSkin.skeleton != nullptr ? static_cast<i32>(gltfSkin.skeleton - data->nodes) : -1;
+            for (cgltf_size n = 0; n < data->nodes_count; n = n + 1)
+            {
+                if (data->nodes[n].skin == &gltfSkin && data->nodes[n].mesh != nullptr)
+                {
+                    model.skinDesc.meshNode = static_cast<i32>(n);
+                    break;
+                }
+            }
+            model.skin = std::move(vertexSkins);
+            model.hasSkin = true;
+        }
+        else if (sawSkinnedPrimitive && sawUnskinnedPrimitive)
+        {
+            logWarn(std::format("cgltf: '{}' mixes skinned and unskinned primitives; importing unskinned", path));
+        }
         cgltf_free(data);
 
         if (mesh.vertices.empty())
@@ -407,7 +564,9 @@ namespace se
         {
             generateNormals(mesh);
         }
-        return ImportedModel{ std::move(mesh), std::move(material) };
+        model.mesh = std::move(mesh);
+        model.material = std::move(material);
+        return model;
     }
 
     auto importGltf(const std::string& path) -> Result<Mesh>
@@ -705,7 +864,7 @@ namespace se
         {
             return Err(std::format("'{}' is not a .smesh (bad magic)", path));
         }
-        if (header.version != MeshFormatVersion)
+        if (header.version != MeshFormatVersion && header.version != MeshFormatVersionSkinned)
         {
             return Err(std::format("'{}' has unsupported mesh version {}", path, header.version));
         }
@@ -743,6 +902,88 @@ namespace se
             return Err(std::format("read failed for '{}'", path));
         }
         return mesh;
+    }
+
+    auto saveMeshSkinned(const Mesh& mesh, const std::vector<VertexSkin>& skin, const std::string& path)
+        -> Result<void>
+    {
+        if (skin.size() != mesh.vertices.size())
+        {
+            return Err(std::format("skin stream ({}) does not parallel the vertices ({})", skin.size(),
+                                   mesh.vertices.size()));
+        }
+        SMeshHeader header{};
+        std::memcpy(header.magic, "SMSH", 4);
+        header.version = MeshFormatVersionSkinned;
+        header.flags = 0;
+        header.vertexStride = sizeof(Vertex);
+        header.vertexCount = static_cast<u32>(mesh.vertices.size());
+        header.indexCount = static_cast<u32>(mesh.indices.size());
+        header.indexWidth = sizeof(u32);
+        header.submeshCount = static_cast<u32>(mesh.submeshes.size());
+        header.verticesOffset = sizeof(SMeshHeader);
+        header.indicesOffset = header.verticesOffset + static_cast<u64>(header.vertexCount) * sizeof(Vertex);
+        header.submeshesOffset = header.indicesOffset + static_cast<u64>(header.indexCount) * sizeof(u32);
+
+        std::ofstream out(path, std::ios::binary);
+        if (!out)
+        {
+            return Err(std::format("cannot open '{}' for writing", path));
+        }
+        out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+        out.write(reinterpret_cast<const char*>(mesh.vertices.data()),
+                  static_cast<std::streamsize>(mesh.vertices.size() * sizeof(Vertex)));
+        out.write(reinterpret_cast<const char*>(mesh.indices.data()),
+                  static_cast<std::streamsize>(mesh.indices.size() * sizeof(u32)));
+        out.write(reinterpret_cast<const char*>(mesh.submeshes.data()),
+                  static_cast<std::streamsize>(mesh.submeshes.size() * sizeof(Submesh)));
+        out.write(reinterpret_cast<const char*>(skin.data()),
+                  static_cast<std::streamsize>(skin.size() * sizeof(VertexSkin)));
+        if (!out)
+        {
+            return Err(std::format("write failed for '{}'", path));
+        }
+        return {};
+    }
+
+    auto loadMeshSkin(const std::string& path) -> Result<std::vector<VertexSkin>>
+    {
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
+        if (!in)
+        {
+            return Err(std::format("cannot open '{}'", path));
+        }
+        const std::streamsize fileSize = in.tellg();
+        in.seekg(0);
+        if (fileSize < static_cast<std::streamsize>(sizeof(SMeshHeader)))
+        {
+            return Err(std::format("'{}' is too small to be a .smesh", path));
+        }
+        SMeshHeader header{};
+        in.read(reinterpret_cast<char*>(&header), sizeof(header));
+        if (std::memcmp(header.magic, "SMSH", 4) != 0)
+        {
+            return Err(std::format("'{}' is not a .smesh (bad magic)", path));
+        }
+        if (header.version != MeshFormatVersionSkinned)
+        {
+            return std::vector<VertexSkin>{};  // v1: unskinned, empty stream
+        }
+        const u64 submeshesEnd = header.submeshesOffset + static_cast<u64>(header.submeshCount) * sizeof(Submesh);
+        const u64 skinEnd = submeshesEnd + static_cast<u64>(header.vertexCount) * sizeof(VertexSkin);
+        if (static_cast<u64>(fileSize) < skinEnd)
+        {
+            return Err(std::format("'{}' is missing its skin section", path));
+        }
+        std::vector<VertexSkin> skin(header.vertexCount);
+        in.seekg(static_cast<std::streamoff>(submeshesEnd));
+        in.read(reinterpret_cast<char*>(skin.data()),
+                static_cast<std::streamsize>(header.vertexCount * sizeof(VertexSkin)));
+        if (!in)
+        {
+            return Err(std::format("read failed for '{}'", path));
+        }
+        return skin;
     }
 
     void runGeometrySelfTest(const std::string& modelsDir)
