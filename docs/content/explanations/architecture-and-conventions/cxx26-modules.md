@@ -38,10 +38,10 @@ SDL3 **C** header, which is safe because C headers do not clash with the std mod
 
 ## Heavy C++ headers
 
-Modules that wrap heavy **C++** third-party headers — `rendering`, `ui`, `scene`, `geometry`,
+Modules that wrap heavy **C++** third-party headers — `rendering`, `scene`, `geometry`,
 `json`, `assets`, `sceneedit`, `control` — do **not** `import std`. They use classic `#include` in the
-global module fragment, because mixing `import std` with a heavy C++ header (Vulkan-Hpp, ImGui,
-entt) in one translation unit breaks the build. Consumers still get the std types: the compiled
+global module fragment, because mixing `import std` with a heavy C++ header (Vulkan-Hpp, entt)
+in one translation unit breaks the build. Consumers still get the std types: the compiled
 module interface (BMI) carries them across.
 
 ```cpp
@@ -77,7 +77,7 @@ extensions on (the default) keeps the std module and its consumers on the same d
 > consumer rejects its BMI outright. Leave extensions on so they match.
 
 > [!WARNING]
-> Don't `import std` in a module that includes a heavy C++ third-party header (Vulkan-Hpp, ImGui,
+> Don't `import std` in a module that includes a heavy C++ third-party header (Vulkan-Hpp,
 > entt). The two clash in one TU. Use classic `#include` in the global module fragment instead;
 > consumers still get the std types through the BMI.
 

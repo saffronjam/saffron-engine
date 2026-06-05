@@ -118,22 +118,21 @@ Window   → {Core, Signal}
 Geometry → Core
 Scene    → {Core, Json}
 Rendering→ {Core, Window, Geometry}              partitions :Types :Detail :RenderGraph
-Ui       → {Core, Window, Rendering}
 Assets   → {Core, Json, Geometry, Rendering, Scene}
-SceneEdit→ {Core, Signal, Scene, Json, Ui}        partition :Context
+SceneEdit→ {Core, Signal, Scene, Json}            partition :Context
 Control  → {Core, Json, Window, Rendering, Scene, SceneEdit, Assets}   partition :Command
-App      → {Core, Window, Rendering, Ui}
+App      → {Core, Window, Rendering}
 Host     → {Core, App, Window, Rendering, SceneEdit, Control, Scene, Assets}   (the SaffronEngine exe)
 ```
 
 - `core`/`signal`/`app` use `import std`; `window` uses `import std` + the SDL3 **C** header (safe).
-- Modules wrapping heavy **C++** third-party headers (`rendering`, `ui`, `scene`, `geometry`, `json`,
+- Modules wrapping heavy **C++** third-party headers (`rendering`, `scene`, `geometry`, `json`,
   `assets`, `sceneedit`, `control`, `host`) use classic `#include` in the global module fragment and
   **do NOT `import std`** (mixing breaks the TU). They are still consumed normally by the `import std`
   modules — the BMI carries the std types.
 - Larger modules split into an interface partition + `.cpp` implementation units.
-- ImGui/ImGuizmo are linked by `Saffron.Ui` but the host is present-only and the in-viewport gizmo is a
-  **native overlay** (`OverlayVertex` / `buildNativeGizmo` in `Saffron.Host`) — ImGui's role is legacy.
+- There is no engine UI toolkit: the in-viewport gizmo is a **native overlay** (`OverlayVertex` /
+  `buildNativeGizmo` in `Saffron.Host`), and the full editor UI is the React/Tauri frontend.
 
 ## Layout
 
@@ -146,7 +145,7 @@ schemas/control/        hand-authored JSON Schemas (draft 2020-12) — the wire 
 tools/se/               the `se` control CLI (json over the unix socket; no engine dep)
 tools/ci/, tools/check-control-schema/   the reproducible gate + the live-vs-schema contract test
 tests/e2e/              end-to-end tests (bun) driving a headless engine over the control plane
-cmake/                  Dependencies.cmake (FetchContent deps + imgui/vma targets) + vma/stb impl TUs
+cmake/                  Dependencies.cmake (FetchContent deps + vma target) + vma/stb impl TUs
 docs/                   Hugo (hugo-book) docs site — per-concept explanations + how-to/reference/tutorials
 plans/                  phased, dependency-ordered plans for future expansions
 ```
@@ -164,7 +163,6 @@ plans/                  phased, dependency-ordered plans for future expansions
 | Serialization | nlohmann/json (`JSON_NOEXCEPTION`) | scene/project save/load |
 | Import / images | cgltf, tinyobjloader, stb_image(_write) | glTF/OBJ → `.smesh`; texture decode; PNG screenshots |
 | Editor | Tauri 2 + React 19 + Vite + shadcn/ui + Tailwind v4, Bun | |
-| UI (legacy) | Dear ImGui (docking) + ImGuizmo | linked by `Saffron.Ui`; host is present-only |
 
 ## Keep current (part of "done")
 

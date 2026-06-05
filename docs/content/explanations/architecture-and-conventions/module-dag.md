@@ -26,7 +26,6 @@ flowchart TD
     Geometry[Saffron.Geometry]
     Scene[Saffron.Scene]
     Rendering[Saffron.Rendering<br/>+ :RenderGraph :Types :Detail]
-    Ui[Saffron.Ui]
     Assets[Saffron.Assets]
     SceneEdit[Saffron.SceneEdit]
     Control[Saffron.Control]
@@ -43,9 +42,6 @@ flowchart TD
     Rendering --> Core
     Rendering --> Window
     Rendering --> Geometry
-    Ui --> Core
-    Ui --> Window
-    Ui --> Rendering
     Assets --> Core
     Assets --> Json
     Assets --> Geometry
@@ -55,14 +51,12 @@ flowchart TD
     SceneEdit --> Signal
     SceneEdit --> Scene
     SceneEdit --> Json
-    SceneEdit --> Ui
     Control --> SceneEdit
     Control --> Rendering
     Control --> Assets
     App --> Core
     App --> Window
     App --> Rendering
-    App --> Ui
     Host --> App
     Host --> SceneEdit
     Host --> Control

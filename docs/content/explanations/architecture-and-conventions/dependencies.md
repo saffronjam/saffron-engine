@@ -29,15 +29,13 @@ revision. Everything else falls into this group:
 ```cmake
 FetchContent_Declare(EnTT GIT_REPOSITORY ... GIT_TAG v3.16.0 GIT_SHALLOW ON)
 FetchContent_Declare(glm  GIT_REPOSITORY ... GIT_TAG 1.0.1   GIT_SHALLOW ON)
-# VulkanMemoryAllocator, vk-bootstrap, nlohmann_json, imgui (docking), imguizmo …
-FetchContent_MakeAvailable(EnTT glm VulkanMemoryAllocator vk-bootstrap nlohmann_json imgui imguizmo)
+# VulkanMemoryAllocator, vk-bootstrap, nlohmann_json …
+FetchContent_MakeAvailable(EnTT glm VulkanMemoryAllocator vk-bootstrap nlohmann_json)
 ```
 
 A few dependencies are header-only with an implementation macro, so each needs a translation unit
 of its own. VMA, stb (image write and decode), cgltf, tinyobjloader, and nanosvg each get a one-line
-static library that defines the implementation macro in a single `.cpp` under `cmake/`. ImGui has no
-upstream CMake, so the build compiles its core, the SDL3 and Vulkan backends, and ImGuizmo into one
-`imgui` static library.
+static library that defines the implementation macro in a single `.cpp` under `cmake/`.
 
 A single interface target aggregates everything the engine links against, so each engine target
 links only `saffron_third_party`:
@@ -46,7 +44,7 @@ links only `saffron_third_party`:
 add_library(saffron_third_party INTERFACE)
 target_link_libraries(saffron_third_party INTERFACE
     SDL3::SDL3 Vulkan::Vulkan EnTT::EnTT glm::glm nlohmann_json::nlohmann_json
-    vk-bootstrap::vk-bootstrap vma stb cgltf tinyobjloader nanosvg imgui)
+    vk-bootstrap::vk-bootstrap vma stb cgltf tinyobjloader nanosvg)
 ```
 
 ## Definitions that enforce the house rules
@@ -69,11 +67,6 @@ module fragment rather than here.
 > `JSON_NOEXCEPTION` turns a would-be JSON throw into `std::abort`, not a recoverable error. The
 > JSON gateway parses defensively and validates before indexing so it never reaches that path. See
 > [error handling](../../core-and-conventions/error-handling/).
-
-> [!NOTE]
-> ImGui uses the docking branch (`v1.92.8-docking`), separate from master, because the editor needs
-> dockable panels. ImGuizmo is fetched but compiled into the `imgui` target rather than using its
-> own CMake.
 
 ## In the code
 

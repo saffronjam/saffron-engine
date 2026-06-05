@@ -34,7 +34,7 @@ flowchart TD
     B --> C{beginFrame ok?}
     C -- no, minimized/resize --> A
     C -- yes --> D[layer.onRender — submit GPU work]
-    D --> E[uiBeginFrame → layer.onUi → uiEndFrame]
+    D --> E[layer.onUi]
     E --> F[beginFrameGraph — cull + scene passes]
     F --> G[layer.onRenderGraph — app adds passes]
     G --> H[endFrame — derive barriers, execute graph, present]
@@ -52,8 +52,8 @@ Each pass **declares** what it does with each resource (`ColorWrite`, `SampledRe
 declarations into the right `vk::ImageMemoryBarrier2` / `vk::MemoryBarrier2` and layout
 transitions, then records each pass body inside its rendering scope.
 
-Light culling, the scene pass, shadow passes, post-processing, and the ImGui pass are all
-declared passes over imported images. Start at the
+Light culling, the scene pass, shadow passes, post-processing, and the present blit to the
+swapchain are all declared passes over imported images. Start at the
 [render graph overview](../explanations/frame-and-render-graph/render-graph-overview/).
 
 ## Modules
@@ -74,16 +74,19 @@ flowchart BT
     Rendering --> Core
     Rendering --> Window
     Rendering --> Geometry
-    Ui --> Rendering
     Assets --> Rendering
     Assets --> Scene
     Assets --> Geometry
-    Editor --> Scene
-    Editor --> Ui
-    Control --> Editor
+    SceneEdit --> Scene
+    SceneEdit --> Signal
+    Control --> SceneEdit
+    Control --> Rendering
     Control --> Assets
     App --> Rendering
-    App --> Ui
+    App --> Window
+    Host --> App
+    Host --> Control
+    Host --> SceneEdit
 ```
 
 `Rendering` carries a `:RenderGraph` partition; the larger modules split into an
