@@ -220,6 +220,15 @@ namespace se
                 return SetShadowsResult{ enabled };
             });
 
+        registerCommand<ToggleParams, SetSkinningResult>(
+            reg, "set-skinning", "set-skinning {0|1} — toggle the GPU skinning path",
+            [](EngineContext& ctx, const ToggleParams& params) -> Result<SetSkinningResult>
+            {
+                const bool enabled = params.enabled.value_or(true);
+                setSkinning(ctx.renderer, enabled);
+                return SetSkinningResult{ enabled };
+            });
+
         registerCommand<SetExposureParams, SetExposureResult>(
             reg, "set-exposure", "set-exposure {ev} — tonemap exposure in stops (exp2)",
             [](EngineContext& ctx, const SetExposureParams& params) -> Result<SetExposureResult>

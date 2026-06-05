@@ -30,6 +30,27 @@ namespace se
         return resolveEntity(ctx, selectorParams(selector));
     }
 
+    // An absent, 0, "0", or empty selector means "the scene root" (detach), so a detach
+    // never tries to resolve entity 0.
+    auto isRootSelector(const EntitySelector& selector) -> bool
+    {
+        const json& value = selector.value;
+        if (value.is_null())
+        {
+            return true;
+        }
+        if (value.is_number_unsigned())
+        {
+            return value.get<u64>() == 0;
+        }
+        if (value.is_string())
+        {
+            const std::string text = value.get<std::string>();
+            return text.empty() || text == "0";
+        }
+        return false;
+    }
+
     auto toGlm(const Vec3& value) -> glm::vec3
     {
         return glm::vec3{ value.x, value.y, value.z };
@@ -87,7 +108,7 @@ namespace se
             {
                 return;
             }
-            const glm::vec3 pos = getComponent<TransformComponent>(editor.scene, e).translation;
+            const glm::vec3 pos = worldTranslation(editor.scene, e);
             const GizmoProjection p = viewportProject(cam, width, height, pos);
             if (!p.visible)
             {
@@ -133,8 +154,27 @@ namespace se
             {
                 EntityList out;
                 forEach<IdComponent, NameComponent>(
-                    ctx.sceneEdit.scene, [&](Entity, IdComponent& id, NameComponent& name)
-                    { out.entities.push_back(EntityRef{ WireUuid{ id.id.value }, name.name }); });
+                    ctx.sceneEdit.scene,
+                    [&](Entity entity, IdComponent& id, NameComponent& name)
+                    {
+                        EntityListEntry entry{ WireUuid{ id.id.value }, name.name, std::nullopt, std::nullopt };
+                        // Omit parentId for roots (and bone for non-joints) so the
+                        // optional fields stay genuinely optional.
+                        if (hasComponent<RelationshipComponent>(ctx.sceneEdit.scene, entity))
+                        {
+                            const u64 parent =
+                                getComponent<RelationshipComponent>(ctx.sceneEdit.scene, entity).parent.value;
+                            if (parent != 0)
+                            {
+                                entry.parentId = WireUuid{ parent };
+                            }
+                        }
+                        if (hasComponent<BoneComponent>(ctx.sceneEdit.scene, entity))
+                        {
+                            entry.bone = true;
+                        }
+                        out.entities.push_back(std::move(entry));
+                    });
                 return out;
             });
 
@@ -169,13 +209,55 @@ namespace se
                     return Err(entity.error());
                 }
                 const u64 id = getComponent<IdComponent>(ctx.sceneEdit.scene, *entity).id.value;
-                if (ctx.sceneEdit.selected.handle == entity->handle)
+                // destroyEntity takes the whole subtree, so clear the selection when it
+                // sits anywhere under the doomed root (walk the selection's ancestry).
+                Scene& scene = ctx.sceneEdit.scene;
+                entt::entity cursor =
+                    scene.registry.valid(ctx.sceneEdit.selected.handle) ? ctx.sceneEdit.selected.handle : entt::null;
+                while (cursor != entt::null)
                 {
-                    setSelection(ctx.sceneEdit, Entity{ entt::null });
+                    if (cursor == entity->handle)
+                    {
+                        setSelection(ctx.sceneEdit, Entity{ entt::null });
+                        break;
+                    }
+                    cursor = scene.registry.all_of<RelationshipComponent>(cursor)
+                                 ? scene.registry.get<RelationshipComponent>(cursor).parentHandle
+                                 : entt::null;
                 }
-                destroyEntity(ctx.sceneEdit.scene, *entity);
+                destroyEntity(scene, *entity);
                 ctx.sceneEdit.sceneVersion += 1;
                 return DestroyEntityResult{ WireUuid{ id } };
+            });
+
+        registerCommand<SetParentParams, EntityRef>(
+            reg, "set-parent", "set-parent {entity, parent?} — reparent (absent/0 parent detaches to root)",
+            [](EngineContext& ctx, const SetParentParams& params) -> Result<EntityRef>
+            {
+                auto child = resolveEntity(ctx, params.entity);
+                if (!child)
+                {
+                    return Err(child.error());
+                }
+                Entity newParent{ entt::null };
+                if (params.parent && !isRootSelector(*params.parent))
+                {
+                    auto parent = resolveEntity(ctx, *params.parent);
+                    if (!parent)
+                    {
+                        return Err(parent.error());
+                    }
+                    newParent = *parent;
+                }
+                // setParent carries the self/cycle guards and the world-preserving rebase;
+                // the selection stays intact (only sceneVersion bumps).
+                auto ok = setParent(ctx.sceneEdit.scene, *child, newParent);
+                if (!ok)
+                {
+                    return Err(ok.error());
+                }
+                ctx.sceneEdit.sceneVersion += 1;
+                return entityRefDto(ctx.sceneEdit.scene, *child);
             });
 
         registerCommand<ComponentParams, AddComponentResult>(
@@ -499,7 +581,7 @@ namespace se
                 {
                     return Err(std::string{ "entity has no Transform" });
                 }
-                const glm::vec3 target = getComponent<TransformComponent>(ctx.sceneEdit.scene, *entity).translation;
+                const glm::vec3 target = worldTranslation(ctx.sceneEdit.scene, *entity);
                 ctx.sceneEdit.camera.position = target - sceneEditCameraForward(ctx.sceneEdit.camera) * 5.0f;
                 return entityRefDto(ctx.sceneEdit.scene, *entity);
             });
@@ -891,11 +973,7 @@ namespace se
                         gizmo.dragging = true;
                         gizmo.startMouse = mouse;
                         gizmo.target = ctx.sceneEdit.selected;
-                        TransformComponent& transform =
-                            getComponent<TransformComponent>(ctx.sceneEdit.scene, ctx.sceneEdit.selected);
-                        gizmo.startTranslation = transform.translation;
-                        gizmo.startRotation = transform.rotation;
-                        gizmo.startScale = transform.scale;
+                        snapshotNativeGizmoStart(ctx.sceneEdit, ctx.sceneEdit.selected);
                     }
                 }
                 else if (phase == GizmoPointerPhase::Drag)

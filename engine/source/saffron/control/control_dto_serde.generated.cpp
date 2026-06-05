@@ -48,8 +48,7 @@ namespace se
             return fieldValue(params, key, index, positional);
         }
 
-        auto requiredField(const Json& params, std::string_view key, std::size_t index, bool positional)
-            -> Result<const Json*>
+        auto requiredField(const Json& params, std::string_view key, std::size_t index, bool positional) -> Result<const Json*>
         {
             if (const Json* value = fieldValue(params, key, index, positional))
             {
@@ -174,42 +173,15 @@ namespace se
         auto readAddEntityPreset(const Json& value, std::string_view key) -> Result<AddEntityPreset>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "empty")
-            {
-                return AddEntityPreset::Empty;
-            }
-            if (text == "cube")
-            {
-                return AddEntityPreset::Cube;
-            }
-            if (text == "model")
-            {
-                return AddEntityPreset::Model;
-            }
-            if (text == "point-light")
-            {
-                return AddEntityPreset::PointLight;
-            }
-            if (text == "spot-light")
-            {
-                return AddEntityPreset::SpotLight;
-            }
-            if (text == "directional-light")
-            {
-                return AddEntityPreset::DirectionalLight;
-            }
-            if (text == "camera")
-            {
-                return AddEntityPreset::Camera;
-            }
-            if (text == "reflection-probe")
-            {
-                return AddEntityPreset::ReflectionProbe;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "empty") { return AddEntityPreset::Empty; }
+            if (text == "cube") { return AddEntityPreset::Cube; }
+            if (text == "model") { return AddEntityPreset::Model; }
+            if (text == "point-light") { return AddEntityPreset::PointLight; }
+            if (text == "spot-light") { return AddEntityPreset::SpotLight; }
+            if (text == "directional-light") { return AddEntityPreset::DirectionalLight; }
+            if (text == "camera") { return AddEntityPreset::Camera; }
+            if (text == "reflection-probe") { return AddEntityPreset::ReflectionProbe; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -217,22 +189,14 @@ namespace se
         {
             switch (value)
             {
-            case AddEntityPreset::Empty:
-                return "empty";
-            case AddEntityPreset::Cube:
-                return "cube";
-            case AddEntityPreset::Model:
-                return "model";
-            case AddEntityPreset::PointLight:
-                return "point-light";
-            case AddEntityPreset::SpotLight:
-                return "spot-light";
-            case AddEntityPreset::DirectionalLight:
-                return "directional-light";
-            case AddEntityPreset::Camera:
-                return "camera";
-            case AddEntityPreset::ReflectionProbe:
-                return "reflection-probe";
+            case AddEntityPreset::Empty: return "empty";
+            case AddEntityPreset::Cube: return "cube";
+            case AddEntityPreset::Model: return "model";
+            case AddEntityPreset::PointLight: return "point-light";
+            case AddEntityPreset::SpotLight: return "spot-light";
+            case AddEntityPreset::DirectionalLight: return "directional-light";
+            case AddEntityPreset::Camera: return "camera";
+            case AddEntityPreset::ReflectionProbe: return "reflection-probe";
             }
             return "";
         }
@@ -240,18 +204,9 @@ namespace se
         auto readPickKind(const Json& value, std::string_view key) -> Result<PickKind>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "billboard")
-            {
-                return PickKind::Billboard;
-            }
-            if (text == "mesh")
-            {
-                return PickKind::Mesh;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "billboard") { return PickKind::Billboard; }
+            if (text == "mesh") { return PickKind::Mesh; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -259,10 +214,8 @@ namespace se
         {
             switch (value)
             {
-            case PickKind::Billboard:
-                return "billboard";
-            case PickKind::Mesh:
-                return "mesh";
+            case PickKind::Billboard: return "billboard";
+            case PickKind::Mesh: return "mesh";
             }
             return "";
         }
@@ -270,22 +223,10 @@ namespace se
         auto readGizmoOpDto(const Json& value, std::string_view key) -> Result<GizmoOpDto>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "translate")
-            {
-                return GizmoOpDto::Translate;
-            }
-            if (text == "rotate")
-            {
-                return GizmoOpDto::Rotate;
-            }
-            if (text == "scale")
-            {
-                return GizmoOpDto::Scale;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "translate") { return GizmoOpDto::Translate; }
+            if (text == "rotate") { return GizmoOpDto::Rotate; }
+            if (text == "scale") { return GizmoOpDto::Scale; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -293,12 +234,9 @@ namespace se
         {
             switch (value)
             {
-            case GizmoOpDto::Translate:
-                return "translate";
-            case GizmoOpDto::Rotate:
-                return "rotate";
-            case GizmoOpDto::Scale:
-                return "scale";
+            case GizmoOpDto::Translate: return "translate";
+            case GizmoOpDto::Rotate: return "rotate";
+            case GizmoOpDto::Scale: return "scale";
             }
             return "";
         }
@@ -306,18 +244,9 @@ namespace se
         auto readGizmoSpaceDto(const Json& value, std::string_view key) -> Result<GizmoSpaceDto>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "world")
-            {
-                return GizmoSpaceDto::World;
-            }
-            if (text == "local")
-            {
-                return GizmoSpaceDto::Local;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "world") { return GizmoSpaceDto::World; }
+            if (text == "local") { return GizmoSpaceDto::Local; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -325,10 +254,8 @@ namespace se
         {
             switch (value)
             {
-            case GizmoSpaceDto::World:
-                return "world";
-            case GizmoSpaceDto::Local:
-                return "local";
+            case GizmoSpaceDto::World: return "world";
+            case GizmoSpaceDto::Local: return "local";
             }
             return "";
         }
@@ -336,26 +263,11 @@ namespace se
         auto readGizmoPointerPhase(const Json& value, std::string_view key) -> Result<GizmoPointerPhase>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "hover")
-            {
-                return GizmoPointerPhase::Hover;
-            }
-            if (text == "begin")
-            {
-                return GizmoPointerPhase::Begin;
-            }
-            if (text == "drag")
-            {
-                return GizmoPointerPhase::Drag;
-            }
-            if (text == "end")
-            {
-                return GizmoPointerPhase::End;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "hover") { return GizmoPointerPhase::Hover; }
+            if (text == "begin") { return GizmoPointerPhase::Begin; }
+            if (text == "drag") { return GizmoPointerPhase::Drag; }
+            if (text == "end") { return GizmoPointerPhase::End; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -363,14 +275,10 @@ namespace se
         {
             switch (value)
             {
-            case GizmoPointerPhase::Hover:
-                return "hover";
-            case GizmoPointerPhase::Begin:
-                return "begin";
-            case GizmoPointerPhase::Drag:
-                return "drag";
-            case GizmoPointerPhase::End:
-                return "end";
+            case GizmoPointerPhase::Hover: return "hover";
+            case GizmoPointerPhase::Begin: return "begin";
+            case GizmoPointerPhase::Drag: return "drag";
+            case GizmoPointerPhase::End: return "end";
             }
             return "";
         }
@@ -378,34 +286,13 @@ namespace se
         auto readAaModeDto(const Json& value, std::string_view key) -> Result<AaModeDto>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "off")
-            {
-                return AaModeDto::Off;
-            }
-            if (text == "fxaa")
-            {
-                return AaModeDto::Fxaa;
-            }
-            if (text == "taa")
-            {
-                return AaModeDto::Taa;
-            }
-            if (text == "msaa2")
-            {
-                return AaModeDto::Msaa2;
-            }
-            if (text == "msaa4")
-            {
-                return AaModeDto::Msaa4;
-            }
-            if (text == "msaa8")
-            {
-                return AaModeDto::Msaa8;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "off") { return AaModeDto::Off; }
+            if (text == "fxaa") { return AaModeDto::Fxaa; }
+            if (text == "taa") { return AaModeDto::Taa; }
+            if (text == "msaa2") { return AaModeDto::Msaa2; }
+            if (text == "msaa4") { return AaModeDto::Msaa4; }
+            if (text == "msaa8") { return AaModeDto::Msaa8; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -413,18 +300,12 @@ namespace se
         {
             switch (value)
             {
-            case AaModeDto::Off:
-                return "off";
-            case AaModeDto::Fxaa:
-                return "fxaa";
-            case AaModeDto::Taa:
-                return "taa";
-            case AaModeDto::Msaa2:
-                return "msaa2";
-            case AaModeDto::Msaa4:
-                return "msaa4";
-            case AaModeDto::Msaa8:
-                return "msaa8";
+            case AaModeDto::Off: return "off";
+            case AaModeDto::Fxaa: return "fxaa";
+            case AaModeDto::Taa: return "taa";
+            case AaModeDto::Msaa2: return "msaa2";
+            case AaModeDto::Msaa4: return "msaa4";
+            case AaModeDto::Msaa8: return "msaa8";
             }
             return "";
         }
@@ -432,18 +313,9 @@ namespace se
         auto readGiModeDto(const Json& value, std::string_view key) -> Result<GiModeDto>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "off")
-            {
-                return GiModeDto::Off;
-            }
-            if (text == "ddgi")
-            {
-                return GiModeDto::Ddgi;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "off") { return GiModeDto::Off; }
+            if (text == "ddgi") { return GiModeDto::Ddgi; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -451,10 +323,8 @@ namespace se
         {
             switch (value)
             {
-            case GiModeDto::Off:
-                return "off";
-            case GiModeDto::Ddgi:
-                return "ddgi";
+            case GiModeDto::Off: return "off";
+            case GiModeDto::Ddgi: return "ddgi";
             }
             return "";
         }
@@ -462,18 +332,9 @@ namespace se
         auto readAssetSlotDto(const Json& value, std::string_view key) -> Result<AssetSlotDto>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "mesh")
-            {
-                return AssetSlotDto::Mesh;
-            }
-            if (text == "albedo")
-            {
-                return AssetSlotDto::Albedo;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "mesh") { return AssetSlotDto::Mesh; }
+            if (text == "albedo") { return AssetSlotDto::Albedo; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -481,10 +342,8 @@ namespace se
         {
             switch (value)
             {
-            case AssetSlotDto::Mesh:
-                return "mesh";
-            case AssetSlotDto::Albedo:
-                return "albedo";
+            case AssetSlotDto::Mesh: return "mesh";
+            case AssetSlotDto::Albedo: return "albedo";
             }
             return "";
         }
@@ -492,18 +351,9 @@ namespace se
         auto readScreenshotTargetDto(const Json& value, std::string_view key) -> Result<ScreenshotTargetDto>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "viewport")
-            {
-                return ScreenshotTargetDto::Viewport;
-            }
-            if (text == "window")
-            {
-                return ScreenshotTargetDto::Window;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "viewport") { return ScreenshotTargetDto::Viewport; }
+            if (text == "window") { return ScreenshotTargetDto::Window; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -511,10 +361,8 @@ namespace se
         {
             switch (value)
             {
-            case ScreenshotTargetDto::Viewport:
-                return "viewport";
-            case ScreenshotTargetDto::Window:
-                return "window";
+            case ScreenshotTargetDto::Viewport: return "viewport";
+            case ScreenshotTargetDto::Window: return "window";
             }
             return "";
         }
@@ -522,22 +370,10 @@ namespace se
         auto readAssetTypeDto(const Json& value, std::string_view key) -> Result<AssetTypeDto>
         {
             auto text = readString(value, key);
-            if (!text)
-            {
-                return Err(std::move(text.error()));
-            }
-            if (text == "mesh")
-            {
-                return AssetTypeDto::Mesh;
-            }
-            if (text == "texture")
-            {
-                return AssetTypeDto::Texture;
-            }
-            if (text == "other")
-            {
-                return AssetTypeDto::Other;
-            }
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "mesh") { return AssetTypeDto::Mesh; }
+            if (text == "texture") { return AssetTypeDto::Texture; }
+            if (text == "other") { return AssetTypeDto::Other; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -545,12 +381,9 @@ namespace se
         {
             switch (value)
             {
-            case AssetTypeDto::Mesh:
-                return "mesh";
-            case AssetTypeDto::Texture:
-                return "texture";
-            case AssetTypeDto::Other:
-                return "other";
+            case AssetTypeDto::Mesh: return "mesh";
+            case AssetTypeDto::Texture: return "texture";
+            case AssetTypeDto::Other: return "other";
             }
             return "";
         }
@@ -567,10 +400,7 @@ namespace se
             for (const Json& item : value)
             {
                 auto parsed = parseDto(item, DtoTag<T>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.push_back(std::move(*parsed));
             }
             return out;
@@ -588,10 +418,7 @@ namespace se
             for (const Json& item : value)
             {
                 auto parsed = readString(item, key);
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.push_back(std::move(*parsed));
             }
             return out;
@@ -698,10 +525,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readAaModeDto(*value, "mode");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.mode = std::move(*parsed);
             }
         }
@@ -717,10 +541,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "enabled");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.enabled = std::move(*parsed);
             }
         }
@@ -733,15 +554,9 @@ namespace se
 
         {
             auto value = requiredField(params, "mode", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readGiModeDto(**value, "mode");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.mode = std::move(*parsed);
         }
         return out;
@@ -753,15 +568,9 @@ namespace se
 
         {
             auto value = requiredField(params, "parentXid", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readWireUuid(**value, "parentXid");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.parentXid = std::move(*parsed);
         }
 
@@ -770,10 +579,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "x");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.x = std::move(*parsed);
             }
         }
@@ -783,10 +589,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "y");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.y = std::move(*parsed);
             }
         }
@@ -796,10 +599,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "width");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.width = std::move(*parsed);
             }
         }
@@ -809,10 +609,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "height");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.height = std::move(*parsed);
             }
         }
@@ -828,10 +625,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "x");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.x = std::move(*parsed);
             }
         }
@@ -841,10 +635,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "y");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.y = std::move(*parsed);
             }
         }
@@ -854,10 +645,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "width");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.width = std::move(*parsed);
             }
         }
@@ -867,10 +655,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "height");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.height = std::move(*parsed);
             }
         }
@@ -883,15 +668,9 @@ namespace se
 
         {
             auto value = requiredField(params, "name", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "name");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.name = std::move(*parsed);
         }
         return out;
@@ -903,16 +682,34 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetParentParams>) -> Result<SetParentParams>
+    {
+        SetParentParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "parent", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readEntitySelector(*value, "parent");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.parent = std::move(*parsed);
+            }
         }
         return out;
     }
@@ -923,29 +720,17 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "component", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "component");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.component = std::move(*parsed);
         }
         return out;
@@ -957,43 +742,25 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "component", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "component");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.component = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "json", 2, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readJson(**value, "json");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.json = std::move(*parsed);
         }
         return out;
@@ -1005,15 +772,9 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
         }
 
@@ -1022,10 +783,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.translation = std::move(*parsed);
             }
         }
@@ -1035,10 +793,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.rotation = std::move(*parsed);
             }
         }
@@ -1048,10 +803,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.scale = std::move(*parsed);
             }
         }
@@ -1064,43 +816,25 @@ namespace se
 
         {
             auto value = requiredField(params, "x", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "x");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.x = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "y", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "y");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.y = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "z", 2, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "z");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.z = std::move(*parsed);
         }
         return out;
@@ -1112,15 +846,9 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
         }
 
@@ -1129,10 +857,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec4>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.baseColor = std::move(*parsed);
             }
         }
@@ -1142,10 +867,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readWireUuid(*value, "albedoTexture");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.albedoTexture = std::move(*parsed);
             }
         }
@@ -1155,10 +877,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "metallic");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.metallic = std::move(*parsed);
             }
         }
@@ -1168,10 +887,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "roughness");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.roughness = std::move(*parsed);
             }
         }
@@ -1181,10 +897,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.emissive = std::move(*parsed);
             }
         }
@@ -1194,10 +907,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "emissiveStrength");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.emissiveStrength = std::move(*parsed);
             }
         }
@@ -1207,10 +917,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "unlit");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.unlit = std::move(*parsed);
             }
         }
@@ -1223,57 +930,33 @@ namespace se
 
         {
             auto value = requiredField(params, "x", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "x");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.x = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "y", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "y");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.y = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "z", 2, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "z");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.z = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "w", 3, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "w");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.w = std::move(*parsed);
         }
         return out;
@@ -1288,10 +971,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readEntitySelector(*value, "entity");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.entity = std::move(*parsed);
             }
         }
@@ -1301,10 +981,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.direction = std::move(*parsed);
             }
         }
@@ -1314,10 +991,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.color = std::move(*parsed);
             }
         }
@@ -1327,10 +1001,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "intensity");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.intensity = std::move(*parsed);
             }
         }
@@ -1340,10 +1011,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "ambient");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.ambient = std::move(*parsed);
             }
         }
@@ -1359,10 +1027,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "u");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.u = std::move(*parsed);
             }
         }
@@ -1372,10 +1037,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "v");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.v = std::move(*parsed);
             }
         }
@@ -1391,10 +1053,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readJson(*value, "json");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.json = std::move(*parsed);
             }
         }
@@ -1404,10 +1063,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readString(*value, "skyMode");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.skyMode = std::move(*parsed);
             }
         }
@@ -1417,10 +1073,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.clearColor = std::move(*parsed);
             }
         }
@@ -1430,10 +1083,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readWireUuid(*value, "skyTexture");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.skyTexture = std::move(*parsed);
             }
         }
@@ -1443,10 +1093,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "skyIntensity");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.skyIntensity = std::move(*parsed);
             }
         }
@@ -1456,10 +1103,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "skyRotation");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.skyRotation = std::move(*parsed);
             }
         }
@@ -1469,10 +1113,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "exposure");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.exposure = std::move(*parsed);
             }
         }
@@ -1482,10 +1123,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "visible");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.visible = std::move(*parsed);
             }
         }
@@ -1495,10 +1133,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "useSkyForAmbient");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.useSkyForAmbient = std::move(*parsed);
             }
         }
@@ -1508,10 +1143,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.ambientColor = std::move(*parsed);
             }
         }
@@ -1521,10 +1153,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "ambientIntensity");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.ambientIntensity = std::move(*parsed);
             }
         }
@@ -1540,10 +1169,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readJson(*value, "json");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.json = std::move(*parsed);
             }
         }
@@ -1553,10 +1179,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "enabled");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.enabled = std::move(*parsed);
             }
         }
@@ -1566,10 +1189,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "planetRadius");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.planetRadius = std::move(*parsed);
             }
         }
@@ -1579,10 +1199,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "atmosphereHeight");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.atmosphereHeight = std::move(*parsed);
             }
         }
@@ -1592,10 +1209,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.rayleighScattering = std::move(*parsed);
             }
         }
@@ -1605,10 +1219,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "rayleighScaleHeight");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.rayleighScaleHeight = std::move(*parsed);
             }
         }
@@ -1618,10 +1229,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "mieScattering");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.mieScattering = std::move(*parsed);
             }
         }
@@ -1631,10 +1239,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "mieScaleHeight");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.mieScaleHeight = std::move(*parsed);
             }
         }
@@ -1644,10 +1249,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "mieAnisotropy");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.mieAnisotropy = std::move(*parsed);
             }
         }
@@ -1657,10 +1259,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.ozoneAbsorption = std::move(*parsed);
             }
         }
@@ -1670,10 +1269,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "sunDiskAngularRadius");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.sunDiskAngularRadius = std::move(*parsed);
             }
         }
@@ -1683,10 +1279,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "sunDiskIntensity");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.sunDiskIntensity = std::move(*parsed);
             }
         }
@@ -1702,10 +1295,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readAddEntityPreset(*value, "preset");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.preset = std::move(*parsed);
             }
         }
@@ -1718,29 +1308,17 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "name", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "name");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.name = std::move(*parsed);
         }
         return out;
@@ -1752,57 +1330,33 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "component", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "component");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.component = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "field", 2, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "field");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.field = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "value", 3, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readJson(**value, "value");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.value = std::move(*parsed);
         }
         return out;
@@ -1817,10 +1371,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.position = std::move(*parsed);
             }
         }
@@ -1830,10 +1381,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "yaw");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.yaw = std::move(*parsed);
             }
         }
@@ -1843,10 +1391,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "pitch");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.pitch = std::move(*parsed);
             }
         }
@@ -1856,10 +1401,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "fov");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.fov = std::move(*parsed);
             }
         }
@@ -1869,10 +1411,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "near");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.near = std::move(*parsed);
             }
         }
@@ -1882,10 +1421,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "far");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.far = std::move(*parsed);
             }
         }
@@ -1895,10 +1431,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "moveSpeed");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.moveSpeed = std::move(*parsed);
             }
         }
@@ -1908,10 +1441,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "lookSpeed");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.lookSpeed = std::move(*parsed);
             }
         }
@@ -1927,10 +1457,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readGizmoOpDto(*value, "op");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.op = std::move(*parsed);
             }
         }
@@ -1940,10 +1467,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readGizmoSpaceDto(*value, "space");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.space = std::move(*parsed);
             }
         }
@@ -1959,10 +1483,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readGizmoPointerPhase(*value, "phase");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.phase = std::move(*parsed);
             }
         }
@@ -1972,10 +1493,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "x");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.x = std::move(*parsed);
             }
         }
@@ -1985,10 +1503,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "y");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.y = std::move(*parsed);
             }
         }
@@ -2004,10 +1519,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "enabled");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.enabled = std::move(*parsed);
             }
         }
@@ -2020,15 +1532,9 @@ namespace se
 
         {
             auto value = requiredField(params, "ev", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readF32(**value, "ev");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.ev = std::move(*parsed);
         }
         return out;
@@ -2043,10 +1549,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readString(*value, "name");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.name = std::move(*parsed);
             }
         }
@@ -2056,10 +1559,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readString(*value, "displayName");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.displayName = std::move(*parsed);
             }
         }
@@ -2069,10 +1569,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readString(*value, "root");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.root = std::move(*parsed);
             }
         }
@@ -2085,15 +1582,9 @@ namespace se
 
         {
             auto value = requiredField(params, "path", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "path");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.path = std::move(*parsed);
         }
         return out;
@@ -2105,29 +1596,17 @@ namespace se
 
         {
             auto value = requiredField(params, "asset", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readAssetSelector(**value, "asset");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.asset = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "name", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "name");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.name = std::move(*parsed);
         }
         return out;
@@ -2139,15 +1618,9 @@ namespace se
 
         {
             auto value = requiredField(params, "folder", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "folder");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.folder = std::move(*parsed);
         }
         return out;
@@ -2159,29 +1632,17 @@ namespace se
 
         {
             auto value = requiredField(params, "folder", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "folder");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.folder = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "name", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "name");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.name = std::move(*parsed);
         }
         return out;
@@ -2193,15 +1654,9 @@ namespace se
 
         {
             auto value = requiredField(params, "folder", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "folder");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.folder = std::move(*parsed);
         }
         return out;
@@ -2213,15 +1668,9 @@ namespace se
 
         {
             auto value = requiredField(params, "asset", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readAssetSelector(**value, "asset");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.asset = std::move(*parsed);
         }
 
@@ -2230,10 +1679,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readString(*value, "folder");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.folder = std::move(*parsed);
             }
         }
@@ -2246,15 +1692,9 @@ namespace se
 
         {
             auto value = requiredField(params, "asset", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readAssetSelector(**value, "asset");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.asset = std::move(*parsed);
         }
         return out;
@@ -2266,15 +1706,9 @@ namespace se
 
         {
             auto value = requiredField(params, "asset", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readAssetSelector(**value, "asset");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.asset = std::move(*parsed);
         }
         return out;
@@ -2286,43 +1720,25 @@ namespace se
 
         {
             auto value = requiredField(params, "entity", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.entity = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "slot", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readAssetSlotDto(**value, "slot");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.slot = std::move(*parsed);
         }
 
         {
             auto value = requiredField(params, "asset", 2, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readAssetSelector(**value, "asset");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.asset = std::move(*parsed);
         }
         return out;
@@ -2337,10 +1753,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readString(*value, "path");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.path = std::move(*parsed);
             }
         }
@@ -2356,25 +1769,16 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readScreenshotTargetDto(*value, "target");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.target = std::move(*parsed);
             }
         }
 
         {
             auto value = requiredField(params, "path", 1, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readString(**value, "path");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.path = std::move(*parsed);
         }
         return out;
@@ -2386,15 +1790,9 @@ namespace se
 
         {
             auto value = requiredField(params, "asset", 0, true);
-            if (!value)
-            {
-                return Err(std::move(value.error()));
-            }
+            if (!value) { return Err(std::move(value.error())); }
             auto parsed = readAssetSelector(**value, "asset");
-            if (!parsed)
-            {
-                return Err(std::move(parsed.error()));
-            }
+            if (!parsed) { return Err(std::move(parsed.error())); }
             out.asset = std::move(*parsed);
         }
 
@@ -2403,10 +1801,7 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readI32(*value, "size");
-                if (!parsed)
-                {
-                    return Err(std::move(parsed.error()));
-                }
+                if (!parsed) { return Err(std::move(parsed.error())); }
                 out.size = std::move(*parsed);
             }
         }
@@ -2521,6 +1916,13 @@ namespace se
         return out;
     }
 
+    auto dtoToJson(const SetSkinningResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["skinning"] = value.skinning;
+        return out;
+    }
+
     auto dtoToJson(const SetDepthPrepassResult& value) -> Json
     {
         Json out = Json::object();
@@ -2571,11 +1973,13 @@ namespace se
         return out;
     }
 
-    auto dtoToJson(const EntityRef& value) -> Json
+    auto dtoToJson(const EntityListEntry& value) -> Json
     {
         Json out = Json::object();
         out["id"] = dtoToJson(value.id);
         out["name"] = value.name;
+        if (value.parentId) { out["parentId"] = dtoToJson(*value.parentId); }
+        if (value.bone) { out["bone"] = *value.bone; }
         return out;
     }
 
@@ -2583,6 +1987,14 @@ namespace se
     {
         Json out = Json::object();
         out["components"] = dtoVectorToJson(value.components);
+        return out;
+    }
+
+    auto dtoToJson(const EntityRef& value) -> Json
+    {
+        Json out = Json::object();
+        out["id"] = dtoToJson(value.id);
+        out["name"] = value.name;
         return out;
     }
 
@@ -2618,18 +2030,9 @@ namespace se
     {
         Json out = Json::object();
         out["hit"] = value.hit;
-        if (value.id)
-        {
-            out["id"] = dtoToJson(*value.id);
-        }
-        if (value.name)
-        {
-            out["name"] = *value.name;
-        }
-        if (value.kind)
-        {
-            out["kind"] = dtoToJson(*value.kind);
-        }
+        if (value.id) { out["id"] = dtoToJson(*value.id); }
+        if (value.name) { out["name"] = *value.name; }
+        if (value.kind) { out["kind"] = dtoToJson(*value.kind); }
         return out;
     }
 
@@ -2652,14 +2055,8 @@ namespace se
         Json out = Json::object();
         out["selectionVersion"] = value.selectionVersion;
         out["sceneVersion"] = value.sceneVersion;
-        if (value.entity)
-        {
-            out["entity"] = dtoToJson(*value.entity);
-        }
-        else
-        {
-            out["entity"] = nullptr;
-        }
+        if (value.entity) { out["entity"] = dtoToJson(*value.entity); }
+        else { out["entity"] = nullptr; }
         return out;
     }
 
@@ -2804,10 +2201,7 @@ namespace se
         out["name"] = value.name;
         out["type"] = dtoToJson(value.type);
         out["path"] = value.path;
-        if (value.folder)
-        {
-            out["folder"] = *value.folder;
-        }
+        if (value.folder) { out["folder"] = *value.folder; }
         return out;
     }
 
@@ -2816,10 +2210,7 @@ namespace se
         Json out = Json::object();
         out["id"] = dtoToJson(value.id);
         out["name"] = value.name;
-        if (value.folder)
-        {
-            out["folder"] = *value.folder;
-        }
+        if (value.folder) { out["folder"] = *value.folder; }
         return out;
     }
 
@@ -2833,14 +2224,8 @@ namespace se
     auto dtoToJson(const AssetUsageDto& value) -> Json
     {
         Json out = Json::object();
-        if (value.entity)
-        {
-            out["entity"] = dtoToJson(*value.entity);
-        }
-        if (value.entityName)
-        {
-            out["entityName"] = *value.entityName;
-        }
+        if (value.entity) { out["entity"] = dtoToJson(*value.entity); }
+        if (value.entityName) { out["entityName"] = *value.entityName; }
         out["slot"] = value.slot;
         return out;
     }

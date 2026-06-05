@@ -235,6 +235,11 @@ export namespace se
         bool shadows;
     };
 
+    struct SetSkinningResult
+    {
+        bool skinning;
+    };
+
     struct SetDepthPrepassResult
     {
         bool depthPrepass;
@@ -468,14 +473,28 @@ export namespace se
         EntitySelector entity;
     };
 
+    struct SetParentParams
+    {
+        EntitySelector entity;
+        std::optional<EntitySelector> parent;
+    };
+
     struct DestroyEntityResult
     {
         WireUuid destroyed;
     };
 
+    struct EntityListEntry
+    {
+        WireUuid id;
+        std::string name;
+        std::optional<WireUuid> parentId;
+        std::optional<bool> bone;
+    };
+
     struct EntityList
     {
-        std::vector<EntityRef> entities;
+        std::vector<EntityListEntry> entities;
     };
 
     struct ComponentList
@@ -753,6 +772,7 @@ export namespace se
     auto dtoToJson(const SetRestirResult& value) -> Json;
     auto dtoToJson(const SetGiResult& value) -> Json;
     auto dtoToJson(const SetShadowsResult& value) -> Json;
+    auto dtoToJson(const SetSkinningResult& value) -> Json;
     auto dtoToJson(const SetDepthPrepassResult& value) -> Json;
     auto dtoToJson(const ViewportNativeInfoResult& value) -> Json;
     auto dtoToJson(const AttachNativeViewportResult& value) -> Json;
@@ -771,6 +791,7 @@ export namespace se
     auto dtoToJson(const ScreenshotResult& value) -> Json;
     auto dtoToJson(const ThumbnailResult& value) -> Json;
     auto dtoToJson(const QuitResult& value) -> Json;
+    auto dtoToJson(const EntityListEntry& value) -> Json;
     auto dtoToJson(const EntityList& value) -> Json;
     auto dtoToJson(const ComponentList& value) -> Json;
     auto dtoToJson(const DestroyEntityResult& value) -> Json;
@@ -816,6 +837,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<ThumbnailParams>) -> Result<ThumbnailParams>;
     auto parseDto(const Json& params, DtoTag<CreateEntityParams>) -> Result<CreateEntityParams>;
     auto parseDto(const Json& params, DtoTag<EntityParams>) -> Result<EntityParams>;
+    auto parseDto(const Json& params, DtoTag<SetParentParams>) -> Result<SetParentParams>;
     auto parseDto(const Json& params, DtoTag<ComponentParams>) -> Result<ComponentParams>;
     auto parseDto(const Json& params, DtoTag<SetComponentParams>) -> Result<SetComponentParams>;
     auto parseDto(const Json& params, DtoTag<SetTransformParams>) -> Result<SetTransformParams>;
