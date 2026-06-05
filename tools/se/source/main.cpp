@@ -15,7 +15,11 @@ namespace
 {
     using json = nlohmann::json;
 
-    enum class OutputMode { Text, Json };
+    enum class OutputMode
+    {
+        Text,
+        Json
+    };
 
     std::string socketPath()
     {
@@ -33,9 +37,18 @@ namespace
     // true/false/null, integer, float, explicit json ({ [ "), else a bare string.
     json coerce(const std::string& token)
     {
-        if (token == "true") { return true; }
-        if (token == "false") { return false; }
-        if (token == "null") { return nullptr; }
+        if (token == "true")
+        {
+            return true;
+        }
+        if (token == "false")
+        {
+            return false;
+        }
+        if (token == "null")
+        {
+            return nullptr;
+        }
         if (!token.empty() && (token.front() == '{' || token.front() == '[' || token.front() == '"'))
         {
             json value = json::parse(token, nullptr, false);
@@ -73,7 +86,7 @@ namespace
     {
         json params = json::object();
         json positional = json::array();
-        for (std::size_t i = 0; i < args.size(); )
+        for (std::size_t i = 0; i < args.size();)
         {
             const std::string& arg = args[i];
             if (arg.rfind("--", 0) == 0)
@@ -120,28 +133,22 @@ namespace
         {
             for (const auto& entry : result["commands"])
             {
-                std::printf("  %-22s  %s\n",
-                    entry.value("name", "").c_str(),
-                    entry.value("help", "").c_str());
+                std::printf("  %-22s  %s\n", entry.value("name", "").c_str(), entry.value("help", "").c_str());
             }
             return;
         }
         if (cmd == "ping")
         {
-            std::printf("pong  engine=%s  version=%s  pid=%d\n",
-                result.value("engine", "").c_str(),
-                result.value("version", "").c_str(),
-                result.value("pid", 0));
+            std::printf("pong  engine=%s  version=%s  pid=%d\n", result.value("engine", "").c_str(),
+                        result.value("version", "").c_str(), result.value("pid", 0));
             return;
         }
         if (cmd == "list-entities" && result.contains("entities"))
         {
             for (const auto& e : result["entities"])
             {
-                std::printf("  %-24s  %-24s  %s\n",
-                    e.value("id", std::string{}).c_str(),
-                    e.value("name", "").c_str(),
-                    e.value("parentId", std::string{}).c_str());
+                std::printf("  %-24s  %-24s  %s\n", e.value("id", std::string{}).c_str(), e.value("name", "").c_str(),
+                            e.value("parentId", std::string{}).c_str());
             }
             return;
         }
@@ -157,80 +164,69 @@ namespace
         {
             for (const auto& a : result["assets"])
             {
-                std::printf("  %-8s  %-32s  %s\n",
-                    a.value("type", "").c_str(),
-                    a.value("name", "").c_str(),
-                    a.value("id", std::string{}).c_str());
+                std::printf("  %-8s  %-32s  %s\n", a.value("type", "").c_str(), a.value("name", "").c_str(),
+                            a.value("id", std::string{}).c_str());
             }
             return;
         }
         if (cmd == "render-stats")
         {
-            std::printf("draws=%-4d  batches=%-4d  instances=%-4d  clustered=%s\n",
-                result.value("drawCalls", 0),
-                result.value("batches", 0),
-                result.value("instances", 0),
-                result.value("clustered", false) ? "on" : "off");
+            std::printf("draws=%-4d  batches=%-4d  instances=%-4d  clustered=%s\n", result.value("drawCalls", 0),
+                        result.value("batches", 0), result.value("instances", 0),
+                        result.value("clustered", false) ? "on" : "off");
             return;
         }
         if (cmd == "viewport-native-info")
         {
-            std::printf("%s  %s  %ux%u  sock=%s\n",
-                result.value("status", "").c_str(), result.value("transport", "").c_str(),
-                result.value("width", 0u), result.value("height", 0u),
-                result.value("controlSocket", "").c_str());
+            std::printf("%s  %s  %ux%u  sock=%s\n", result.value("status", "").c_str(),
+                        result.value("transport", "").c_str(), result.value("width", 0u), result.value("height", 0u),
+                        result.value("controlSocket", "").c_str());
             return;
         }
         if (cmd == "attach-native-viewport" || cmd == "resize-native-viewport")
         {
             std::printf("%s  %dx%d @ (%d,%d)\n",
-                (result.value("attached", false) || result.value("resized", false)) ? "ok" : "fail",
-                result.value("width", 0), result.value("height", 0),
-                result.value("x", 0), result.value("y", 0));
+                        (result.value("attached", false) || result.value("resized", false)) ? "ok" : "fail",
+                        result.value("width", 0), result.value("height", 0), result.value("x", 0),
+                        result.value("y", 0));
             return;
         }
         if (cmd == "get-selection")
         {
             if (result.contains("entity") && result["entity"].is_object())
             {
-                std::printf("selected: %s  (sel v%llu, scene v%llu)\n",
-                    result["entity"].value("name", "").c_str(),
-                    result.value("selectionVersion", 0ULL), result.value("sceneVersion", 0ULL));
+                std::printf("selected: %s  (sel v%llu, scene v%llu)\n", result["entity"].value("name", "").c_str(),
+                            result.value("selectionVersion", 0ULL), result.value("sceneVersion", 0ULL));
             }
             else
             {
-                std::printf("no selection  (sel v%llu, scene v%llu)\n",
-                    result.value("selectionVersion", 0ULL), result.value("sceneVersion", 0ULL));
+                std::printf("no selection  (sel v%llu, scene v%llu)\n", result.value("selectionVersion", 0ULL),
+                            result.value("sceneVersion", 0ULL));
             }
             return;
         }
         if (cmd == "add-entity" || cmd == "copy-entity")
         {
-            std::printf("%s  id=%s\n", result.value("name", "").c_str(),
-                result.value("id", std::string{}).c_str());
+            std::printf("%s  id=%s\n", result.value("name", "").c_str(), result.value("id", std::string{}).c_str());
             return;
         }
         if (cmd == "get-gizmo" || cmd == "set-gizmo")
         {
-            std::printf("op=%s  space=%s\n",
-                result.value("op", "").c_str(), result.value("space", "").c_str());
+            std::printf("op=%s  space=%s\n", result.value("op", "").c_str(), result.value("space", "").c_str());
             return;
         }
         if (cmd == "gizmo-pointer")
         {
-            std::printf("hovered=%s  dragging=%s\n",
-                result.value("hovered", "none").c_str(),
-                result.value("dragging", false) ? "yes" : "no");
+            std::printf("hovered=%s  dragging=%s\n", result.value("hovered", "none").c_str(),
+                        result.value("dragging", false) ? "yes" : "no");
             return;
         }
         if (cmd == "pick")
         {
             if (result.value("hit", false))
             {
-                std::printf("%s  %s  id=%s\n",
-                    result.value("kind", "").c_str(),
-                    result.value("name", "").c_str(),
-                    result.value("id", std::string{}).c_str());
+                std::printf("%s  %s  id=%s\n", result.value("kind", "").c_str(), result.value("name", "").c_str(),
+                            result.value("id", std::string{}).c_str());
             }
             else
             {
@@ -241,18 +237,16 @@ namespace
         if (cmd == "get-camera" || cmd == "set-camera")
         {
             const json p = result.value("position", json::object());
-            std::printf("pos=(%.2f, %.2f, %.2f)  yaw=%.1f  pitch=%.1f  fov=%.1f\n",
-                p.value("x", 0.0), p.value("y", 0.0), p.value("z", 0.0),
-                result.value("yaw", 0.0), result.value("pitch", 0.0), result.value("fov", 0.0));
+            std::printf("pos=(%.2f, %.2f, %.2f)  yaw=%.1f  pitch=%.1f  fov=%.1f\n", p.value("x", 0.0),
+                        p.value("y", 0.0), p.value("z", 0.0), result.value("yaw", 0.0), result.value("pitch", 0.0),
+                        result.value("fov", 0.0));
             return;
         }
         if (cmd == "get-thumbnail" || cmd == "view-asset")
         {
             const std::string b64 = result.value("base64", std::string{});
-            std::printf("%s %ux%u  ~%zu bytes (base64 %zu chars)\n",
-                result.value("format", "").c_str(),
-                result.value("width", 0u), result.value("height", 0u),
-                (b64.size() / 4) * 3, b64.size());
+            std::printf("%s %ux%u  ~%zu bytes (base64 %zu chars)\n", result.value("format", "").c_str(),
+                        result.value("width", 0u), result.value("height", 0u), (b64.size() / 4) * 3, b64.size());
             return;
         }
         // Fallback: pretty JSON with UTF-8 unescaped (so — renders as — rather than —).
@@ -272,7 +266,7 @@ namespace
     SplitArgs splitArgs(int argc, char** argv)
     {
         SplitArgs r;
-        for (int i = 1; i < argc; )
+        for (int i = 1; i < argc;)
         {
             std::string arg = argv[i];
             if ((arg == "-o" || arg == "--output") && i + 1 < argc)
@@ -305,12 +299,10 @@ int main(int argc, char** argv)
 {
     args::ArgumentParser parser("se — SaffronEngine control CLI");
     parser.Prog("se");
-    args::HelpFlag help(parser, "help", "show this help", {'h', "help"});
-    args::MapFlag<std::string, OutputMode> output(parser, "output",
-        "output format",
-        {'o', "output"},
-        { { "text", OutputMode::Text }, { "json", OutputMode::Json } },
-        OutputMode::Text);
+    args::HelpFlag help(parser, "help", "show this help", { 'h', "help" });
+    args::MapFlag<std::string, OutputMode> output(parser, "output", "output format", { 'o', "output" },
+                                                  { { "text", OutputMode::Text }, { "json", OutputMode::Json } },
+                                                  OutputMode::Text);
 
     const auto split = splitArgs(argc, argv);
 
@@ -342,13 +334,13 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    const std::string& cmd  = split.cmd;
-    const OutputMode   mode = args::get(output);
+    const std::string& cmd = split.cmd;
+    const OutputMode mode = args::get(output);
 
     json request;
-    request["cmd"]    = cmd;
+    request["cmd"] = cmd;
     request["params"] = buildParams(split.engArgs);
-    request["id"]     = 1;
+    request["id"] = 1;
 
     const std::string path = socketPath();
     const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
