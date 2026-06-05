@@ -2,7 +2,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Box, File, Image as ImageIcon, Maximize2, Minus, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { MouseEvent, PointerEvent, ReactNode } from "react";
+import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from "react";
 import { useEditorStore, type ViewTab } from "../state/store";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,11 @@ interface TabDragState {
   startX: number;
   currentX: number;
   dragging: boolean;
+  startIndex: number;
+  previewIndex: number;
+  width: number;
+  order: string[];
+  centers: Record<string, number>;
 }
 
 export function WindowTitlebar() {
@@ -87,19 +92,18 @@ export function WindowTitlebar() {
     }
   };
 
-  const insertionIndexForPointer = (movingId: string, x: number): number => {
-    const withoutMoving = tabs.filter((tab) => tab.id !== movingId);
+  const insertionIndexForPointer = (drag: TabDragState, x: number): number => {
+    const withoutMoving = drag.order.filter((id) => id !== drag.id);
     for (let i = 0; i < withoutMoving.length; i += 1) {
-      const tab = withoutMoving[i];
-      if (tab.id === "scene") {
+      const id = withoutMoving[i];
+      if (id === "scene") {
         continue;
       }
-      const node = tabRefs.current.get(tab.id);
-      if (!node) {
+      const center = drag.centers[id];
+      if (center === undefined) {
         continue;
       }
-      const rect = node.getBoundingClientRect();
-      if (x < rect.left + rect.width / 2) {
+      if (x < center) {
         return i;
       }
     }
@@ -114,9 +118,36 @@ export function WindowTitlebar() {
     if (target instanceof Element && target.closest("[data-tab-close='true']")) {
       return;
     }
+    const node = tabRefs.current.get(tab.id);
+    if (!node) {
+      return;
+    }
+    const order = tabs.map((candidate) => candidate.id);
+    const startIndex = order.indexOf(tab.id);
+    if (startIndex < 0) {
+      return;
+    }
+    const centers: Record<string, number> = {};
+    for (const id of order) {
+      const tabNode = tabRefs.current.get(id);
+      if (tabNode) {
+        const rect = tabNode.getBoundingClientRect();
+        centers[id] = rect.left + rect.width / 2;
+      }
+    }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setTabDrag({ id: tab.id, startX: event.clientX, currentX: event.clientX, dragging: false });
+    setTabDrag({
+      id: tab.id,
+      startX: event.clientX,
+      currentX: event.clientX,
+      dragging: false,
+      startIndex,
+      previewIndex: startIndex,
+      width: node.getBoundingClientRect().width,
+      order,
+      centers,
+    });
   };
 
   const moveTabDrag = (event: PointerEvent<HTMLButtonElement>): void => {
@@ -125,10 +156,14 @@ export function WindowTitlebar() {
     }
     const delta = event.clientX - tabDrag.startX;
     const dragging = tabDrag.dragging || Math.abs(delta) >= TAB_DRAG_THRESHOLD_PX;
-    setTabDrag({ ...tabDrag, currentX: event.clientX, dragging });
-    if (dragging) {
-      moveViewTab(tabDrag.id, insertionIndexForPointer(tabDrag.id, event.clientX));
-    }
+    setTabDrag({
+      ...tabDrag,
+      currentX: event.clientX,
+      dragging,
+      previewIndex: dragging
+        ? insertionIndexForPointer(tabDrag, event.clientX)
+        : tabDrag.previewIndex,
+    });
   };
 
   const endTabDrag = (tab: ViewTab, event: PointerEvent<HTMLButtonElement>): void => {
@@ -139,10 +174,38 @@ export function WindowTitlebar() {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     const activate = !tabDrag.dragging;
+    const nextIndex = tabDrag.previewIndex;
     setTabDrag(null);
     if (activate) {
       setActiveViewTab(tab.id);
+    } else {
+      moveViewTab(tabDrag.id, nextIndex);
     }
+  };
+
+  const tabStyle = (tab: ViewTab): CSSProperties | undefined => {
+    if (!tabDrag?.dragging) {
+      return undefined;
+    }
+    if (tab.id === tabDrag.id) {
+      return { transform: `translateX(${tabDrag.currentX - tabDrag.startX}px)` };
+    }
+    const index = tabDrag.order.indexOf(tab.id);
+    if (
+      tabDrag.previewIndex > tabDrag.startIndex &&
+      index > tabDrag.startIndex &&
+      index <= tabDrag.previewIndex
+    ) {
+      return { transform: `translateX(-${tabDrag.width}px)` };
+    }
+    if (
+      tabDrag.previewIndex < tabDrag.startIndex &&
+      index >= tabDrag.previewIndex &&
+      index < tabDrag.startIndex
+    ) {
+      return { transform: `translateX(${tabDrag.width}px)` };
+    }
+    return undefined;
   };
 
   return (
@@ -162,6 +225,7 @@ export function WindowTitlebar() {
             tab={tab}
             active={tab.id === activeTabId}
             dragging={tabDrag?.id === tab.id && tabDrag.dragging}
+            style={tabStyle(tab)}
             setRef={(node) => setTabRef(tab.id, node)}
             onActivate={() => setActiveViewTab(tab.id)}
             onClose={() => closeViewTab(tab.id)}
@@ -199,6 +263,7 @@ type TitlebarTabProps = {
   active: boolean;
   tab: ViewTab;
   dragging: boolean;
+  style?: CSSProperties;
   setRef(node: HTMLButtonElement | null): void;
   onActivate(): void;
   onClose(): void;
@@ -212,6 +277,7 @@ function TitlebarTab({
   active,
   tab,
   dragging,
+  style,
   setRef,
   onActivate,
   onClose,
@@ -229,14 +295,14 @@ function TitlebarTab({
         "flex h-8 min-w-28 max-w-48 items-center gap-2 rounded-t-md border px-3 text-left text-sm font-medium",
         "transition-[transform,margin,background-color,border-color,color] duration-150 ease-out",
         tab.closable ? "cursor-default" : "cursor-pointer",
-        dragging && "relative z-10 cursor-grabbing shadow-lg",
+        dragging && "relative z-10 cursor-grabbing shadow-lg transition-none",
         active
           ? "border-border border-b-background bg-background text-foreground"
           : "border-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
       )}
+      style={style}
       aria-selected={active}
       role="tab"
-      title={tab.title}
       onClick={() => {
         if (!tab.closable) {
           onActivate();

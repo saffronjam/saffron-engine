@@ -1,44 +1,51 @@
-/// Topbar-anchored transient operation notifications.
-import { useEffect, useRef, useState } from "react";
+/// Bottom-right transient operation toasts.
+import { useEffect, useState } from "react";
+import { useRef } from "react";
 import { subscribeNotifications } from "../lib/flash";
+import { Toast, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
+
+interface NotificationToast {
+  id: number;
+  message: string;
+  ms: number;
+  open: boolean;
+}
 
 export function Notifications() {
-  const [message, setMessage] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toasts, setToasts] = useState<NotificationToast[]>([]);
+  const nextId = useRef(0);
 
   useEffect(() => {
     return subscribeNotifications(({ message: next, ms }) => {
-      if (timer.current !== null) {
-        clearTimeout(timer.current);
-      }
-      setMessage(next);
-      timer.current = setTimeout(() => {
-        timer.current = null;
-        setMessage(null);
-      }, ms);
+      nextId.current = nextId.current + 1;
+      setToasts((current) => [
+        ...current.slice(-2),
+        { id: nextId.current, message: next, ms, open: true },
+      ]);
     });
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (timer.current !== null) {
-        clearTimeout(timer.current);
-      }
-    };
-  }, []);
-
-  if (!message) {
-    return <div className="h-7 min-w-0 flex-1" aria-hidden="true" />;
-  }
-
   return (
-    <div className="flex h-7 min-w-0 flex-1 justify-end" role="status" aria-live="polite">
-      <div
-        className="max-w-[min(520px,42vw)] truncate rounded-md border border-border bg-popover px-3 py-1 text-xs text-popover-foreground shadow-sm"
-        title={message}
-      >
-        {message}
-      </div>
-    </div>
+    <ToastProvider swipeDirection="right">
+      {toasts.map((toast) => (
+        <Toast
+          key={toast.id}
+          open={toast.open}
+          duration={toast.ms}
+          onOpenChange={(open) => {
+            setToasts((current) =>
+              open
+                ? current.map((candidate) =>
+                    candidate.id === toast.id ? { ...candidate, open } : candidate,
+                  )
+                : current.filter((candidate) => candidate.id !== toast.id),
+            );
+          }}
+        >
+          <ToastTitle title={toast.message}>{toast.message}</ToastTitle>
+        </Toast>
+      ))}
+      <ToastViewport />
+    </ToastProvider>
   );
 }

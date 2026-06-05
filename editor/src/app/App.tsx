@@ -20,6 +20,7 @@ import { ProjectStartupModal } from "./ProjectStartupModal";
 import type { ProjectInfo } from "../control/client";
 import { AssetPreview } from "../components/AssetViewer";
 import { emitLayoutSettled } from "./layoutBus";
+import { Notifications } from "./Notifications";
 
 type EnginePhaseEvent = "starting" | "attaching";
 const PARKED_VIEWPORT_BOUNDS = { x: -10000, y: -10000, width: 1, height: 1 };
@@ -193,6 +194,7 @@ export function App() {
           <AssetWorkspace asset={activeAsset} />
         )}
         <ProjectStartupModal open={projectModalOpen} onProjectLoaded={handleProjectLoaded} />
+        <Notifications />
         <footer className="flex h-[22px] flex-none items-center justify-end border-t border-border bg-card px-3">
           <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
             {phase} · UI {uiFrameRateHz > 0 ? uiFrameRateHz.toFixed(0) : "--"} fps
