@@ -31,7 +31,7 @@ struct ComponentTraits
     std::function<void(Scene&, Entity, Scene&, Entity)> copyTo;        // clone src -> dst
     std::function<nlohmann::json(Scene&, Entity)> serialize;
     std::function<Result<void>(Scene&, Entity, const nlohmann::json&)> deserialize;
-    std::function<void(Scene&, Entity)> drawInspector;  // ImGui body lives in the editor
+    std::function<void(Scene&, Entity)> drawInspector;  // opaque hook; the engine renders no UI
 };
 ```
 
@@ -55,10 +55,11 @@ void registerComponent(ComponentRegistry& reg, std::string name,
                        bool removable = true);
 ```
 
-The caller writes only the genuinely per-component parts: how it draws, and how its fields map to
-JSON. The `deserialize` closure adds the component with defaults before calling `fromJson`, so a
-load never assumes the component already exists. All eight built-in components are registered this
-way in `editor_components.cpp`, one call each.
+The caller writes only the genuinely per-component part: how its fields map to JSON. The draw
+closure is an empty stub since the engine renders no UI. The `deserialize` closure adds the
+component with defaults before calling `fromJson`, so a load never assumes the component already
+exists. Every built-in component is registered this way in `scene_edit_components.cpp`, one call
+each.
 
 ## Lookup feeds both directions
 
@@ -76,9 +77,10 @@ table drive both the type-keyed and string-keyed paths.
 entt ships a reflection system, `entt::meta`, that could carry this data. The engine uses a
 hand-built struct-of-closures for the reason the rest of the codebase avoids heavy machinery. A
 `std::function` table is plain, debuggable data read top to bottom, and it keeps the per-component
-UI and JSON code next to the registration call rather than scattered across reflection attributes.
-The `drawInspector` field stays opaque at the scene layer — its ImGui body is defined in the editor
-module — so `Saffron.Scene` never imports ImGui.
+JSON code next to the registration call rather than scattered across reflection attributes.
+The `drawInspector` field stays opaque at the scene layer, but the engine renders no UI, so its
+closure is an empty stub and the real inspector is the React frontend, which builds each field from
+the DTO catalog over the control plane.
 
 > [!TIP]
 > The `name` string is a stable contract, not a display nicety. It is the JSON key on disk and
@@ -93,7 +95,7 @@ module — so `Saffron.Scene` never imports ImGui.
 | The itable | `scene.cppm` | `ComponentTraits`, `ComponentRegistry` |
 | One-call registration | `scene.cppm` | `registerComponent` |
 | Lookup | `scene.cppm` | `findById`, `findByName` |
-| The eight registrations | `editor_components.cpp` | `registerComponent<...>` |
+| The built-in registrations | `scene_edit_components.cpp` | `registerComponent<...>` |
 
 ## Related
 - [Components](../built-in-components/) — the structs registered here

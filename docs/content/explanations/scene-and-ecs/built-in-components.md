@@ -12,8 +12,8 @@ struct depends on nothing but glm.
 
 Keeping a component pure data lets one entity be serialized, inspected, cloned, and rendered by
 several unrelated subsystems, none aware of the others. A struct that carried its own virtual
-`serialize` would bind itself to nlohmann/json, and its own UI to ImGui. The per-component closures
-live in the [registry](../component-registry/) instead.
+`serialize` would bind itself to nlohmann/json. The per-component closures live in the
+[registry](../component-registry/) instead.
 
 ## Identity
 
@@ -144,7 +144,7 @@ the GPU light buffer.
 | Renderables | `scene.cppm` | `MeshComponent`, `MaterialComponent` |
 | Camera | `scene.cppm` | `CameraComponent`, `primaryCamera` |
 | Lights | `scene.cppm` | `DirectionalLightComponent`, `PointLightComponent`, `SpotLightComponent` |
-| Where each is registered | `editor_components.cpp` | `registerComponent<...>` |
+| Where each is registered | `scene_edit_components.cpp` | `registerComponent<...>` |
 
 ## Related
 - [Component registry](../component-registry/) — how behavior is attached to these structs

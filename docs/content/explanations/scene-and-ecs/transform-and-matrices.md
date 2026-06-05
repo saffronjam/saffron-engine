@@ -81,7 +81,7 @@ would draw the gizmo backwards.
 | Camera view from transform | `scene.cppm` | `primaryCamera`, `CameraView` |
 | Un-flipped projection | `scene.cppm` | `cameraProjection` |
 | Where the Y-flip is applied | `assets.cppm` | `renderScene`, `pickEntity` |
-| Degree/radian edit | `editor_components.cpp` | Transform inspector closure |
+| Degree/radian edit | `editor/src/components/fieldRenderer.tsx` | `Transform.rotation` `convertRadians`, `RAD_TO_DEG` |
 
 ## Related
 - [Components](../built-in-components/) — the rest of the value structs

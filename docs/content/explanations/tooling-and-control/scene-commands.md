@@ -61,7 +61,7 @@ An unknown preset is an error, not a silent fall-through to `empty`.
 
 `get-camera`/`set-camera` drive the same editor [fly-camera](../../ui-and-editor/) the viewport uses — the scene-view eye, not an ECS `CameraComponent`. `set-camera` merges fields the same way the transform commands do.
 
-`get-gizmo`/`set-gizmo` read and write a single gizmo state. The in-viewport ImGuizmo path and the W/E/R shortcut both read it, and any future native manipulation path reads the same state, so the gizmo mode stays consistent regardless of who set it. `op` selects translate, rotate, or scale; `space` selects world or local.
+`get-gizmo`/`set-gizmo` read and write a single gizmo state. The engine's native overlay gizmo and the editor's T/R/S shortcut both read it, so the gizmo mode stays consistent regardless of who set it. `op` selects translate, rotate, or scale; `space` selects world or local.
 
 Component and environment shapes are generated from the DTO catalog; see [Shared types](../shared-types/) for the DTO-first pipeline.
 

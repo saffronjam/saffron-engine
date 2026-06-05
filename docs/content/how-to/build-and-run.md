@@ -59,7 +59,7 @@ toolbox run -c saffron-build bash -lc '
   `SAFFRON_EXIT_AFTER_FRAMES=N` exits after `N` frames; `SAFFRON_CAPTURE=path` writes the viewport image at exit.
 
 > [!NOTE]
-> The Tauri editor is at parity with the old ImGui editor, not beyond it. Undo/redo, scene-graph parenting, multi-viewport, and native Wayland are non-goals; the old editor lacked them too.
+> The Tauri editor is the only editor. Undo/redo, multi-viewport, and native Wayland are non-goals for now.
 
 ## In the code
 

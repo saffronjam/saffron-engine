@@ -5,7 +5,7 @@ weight = 14
 
 # UI & editor
 
-The editor is a Tauri desktop app that drives the engine over a control protocol. A React/TypeScript front-end (shadcn/ui + Tailwind) runs in a webview, while the engine runs as a separate process. The webview never renders the scene. The engine's own SDL/Vulkan window is reparented as a native child over the viewport div and presents directly, with ImGui skipped (present-only mode).
+The editor is a Tauri desktop app that drives the engine over a control protocol. A React/TypeScript front-end (shadcn/ui + Tailwind) runs in a webview, while the engine runs as a separate process. The webview never renders the scene. The engine's own SDL/Vulkan window is reparented as a native child over the viewport div and presents directly: the engine carries no UI toolkit, so the host runs present-only, blitting the rendered offscreen straight to the swapchain. All editor UI is the React front-end.
 
 Every editor operation rides the JSON-over-unix-socket [control protocol](../tooling-and-control/control-plane-architecture/). A focus-gated reconcile poll keeps a small Zustand store in sync with the running engine.
 
