@@ -31,7 +31,7 @@ Members of `struct Window` (also `SDL_Window* handle`, `u32 width`, `u32 height`
 | `onKeyPressed` | `SubscriberList<i32, bool>` | keycode, isRepeat | `KEY_DOWN` |
 | `onKeyReleased` | `SubscriberList<i32>` | keycode | `KEY_UP` |
 | `onFileDropped` | `SubscriberList<std::string>` | dropped file path | `DROP_FILE` |
-| `eventSinks` | `std::vector<std::function<void(const SDL_Event&)>>` | raw `SDL_Event` | every event, before typed dispatch (ImGui feeds off this) |
+| `eventSinks` | `std::vector<std::function<void(const SDL_Event&)>>` | raw `SDL_Event` | every event, before typed dispatch (the gizmo/camera input feeds off this) |
 
 ## Window functions
 | Symbol | Signature |

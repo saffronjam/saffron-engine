@@ -8,8 +8,9 @@ weight = 4
 A cross-frame layout is the resting Vulkan image layout an image holds at the end of one frame and
 relies on at the start of the next, carried across the frame boundary by a write-back pointer.
 
-Some images live longer than a frame. The offscreen is sampled by ImGui at the end of one frame and
-written as a color attachment at the start of the next. The graph is rebuilt from scratch every
+Some images live longer than a frame. The offscreen is left shader-read-only by the tonemap pass at
+the end of one frame (the present blit then reads it) and written as a color attachment at the start
+of the next. The graph is rebuilt from scratch every
 frame, which is cheap and keeps per-frame state simple. A rebuilt graph holds no memory of an
 image's prior layout, so on the first touch it would emit a transition that is already satisfied.
 The write-back pointer preserves that layout so the next frame derives the correct barrier instead.
@@ -56,9 +57,9 @@ flowchart LR
     A -.->|next frame| B
 ```
 
-This keeps the [tonemap](../../screen-space-and-post/tonemap-and-exposure/) and ImGui sampling from
+This keeps the [tonemap](../../screen-space-and-post/tonemap-and-exposure/) and the present blit from
 conflicting with the next frame's scene write. The offscreen rests in `ShaderReadOnlyOptimal` after
-ImGui samples it; that value is written back; the next frame's import seeds the entry layout from
+the tonemap pass; that value is written back; the next frame's import seeds the entry layout from
 it, and the first scene `ColorWrite` derives a single correct transition.
 
 ## Seeding the source scope
@@ -84,8 +85,8 @@ void seedImageState(RgResourceState& r)
 }
 ```
 
-An image that comes in as `ShaderReadOnlyOptimal` was last read by a fragment shader (ImGui, or a
-previous sampling pass), so the next write must wait on `eFragmentShader` / `eShaderSampledRead`,
+An image that comes in as `ShaderReadOnlyOptimal` was last read by a fragment shader (a sampling
+pass, for instance), so the next write must wait on `eFragmentShader` / `eShaderSampledRead`,
 the write-after-read source scope. Any other entry layout has no in-frame predecessor worth waiting
 on, so the source defaults to `eTopOfPipe` / `eNone`, ordering against nothing. An incorrect source
 scope either over-synchronizes or races the next frame's write against the previous frame's read.
@@ -94,7 +95,7 @@ scope either over-synchronizes or races the next frame's write against the previ
 
 | Image | externalLayout | Why |
 |---|---|---|
-| Offscreen color | yes | sampled by ImGui at end of frame, written at start of next |
+| Offscreen color | yes | left shader-read-only by tonemap (read by the present blit) at end of frame, written at start of next |
 | Shadow / spot-shadow map | yes | written by the depth pass, sampled by the scene pass |
 | TAA history images | yes | one frame's write is next frame's read |
 | DDGI voxel proxy | yes | accumulated across frames |

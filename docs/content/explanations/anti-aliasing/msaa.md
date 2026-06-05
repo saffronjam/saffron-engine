@@ -21,7 +21,7 @@ With MSAA on, the scene renders into a multisampled color/depth pair rather than
 the offscreen. The renderer allocates `msaaColor` and `msaaDepth` at the requested sample
 count and the offscreen's extent, and points the scene pass at them. At end-of-pass the
 multisampled color is resolved into the single-sample offscreen, which is what tonemap reads
-and what ImGui samples.
+and what the present blit samples.
 
 The scene pass declares the resolve as part of its color attachment: the multisampled image is
 the attachment, the offscreen is its `resolve` target, and the multisampled samples are
@@ -42,7 +42,7 @@ flowchart LR
     A[scene draws] --> B[msaaColor<br/>N samples]
     A --> C[msaaDepth<br/>N samples]
     B -- resolveMode=eAverage --> D[offscreen<br/>1 sample]
-    D --> E[tonemap → ImGui]
+    D --> E[tonemap → present blit]
 ```
 
 ### Sample count baked into PSOs

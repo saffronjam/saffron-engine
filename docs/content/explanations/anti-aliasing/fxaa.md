@@ -48,7 +48,7 @@ rather than an in-place pass like tonemap. The scratch matches the offscreen for
 shared with TAA, since both consume the scene's pre-AA result.
 
 The graph derives the transitions: the scratch goes to a sampled-in-compute layout, the
-offscreen to `GENERAL` for the storage write, then on to shader-read-only for ImGui. None of
+offscreen to `GENERAL` for the storage write, then on to shader-read-only for the present blit. None of
 that is written by hand. The shader, `fxaa.slang`, is the FXAA 3 console variant.
 
 ## In the code

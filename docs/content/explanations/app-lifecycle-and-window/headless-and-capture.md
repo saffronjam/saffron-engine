@@ -66,7 +66,7 @@ flowchart TD
     WI --> D[layers onDetach → config onExit]
     D --> C{SAFFRON_CAPTURE set?}
     C -- yes --> CV[captureViewport → PNG]
-    C -- no --> T[destroy ui / renderer / window]
+    C -- no --> T[destroy renderer / window]
     CV --> T
 ```
 
@@ -87,8 +87,7 @@ write driven entirely by the environment, used by the headless pixel checks.
 > [!TIP]
 > `captureViewport` calls `device.waitIdle()` itself, so it is safe to invoke during teardown
 > after the loop has stopped. It captures the *offscreen* (the viewport contents), not the
-> swapchain, so the PNG is the scene exactly as the viewport panel showed it, without ImGui
-> chrome.
+> swapchain, so the PNG is the scene exactly as the viewport panel showed it.
 
 ## Related
 

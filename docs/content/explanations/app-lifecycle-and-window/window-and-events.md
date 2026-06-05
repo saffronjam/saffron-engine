@@ -59,12 +59,13 @@ subscribes `onFileDropped` to import dropped models and textures.
 
 ## Raw event sinks
 
-Some consumers need the whole `SDL_Event`, not a typed slice. ImGui is the main one: its SDL3
-backend wants every event to track mouse, focus, and text input. Rather than couple `Window` to
-ImGui, `Window` exposes `eventSinks`, a list of `std::function<void(const SDL_Event&)>`, and the
-UI layer pushes a sink that forwards each event to the backend.
+Some consumers need the whole `SDL_Event`, not a typed slice. The viewport gizmo and the editor
+fly-camera are the main ones: they read raw mouse motion, button state, and relative-mouse deltas
+that no typed signal carries. Rather than couple `Window` to those consumers, `Window` exposes
+`eventSinks`, a list of `std::function<void(const SDL_Event&)>`, and the host pushes a sink that
+forwards each event to the gizmo and camera input.
 
-Sinks run *before* typed dispatch, so ImGui sees an event even when a typed signal later consumes
+Sinks run *before* typed dispatch, so a sink sees an event even when a typed signal later consumes
 it. This keeps `Window` ignorant of who is listening: it knows how to forward raw events and how to
 publish typed ones, nothing about the consumers.
 

@@ -20,12 +20,12 @@ These are the exported entry points of `Saffron.Rendering` (the `:Types` partiti
 |---|---|---|
 | `beginFrame` | `auto beginFrame(Renderer&) -> bool` | acquire image; `false` if it recreated the swapchain/targets (skip the frame) |
 | `submit` | `void submit(Renderer&, RenderFn)` | record a closure into the scene (offscreen) pass |
-| `submitUi` | `void submitUi(Renderer&, RenderFn)` | record a closure into the ui (swapchain) pass |
+| `submitUi` | `void submitUi(Renderer&, RenderFn)` | record a closure into the swapchain overlay pass (unused under the present-only host) |
 | `beginFrameGraph` | `void beginFrameGraph(Renderer&)` | build the frame graph (cull + scene + AA + tonemap) before layer passes |
 | `frameGraph` | `auto frameGraph(Renderer&) -> RenderGraph&` | the in-progress graph |
 | `viewportColorResource` | `auto viewportColorResource(const Renderer&) -> RgResource` | offscreen color handle for an app pass |
 | `addTonemapPass` | `void addTonemapPass(Renderer&, RenderGraph&)` | the mandatory HDR→display pass |
-| `endFrame` | `void endFrame(Renderer&)` | finish graph (ui pass), execute, present, run pending window capture |
+| `endFrame` | `void endFrame(Renderer&)` | execute the graph, blit the offscreen to the swapchain, present, run pending window capture |
 
 `RenderFn` is `std::function<void(vk::CommandBuffer)>`.
 

@@ -56,7 +56,7 @@ unbounded HDR range lands in the visible $[0, 1]$ band.
 
 ## The tonemap step
 
-A compute pass always runs on the offscreen before ImGui samples it. It reads each HDR texel,
+A compute pass always runs on the offscreen before the present blit samples it. It reads each HDR texel,
 applies exposure, a Reinhard curve, and gamma, then writes the result back in place:
 
 ```hlsl

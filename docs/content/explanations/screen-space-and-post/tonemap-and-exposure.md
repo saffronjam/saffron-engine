@@ -12,7 +12,7 @@ anything a display reproduces. The tonemap stage compresses that range, encodes 
 display, and produces the final viewable image.
 
 In SaffronEngine it runs on the `rgba16f` offscreen — where the [BRDF](../../lighting-and-brdf/cook-torrance-brdf/)
-accumulates radiance with no ceiling — before ImGui samples it. It is a single compute pass, one
+accumulates radiance with no ceiling — before the present blit samples it. It is a single compute pass, one
 invocation per pixel, that applies exposure, tonemaps, gamma-corrects, and writes the result back in
 place.
 
@@ -49,7 +49,7 @@ binding 0), reads each texel, and writes the mapped value back to the same texel
 Writing in place means the [render graph](../../frame-and-render-graph/render-graph-overview/) moves
 the offscreen through two layouts around the pass, both derived from the declared usage: **Color →
 General** before (a storage image is written in `GENERAL`, declared `StorageImageRWCompute`), then
-**General → ShaderReadOnly** after, so ImGui can sample it as the viewport texture. Neither transition
+**General → ShaderReadOnly** after, so the present blit can sample it as the viewport image. Neither transition
 is written by hand. This pass is the template every other [compute post-process](../compute-post-process-pattern/)
 follows; FXAA and the demonstrator tonemap layer use the same read-modify-write shape.
 

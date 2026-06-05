@@ -30,8 +30,8 @@ void submit(Renderer& renderer, RenderFn fn)
 The closure takes the frame's command buffer and is replayed later, when the graph executes
 the scene pass. It receives a `vk::CommandBuffer`; the seam is backend-agnostic in shape. The
 layer never opens a rendering scope or manages a barrier. It records draw calls into a scope the
-graph owns. `submitUi` is the same idea for the UI pass; the ImGui backend uses it to record its
-draw data into the swapchain pass.
+graph owns. `submitUi` is the same idea for an overlay pass on the swapchain; the present-only
+host does not use it, since it blits the finished offscreen straight to the swapchain instead.
 
 ## Render-graph seam: adding passes
 
@@ -51,7 +51,7 @@ A layer adds a pass by declaring what it reads and writes and supplying the body
 derives the barriers and layout transitions from those declarations; the layer writes none. An
 app-authored post-process slots in this way: it declares the offscreen as a read-modify-write
 storage image, the graph inserts the layout moves around it, and it runs between the scene pass
-and ImGui's sample. The demonstrator tonemap layer is exactly this. See
+and the present blit that reads the offscreen. The demonstrator tonemap layer is exactly this. See
 [the render graph](../../frame-and-render-graph/render-graph-overview/) for how a pass is
 declared and how the barriers fall out.
 
@@ -61,10 +61,10 @@ declared and how the barriers fall out.
 flowchart TD
     BF[beginFrame] --> OR["onRender → submit(closure)"]
     OR --> Q[closure queued onto frame submissions]
-    Q --> UI[onUi → ImGui]
-    UI --> BG[beginFrameGraph: engine adds cull + scene + ui passes]
+    Q --> UI[onUi]
+    UI --> BG[beginFrameGraph: engine adds cull + scene + post passes]
     BG --> ORG[onRenderGraph: layer adds passes]
-    ORG --> EF[endFrame: scene pass replays the queued closures, graph executes, present]
+    ORG --> EF[endFrame: scene pass replays the queued closures, graph executes, blit to swapchain]
     EF --> P[present]
 ```
 

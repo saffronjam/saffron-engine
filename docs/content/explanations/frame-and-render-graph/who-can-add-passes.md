@@ -6,13 +6,13 @@ weight = 5
 # Adding passes
 
 A frame graph is assembled in three ordered windows of a single main-loop iteration: the engine
-lays down its own passes, app layers add theirs, and the engine closes with the UI pass and
-executes. The order lets an app insert a pass — a post-process, a compute effect — at a defined
-point in the frame without touching engine code.
+lays down its own passes, app layers add theirs, and the engine closes by executing the graph and
+blitting the offscreen to the swapchain. The order lets an app insert a pass — a post-process, a
+compute effect — at a defined point in the frame without touching engine code.
 
 ## The three windows
 
-The loop in `run` does this per frame, after recording ImGui:
+The loop in `run` does this per frame, after the `onUi` phase:
 
 ```cpp
 beginFrameGraph(app.renderer);            // 1. engine: cull → scene → AA → tonemap
@@ -20,7 +20,7 @@ for (Layer& layer : app.layers)
 {
     if (layer.onRenderGraph) { layer.onRenderGraph(frameGraph(app.renderer)); }  // 2. app passes
 }
-endFrame(app.renderer);                   // 3. engine: ui pass, then execute
+endFrame(app.renderer);                   // 3. engine: execute, then blit to swapchain
 ```
 
 1. **`beginFrameGraph`** rebuilds the graph and adds every engine-internal pass: light culling,
@@ -29,12 +29,12 @@ endFrame(app.renderer);                   // 3. engine: ui pass, then execute
    offscreen holds the finished, tonemapped scene.
 2. **`onRenderGraph`** is the layer hook. Each attached layer that defines it is handed the live
    `RenderGraph&` and can call `addPass` to insert its work. This runs after the scene and
-   tonemap, before the UI pass.
-3. **`endFrame`** adds the UI pass — sample the offscreen, composite ImGui into the swapchain —
-   then calls `executeRenderGraph` to derive every barrier and record the whole thing.
+   tonemap, before the graph executes.
+3. **`endFrame`** calls `executeRenderGraph` to derive every barrier and record the whole thing,
+   then blits the finished offscreen to the swapchain with `presentViewportToSwapchain`.
 
-The UI pass is added last, so anything a layer adds in window 2 is recorded before ImGui
-composites. An app post-process sees the engine's finished image and modifies it before it
+The present blit is last, so anything a layer adds in window 2 is recorded before the offscreen is
+read out. An app post-process sees the engine's finished image and modifies it before it
 reaches the screen.
 
 ```mermaid
@@ -43,8 +43,8 @@ flowchart TD
     B --> C[layer.onRenderGraph]
     C --> D["app passes:<br/>addPass(graph, ...)"]
     D --> E[endFrame]
-    E --> F["engine: ui pass<br/>(offscreen → swapchain)"]
-    F --> G[executeRenderGraph]
+    E --> G[executeRenderGraph]
+    G --> F["engine: present blit<br/>(offscreen → swapchain)"]
 ```
 
 ## What a layer gets
@@ -80,9 +80,7 @@ construction keeps the declared usage and the imported resources in lockstep.
 ## The submit() seam
 
 App geometry reaches the GPU two coexisting ways. The `onRenderGraph` hook adds whole passes. The
-`submit(renderer, fn)` / `submitUi(renderer, fn)` seam pushes a closure *replayed inside* an
-existing engine pass — scene submissions run inside the scene pass body, UI submissions inside the
-UI pass body:
+`submit(renderer, fn)` seam pushes a closure *replayed inside* the scene pass body:
 
 ```cpp
 scene.execute = [&renderer](vk::CommandBuffer cmd)
@@ -110,8 +108,8 @@ inside the engine's barriers; the second gets its own, derived.
 | The layer hook | `app.cppm` | `Layer::onRenderGraph` |
 | Engine passes | `renderer.cppm` | `beginFrameGraph` (`do*` flags + `addPass`) |
 | Handing the graph to layers | `renderer.cppm` | `frameGraph`, `viewportColorResource` |
-| UI pass + execute | `renderer.cppm` | `endFrame`, `addTonemapPass` |
-| Replay-into-pass seam | `renderer.cppm` | `submit`, `submitUi`, `sceneSubmissions` |
+| Execute + present blit | `renderer.cppm` | `endFrame`, `executeRenderGraph`, `presentViewportToSwapchain` |
+| Replay-into-pass seam | `renderer.cppm` | `submit`, `sceneSubmissions` |
 
 ## Related
 

@@ -52,7 +52,7 @@ Each callback maps to a fixed point in the loop (see [the main loop](../main-loo
 | `onAttach` | once, after `onCreate`, before the loop | allocate resources, subscribe to window signals |
 | `onUpdate(dt)` | every iteration, first | game logic, camera, animation; `dt` is a wall-clock `TimeSpan` |
 | `onRender` | inside the frame, after `beginFrame` | record GPU work through the [submit seam](../the-submit-and-rendergraph-seams/) |
-| `onUi` | inside the frame, between `uiBeginFrame` and `uiEndFrame` | ImGui panels |
+| `onUi` | inside the frame, after `onRender` | per-frame UI-phase work (the host renders the scene here) |
 | `onRenderGraph(graph)` | inside the frame, after the engine's passes are added | add passes to the live frame graph |
 | `onDetach` | once, during teardown, before `onExit` | drop resource `Ref`s |
 
@@ -68,8 +68,8 @@ in the closures rather than in member fields of a derived type, so the same stru
 whether the behavior lives in a lambda, a free function, or a bound method. The cost is one
 indirect call per set callback per phase, negligible next to a frame's GPU work.
 
-The editor is built this way. It is a layer whose closures hold the editor state and wire the
-hierarchy, inspector, and viewport into `onUi` and the camera into `onUpdate`.
+The host is built this way. It is a layer whose closures hold the scene-edit state and wire the
+scene render into `onUi` and the editor camera into `onUpdate`.
 
 ## In the code
 

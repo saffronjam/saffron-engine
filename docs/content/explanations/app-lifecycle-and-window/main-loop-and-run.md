@@ -5,7 +5,7 @@ weight = 1
 
 # Main loop
 
-The main loop is the single function that owns a program's window, renderer, and UI, and runs
+The main loop is the single function that owns a program's window and renderer, and runs
 one fixed sequence of work every frame until the window closes. In Saffron that function is
 `se::run`. A client supplies an `AppConfig` and calls `run`; `run` drives everything and calls
 back into the client's layers at fixed points.
@@ -17,7 +17,7 @@ virtual `update` to override; the loop calls back through the layers the client 
 struct AppConfig
 {
     WindowConfig window;
-    std::function<void(App&)> onCreate;  // runs once, after window + renderer + ui exist
+    std::function<void(App&)> onCreate;  // runs once, after window + renderer exist
     std::function<void(App&)> onExit;    // runs during teardown
 };
 
@@ -26,10 +26,9 @@ auto run(AppConfig config) -> int;       // returns a process exit code
 
 ## Startup
 
-`run` builds the three subsystems in order and checks each with the
+`run` builds the two subsystems in order and checks each with the
 [error-handling](../../core-and-conventions/error-handling/) pattern: `newWindow`, then
-`newRenderer`, then `newUi`. If one fails, `run` tears down whatever already exists and
-returns 1.
+`newRenderer`. If one fails, `run` tears down whatever already exists and returns 1.
 
 `onCreate` runs next. That is where the client attaches its layers and wires window signals.
 Every layer's `onAttach` fires after that, and `onClose` is subscribed right after window
@@ -38,8 +37,8 @@ creation so closing the window flips `app.running` to false.
 ## One iteration
 
 The loop body is the contract every feature plugs into, and its order is fixed. Input comes
-first, then logic, then the GPU frame. Inside the frame the UI is recorded before the graph is
-built, so ImGui's draw data is ready when the frame executes.
+first, then logic, then the GPU frame. Inside the frame the `onUi` phase runs before the graph is
+built, so anything it records is ready when the frame executes.
 
 ```mermaid
 flowchart TD
@@ -47,7 +46,7 @@ flowchart TD
     U --> M{minimized or beginFrame fails?}
     M -- yes --> P
     M -- no --> R[for each layer: onRender — submit GPU work]
-    R --> UI[uiBeginFrame → onUi → uiEndFrame → uiRecordDrawData]
+    R --> UI[for each layer: onUi]
     UI --> BG[beginFrameGraph — engine adds cull + scene passes]
     BG --> OG[for each layer: onRenderGraph — app adds passes]
     OG --> EF[endFrame — derive barriers, execute graph, present]
@@ -77,7 +76,7 @@ waitGpuIdle(app.renderer);          // finish all in-flight GPU work first
 for (Layer& layer : app.layers) if (layer.onDetach) layer.onDetach();
 if (config.onExit) config.onExit(app);
 // optional SAFFRON_CAPTURE dump here
-destroyUi(...); destroyRenderer(...); destroyWindow(...);
+destroyRenderer(...); destroyWindow(...);
 ```
 
 ## Headless runs

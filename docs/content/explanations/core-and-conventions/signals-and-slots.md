@@ -48,9 +48,8 @@ match a newer subscription.
 A handler returns `bool` to mean "stop here". `publish` walks the subscribers in order and
 breaks the moment one returns `true`, so each list is also a priority chain. The decision
 is explicit: returning `true` is a visible statement in the handler, not a hidden
-`event.consumed` flag mutated elsewhere. ImGui takes priority over the rest of the app this
-way — its event sink returns `true` when it wants a keystroke or click, and later handlers
-never see the event.
+`event.consumed` flag mutated elsewhere. A handler claims an event this way — returning
+`true` when it wants a keystroke or click, so later handlers never see it.
 
 ## Snapshot iteration
 
@@ -75,9 +74,9 @@ void publish(Args... args) const
 
 The [window](../../app-lifecycle-and-window/window-and-events/) owns the most-used lists:
 `onResize`, `onKeyPressed`, and the rest are each a `SubscriberList`, alongside a raw
-`eventSinks` list ImGui feeds off. The editor uses a `SubscriberList<Entity>` for
-selection, so the hierarchy, inspector, and gizmo stay in sync without knowing about each
-other.
+`eventSinks` list the gizmo and editor camera feed off. The editor uses a
+`SubscriberList<Entity>` for selection, so the scene-edit state and the gizmo stay in sync
+without knowing about each other.
 
 ## In the code
 
