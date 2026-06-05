@@ -5,6 +5,7 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/euler_angles.hpp>
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
@@ -40,12 +41,17 @@ export namespace se
         std::unordered_map<u64, Ref<GpuTexture>> textureRefByUuid;  // GPU cache
     };
 
-    // What importModel produces: the imported mesh + its primary material.
+    // What importModel produces: the imported mesh + its primary material, and — for a
+    // rigged glTF — the node forest + skin descriptor spawnSkinnedModel instantiates
+    // as bone entities.
     struct ImportResult
     {
         Uuid mesh;
         glm::vec4 baseColor{ 1.0f };
         Uuid albedoTexture;  // 0 == none
+        bool hasSkin = false;
+        std::vector<ImportedNode> nodes;
+        ImportedSkin skinDesc;
     };
 
     struct ProjectInfo
@@ -618,11 +624,15 @@ export namespace se
         const Uuid meshId = newUuid();
         ensureAssetDirectories(assets);
         const std::string relativePath = "models/" + std::to_string(meshId.value) + ".smesh";
-        if (Result<void> baked = saveMesh(model->mesh, assets.root + "/" + relativePath); !baked)
+        Result<void> baked = model->hasSkin
+            ? saveMeshSkinned(model->mesh, model->skin, assets.root + "/" + relativePath)
+            : saveMesh(model->mesh, assets.root + "/" + relativePath);
+        if (!baked)
         {
             return Err(baked.error());
         }
-        auto meshRef = uploadMesh(renderer, model->mesh);
+        auto meshRef = model->hasSkin ? uploadMesh(renderer, model->mesh, model->skin)
+                                      : uploadMesh(renderer, model->mesh);
         if (!meshRef)
         {
             return Err(meshRef.error());
@@ -634,6 +644,12 @@ export namespace se
         ImportResult result;
         result.mesh = meshId;
         result.baseColor = model->material.baseColor;
+        if (model->hasSkin)
+        {
+            result.hasSkin = true;
+            result.nodes = std::move(model->nodes);
+            result.skinDesc = std::move(model->skinDesc);
+        }
         if (model->material.hasAlbedo)
         {
             auto texture = registerTextureBytes(assets, renderer, model->material.albedoBytes,
@@ -672,7 +688,14 @@ export namespace se
         auto mesh = loadMesh(fullPath);
         if (mesh)
         {
-            auto meshRef = uploadMesh(renderer, *mesh);
+            // A v2 .smesh carries a VertexSkin stream; uploading it arms the GPU
+            // skinning path for this mesh (v1 files return an empty stream).
+            std::vector<VertexSkin> skin;
+            if (auto loadedSkin = loadMeshSkin(fullPath))
+            {
+                skin = std::move(*loadedSkin);
+            }
+            auto meshRef = uploadMesh(renderer, *mesh, skin);
             if (meshRef)
             {
                 assets.meshRefByUuid[id.value] = *meshRef;
@@ -698,8 +721,83 @@ export namespace se
     }
 
     // Creates an entity from an import: a mesh + a material (base color + albedo).
+    // Instantiates a rigged import: one entity per glTF node (local TRS, parented by
+    // uuid), BoneComponent tags on the joints, and a SkinnedMeshComponent on the mesh
+    // node listing the joints in glTF joint order. Returns the skinned mesh entity.
+    auto spawnSkinnedModel(Scene& scene, std::string name, const ImportResult& result) -> Entity
+    {
+        std::vector<Entity> nodeEntities;
+        std::vector<Uuid> nodeUuids;
+        nodeEntities.reserve(result.nodes.size());
+        nodeUuids.reserve(result.nodes.size());
+        for (const ImportedNode& node : result.nodes)
+        {
+            Entity entity = createEntity(scene, node.name);
+            TransformComponent& transform = getComponent<TransformComponent>(scene, entity);
+            transform.translation = node.translation;
+            // The source rotation is a quaternion; extract through the engine's
+            // Rz*Ry*Rx Euler convention (the stable path setParent also uses).
+            glm::vec3 euler;
+            glm::extractEulerAngleZYX(glm::mat4_cast(node.rotation), euler.z, euler.y, euler.x);
+            transform.rotation = euler;
+            transform.scale = node.scale;
+            nodeEntities.push_back(entity);
+            nodeUuids.push_back(getComponent<IdComponent>(scene, entity).id);
+        }
+        for (std::size_t i = 0; i < result.nodes.size(); i = i + 1)
+        {
+            const i32 parent = result.nodes[i].parent;
+            if (parent >= 0 && static_cast<std::size_t>(parent) < nodeUuids.size())
+            {
+                getComponent<RelationshipComponent>(scene, nodeEntities[i]).parent =
+                    nodeUuids[static_cast<std::size_t>(parent)];
+            }
+        }
+
+        std::vector<Uuid> bones;
+        bones.reserve(result.skinDesc.joints.size());
+        for (const i32 joint : result.skinDesc.joints)
+        {
+            if (joint < 0 || static_cast<std::size_t>(joint) >= nodeEntities.size())
+            {
+                bones.push_back(Uuid{ 0 });
+                continue;
+            }
+            Entity bone = nodeEntities[static_cast<std::size_t>(joint)];
+            if (!hasComponent<BoneComponent>(scene, bone))
+            {
+                addComponent<BoneComponent>(scene, bone);
+            }
+            bones.push_back(nodeUuids[static_cast<std::size_t>(joint)]);
+        }
+
+        const i32 meshNode = result.skinDesc.meshNode;
+        Entity meshEntity = meshNode >= 0 && static_cast<std::size_t>(meshNode) < nodeEntities.size()
+            ? nodeEntities[static_cast<std::size_t>(meshNode)]
+            : createEntity(scene, name);
+        getComponent<NameComponent>(scene, meshEntity).name = std::move(name);
+        SkinnedMeshComponent& skin = addComponent<SkinnedMeshComponent>(scene, meshEntity);
+        skin.mesh = result.mesh;
+        const i32 root = result.skinDesc.skeletonRoot;
+        skin.rootBone = root >= 0 && static_cast<std::size_t>(root) < nodeUuids.size()
+            ? nodeUuids[static_cast<std::size_t>(root)]
+            : (bones.empty() ? Uuid{ 0 } : bones.front());
+        skin.bones = std::move(bones);
+        skin.inverseBind = result.skinDesc.inverseBind;
+        MaterialComponent& material = addComponent<MaterialComponent>(scene, meshEntity);
+        material.baseColor = result.baseColor;
+        material.albedoTexture = result.albedoTexture;
+
+        relinkHierarchy(scene);  // resolve the parent uuids + the joint handles
+        return meshEntity;
+    }
+
     auto spawnModel(Scene& scene, std::string name, const ImportResult& result) -> Entity
     {
+        if (result.hasSkin)
+        {
+            return spawnSkinnedModel(scene, std::move(name), result);
+        }
         Entity entity = createEntity(scene, std::move(name));
         addComponent<MeshComponent>(scene, entity).mesh = result.mesh;
         MaterialComponent& material = addComponent<MaterialComponent>(scene, entity);
@@ -729,19 +827,28 @@ export namespace se
         proj[1][1] *= -1.0f;  // flip Y into Vulkan clip space
         const glm::mat4 viewProjection = proj * view;
 
+        // Flatten the hierarchy once per frame before any consumer reads: every loop
+        // below (lights, meshes, probes) and the between-frame pick/gizmo paths read
+        // the WorldTransformComponent cache this writes.
+        updateWorldTransforms(scene);
+
         glm::vec3 lightDir{ -0.5f, -1.0f, -0.3f };
         glm::vec3 lightColor{ 1.0f };
         f32 lightIntensity = 1.0f;
         f32 lightAmbient = 0.15f;
         bool haveLight = false;
         forEach<DirectionalLightComponent>(scene,
-                                           [&](Entity, DirectionalLightComponent& light)
+                                           [&](Entity entity, DirectionalLightComponent& light)
                                            {
                                                if (haveLight)
                                                {
                                                    return;
                                                }
-                                               lightDir = light.direction;
+                                               // A parented light re-aims with its parent; a
+                                               // transformless one keeps its raw direction.
+                                               lightDir = hasComponent<TransformComponent>(scene, entity)
+                                                   ? worldRotation(scene, entity) * light.direction
+                                                   : light.direction;
                                                lightColor = light.color;
                                                lightIntensity = light.intensity;
                                                lightAmbient = light.ambient;
@@ -758,16 +865,17 @@ export namespace se
         u32 pointShadowIndex = 0;
         forEach<TransformComponent, PointLightComponent>(
             scene,
-            [&](Entity, TransformComponent& transform, PointLightComponent& light)
+            [&](Entity entity, TransformComponent&, PointLightComponent& light)
             {
+                const glm::vec3 pos = worldTranslation(scene, entity);
                 GpuLight gpu;
-                gpu.positionRange = glm::vec4(transform.translation, light.range);
+                gpu.positionRange = glm::vec4(pos, light.range);
                 gpu.colorIntensity = glm::vec4(light.color, light.intensity);
                 gpu.directionType = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);  // type 0 = point
                 gpu.spotCos = glm::vec4(0.0f);
                 if (!havePointShadow)
                 {
-                    pointShadowPos = transform.translation;
+                    pointShadowPos = pos;
                     pointShadowFar = glm::max(light.range, 0.1f);
                     pointShadowIndex = static_cast<u32>(lights.size());
                     havePointShadow = true;
@@ -779,11 +887,14 @@ export namespace se
         u32 spotShadowIndex = 0;
         forEach<TransformComponent, SpotLightComponent>(
             scene,
-            [&](Entity, TransformComponent& transform, SpotLightComponent& light)
+            [&](Entity entity, TransformComponent&, SpotLightComponent& light)
             {
-                const glm::vec3 dir = glm::normalize(light.direction);
+                // The component direction re-aims with the entity's world rotation, so a
+                // parented spot follows its parent's orientation.
+                const glm::vec3 pos = worldTranslation(scene, entity);
+                const glm::vec3 dir = glm::normalize(worldRotation(scene, entity) * light.direction);
                 GpuLight gpu;
-                gpu.positionRange = glm::vec4(transform.translation, light.range);
+                gpu.positionRange = glm::vec4(pos, light.range);
                 gpu.colorIntensity = glm::vec4(light.color, light.intensity);
                 gpu.directionType = glm::vec4(dir, 1.0f);  // type 1 = spot
                 gpu.spotCos = glm::vec4(glm::cos(glm::radians(light.innerAngle)),
@@ -795,7 +906,7 @@ export namespace se
                     const f32 fov = glm::radians(glm::min(2.0f * light.outerAngle + 2.0f, 179.0f));
                     const glm::vec3 up =
                         glm::abs(dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
-                    const glm::mat4 lightView = glm::lookAt(transform.translation, transform.translation + dir, up);
+                    const glm::mat4 lightView = glm::lookAt(pos, pos + dir, up);
                     // GLM_FORCE_DEPTH_ZERO_TO_ONE => Vulkan [0,1] clip depth.
                     const glm::mat4 lightProj = glm::perspective(fov, 1.0f, 0.05f, glm::max(light.range, 0.1f));
                     spotShadowViewProj = lightProj * lightView;
@@ -823,7 +934,7 @@ export namespace se
         std::vector<glm::vec4> boxAlbedos;
         forEach<TransformComponent, MeshComponent>(
             scene,
-            [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
+            [&](Entity entity, TransformComponent&, MeshComponent& mesh)
             {
                 auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
@@ -851,7 +962,7 @@ export namespace se
                         textureRef = loadTextureAsset(assets, renderer, material.albedoTexture);
                     }
                 }
-                const glm::mat4 model = transformMatrix(transform);
+                const glm::mat4 model = worldMatrix(scene, entity);
                 // Accumulate the scene + this draw's world AABB from the 8 transformed corners.
                 glm::vec3 boxMin{ std::numeric_limits<f32>::max() };
                 glm::vec3 boxMax{ std::numeric_limits<f32>::lowest() };
@@ -893,6 +1004,89 @@ export namespace se
                 items.push_back(std::move(item));
             });
 
+        // Skinned renderables: joints place the vertices entirely (the node transform is
+        // ignored per glTF, so model stays identity), blending the frame joint palette
+        // built here. Gated by the skinning toggle; off leaves the frame byte-identical
+        // to a build without the skinned path.
+        std::vector<glm::mat4> frameJoints;
+        if (skinningEnabled(renderer))
+        {
+            forEach<TransformComponent, SkinnedMeshComponent>(
+                scene,
+                [&](Entity entity, TransformComponent&, SkinnedMeshComponent& skin)
+                {
+                    auto meshRef = loadMeshAsset(assets, renderer, skin.mesh);
+                    if (!meshRef || !meshRef->skinBuffer)
+                    {
+                        return;  // missing asset, or one baked without a skin stream
+                    }
+                    std::vector<glm::mat4> palette;
+                    jointMatrices(scene, skin, palette);
+                    if (palette.empty())
+                    {
+                        return;
+                    }
+                    glm::vec4 baseColor{ 1.0f };
+                    Ref<GpuTexture> textureRef;
+                    bool unlit = false;
+                    f32 metallic = 0.0f;
+                    f32 roughness = 1.0f;
+                    glm::vec3 emissive{ 0.0f };
+                    f32 emissiveStrength = 1.0f;
+                    if (hasComponent<MaterialComponent>(scene, entity))
+                    {
+                        const MaterialComponent& material = getComponent<MaterialComponent>(scene, entity);
+                        baseColor = material.baseColor;
+                        unlit = material.unlit;
+                        metallic = material.metallic;
+                        roughness = material.roughness;
+                        emissive = material.emissive;
+                        emissiveStrength = material.emissiveStrength;
+                        if (material.albedoTexture.value != 0)
+                        {
+                            textureRef = loadTextureAsset(assets, renderer, material.albedoTexture);
+                        }
+                    }
+                    // Conservative bounds: union the bind-space AABB corners through every
+                    // joint matrix, feeding the scene AABB (shadow/DDGI fit) like any draw.
+                    for (const glm::mat4& joint : palette)
+                    {
+                        for (u32 corner = 0; corner < 8; corner = corner + 1)
+                        {
+                            glm::vec3 p = meshRef->boundsMin;
+                            if (corner & 1u)
+                            {
+                                p.x = meshRef->boundsMax.x;
+                            }
+                            if (corner & 2u)
+                            {
+                                p.y = meshRef->boundsMax.y;
+                            }
+                            if (corner & 4u)
+                            {
+                                p.z = meshRef->boundsMax.z;
+                            }
+                            const glm::vec3 world = glm::vec3(joint * glm::vec4(p, 1.0f));
+                            sceneMin = glm::min(sceneMin, world);
+                            sceneMax = glm::max(sceneMax, world);
+                        }
+                    }
+                    DrawItem item;
+                    item.mesh = meshRef;
+                    item.texture = textureRef;
+                    item.skinned = true;
+                    item.jointOffset = static_cast<u32>(frameJoints.size());
+                    item.baseColor = baseColor;
+                    item.metallic = metallic;
+                    item.roughness = roughness;
+                    item.emissive = emissive;
+                    item.emissiveStrength = emissiveStrength;
+                    item.material.unlit = unlit;
+                    frameJoints.insert(frameJoints.end(), palette.begin(), palette.end());
+                    items.push_back(std::move(item));
+                });
+        }
+
         // Fit an orthographic shadow frustum to the scene's world AABB, looking down the
         // directional light. A bounding sphere keeps the fit rotation-stable.
         const bool castShadow = !items.empty() && sceneMax.x >= sceneMin.x;
@@ -919,6 +1113,10 @@ export namespace se
             rtMeshes.reserve(items.size());
             for (const DrawItem& it : items)
             {
+                if (it.skinned)
+                {
+                    continue;  // the BLAS holds bind-pose geometry; skinned occluders are v1-excluded
+                }
                 rtModels.push_back(it.model);
                 rtMeshes.push_back(it.mesh);
             }
@@ -947,7 +1145,7 @@ export namespace se
         std::vector<ReflectionProbeUpload> probeUploads;
         forEach<TransformComponent, ReflectionProbeComponent>(
             scene,
-            [&](Entity entity, TransformComponent& transform, ReflectionProbeComponent& probe)
+            [&](Entity entity, TransformComponent&, ReflectionProbeComponent& probe)
             {
                 if (probeUploads.size() >= MaxReflectionProbes)
                 {
@@ -956,7 +1154,7 @@ export namespace se
                 ReflectionProbeUpload up;
                 up.entity =
                     hasComponent<IdComponent>(scene, entity) ? getComponent<IdComponent>(scene, entity).id.value : 0;
-                up.origin = transform.translation;
+                up.origin = worldTranslation(scene, entity);
                 up.influenceRadius = probe.influenceRadius;
                 up.intensity = probe.intensity;
                 up.boxProjection = probe.boxProjection;
@@ -1024,7 +1222,7 @@ export namespace se
         // directional light direction (for contact shadows).
         setSsaoCamera(renderer, view, proj, lightDir);
 
-        submitDrawList(renderer, viewProjection, items);
+        submitDrawList(renderer, viewProjection, items, frameJoints);
 
         // Resolve the scene environment into the visible-sky settings. Procedural samples the
         // baked envCube (so the background matches the IBL lighting); Texture loads the
@@ -1082,15 +1280,16 @@ export namespace se
         f32 nearest = std::numeric_limits<f32>::max();
         forEach<TransformComponent, MeshComponent>(
             scene,
-            [&](Entity entity, TransformComponent& transform, MeshComponent& mesh)
+            [&](Entity entity, TransformComponent&, MeshComponent& mesh)
             {
                 auto meshRef = loadMeshAsset(assets, renderer, mesh.mesh);
                 if (!meshRef)
                 {
                     return;
                 }
-                // World AABB from the 8 transformed local-AABB corners.
-                const glm::mat4 model = transformMatrix(transform);
+                // World AABB from the 8 transformed local-AABB corners; the world matrix
+                // comes from the last frame's flatten (lockstep with the draw loop).
+                const glm::mat4 model = worldMatrix(scene, entity);
                 const glm::vec3 lo = meshRef->boundsMin;
                 const glm::vec3 hi = meshRef->boundsMax;
                 glm::vec3 worldMin{ std::numeric_limits<f32>::max() };
