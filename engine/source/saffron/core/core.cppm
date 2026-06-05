@@ -87,8 +87,7 @@ export namespace se
     // blobs (e.g. thumbnail PNGs) over the JSON control protocol.
     auto base64Encode(const std::vector<u8>& bytes) -> std::string
     {
-        static constexpr char table[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        static constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         std::string out;
         out.reserve(((bytes.size() + 2) / 3) * 4);
         std::size_t i = 0;
@@ -135,9 +134,15 @@ export namespace se
     {
         switch (level)
         {
-            case LogLevel::Info: std::println("[saffron:{}] {}", subsystem, message); return;
-            case LogLevel::Warn: std::println("[saffron:{}] warn: {}", subsystem, message); return;
-            case LogLevel::Error: std::println("[saffron:{}] error: {}", subsystem, message); return;
+        case LogLevel::Info:
+            std::println("[saffron:{}] {}", subsystem, message);
+            return;
+        case LogLevel::Warn:
+            std::println("[saffron:{}] warn: {}", subsystem, message);
+            return;
+        case LogLevel::Error:
+            std::println("[saffron:{}] error: {}", subsystem, message);
+            return;
         }
     }
 

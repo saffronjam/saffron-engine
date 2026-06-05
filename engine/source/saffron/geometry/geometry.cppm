@@ -166,13 +166,13 @@ namespace se
         // 64-byte fixed header; three contiguous raw arrays follow at the offsets.
         struct SMeshHeader
         {
-            char magic[4];        // 'S','M','S','H'
+            char magic[4];  // 'S','M','S','H'
             u32 version;
-            u32 flags;            // reserved (0)
-            u32 vertexStride;     // == sizeof(Vertex)
+            u32 flags;         // reserved (0)
+            u32 vertexStride;  // == sizeof(Vertex)
             u32 vertexCount;
             u32 indexCount;
-            u32 indexWidth;       // bytes per index (4)
+            u32 indexWidth;  // bytes per index (4)
             u32 submeshCount;
             u64 verticesOffset;
             u64 indicesOffset;
@@ -278,9 +278,8 @@ namespace se
                 const std::size_t a = static_cast<std::size_t>(submesh.vertexOffset) + mesh.indices[base + 0];
                 const std::size_t b = static_cast<std::size_t>(submesh.vertexOffset) + mesh.indices[base + 1];
                 const std::size_t c = static_cast<std::size_t>(submesh.vertexOffset) + mesh.indices[base + 2];
-                const glm::vec3 faceNormal =
-                    glm::cross(mesh.vertices[b].position - mesh.vertices[a].position,
-                               mesh.vertices[c].position - mesh.vertices[a].position);
+                const glm::vec3 faceNormal = glm::cross(mesh.vertices[b].position - mesh.vertices[a].position,
+                                                        mesh.vertices[c].position - mesh.vertices[a].position);
                 mesh.vertices[a].normal += faceNormal;
                 mesh.vertices[b].normal += faceNormal;
                 mesh.vertices[c].normal += faceNormal;
@@ -442,8 +441,8 @@ namespace se
         if (primaryMaterial != nullptr && primaryMaterial->has_pbr_metallic_roughness)
         {
             const cgltf_pbr_metallic_roughness& pbr = primaryMaterial->pbr_metallic_roughness;
-            material.baseColor = glm::vec4(pbr.base_color_factor[0], pbr.base_color_factor[1],
-                                           pbr.base_color_factor[2], pbr.base_color_factor[3]);
+            material.baseColor = glm::vec4(pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2],
+                                           pbr.base_color_factor[3]);
             const cgltf_texture_view& albedoView = pbr.base_color_texture;
             if (albedoView.texture != nullptr && albedoView.texture->image != nullptr)
             {
@@ -499,21 +498,19 @@ namespace se
                     std::memcpy(&local, node.matrix, sizeof(local));
                     glm::vec3 skew;
                     glm::vec4 perspective;
-                    glm::decompose(local, imported.scale, imported.rotation, imported.translation, skew,
-                                   perspective);
+                    glm::decompose(local, imported.scale, imported.rotation, imported.translation, skew, perspective);
                 }
                 else
                 {
                     if (node.has_translation)
                     {
-                        imported.translation = glm::vec3(node.translation[0], node.translation[1],
-                                                         node.translation[2]);
+                        imported.translation = glm::vec3(node.translation[0], node.translation[1], node.translation[2]);
                     }
                     if (node.has_rotation)
                     {
                         // glTF stores (x, y, z, w); glm::quat takes (w, x, y, z).
-                        imported.rotation = glm::quat(node.rotation[3], node.rotation[0], node.rotation[1],
-                                                      node.rotation[2]);
+                        imported.rotation =
+                            glm::quat(node.rotation[3], node.rotation[0], node.rotation[1], node.rotation[2]);
                     }
                     if (node.has_scale)
                     {
@@ -584,7 +581,7 @@ namespace se
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
         std::vector<tinyobj::material_t> materials;
-        std::string err;  // tinyobjloader 1.0.6 combines warnings + errors here
+        std::string err;                                // tinyobjloader 1.0.6 combines warnings + errors here
         const std::string baseDir = directoryOf(path);  // resolve .mtl + textures next to the obj
         const bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, path.c_str(), baseDir.c_str());
         if (!ok)
@@ -614,25 +611,22 @@ namespace se
                         return Err(std::format("tinyobjloader: '{}' has an out-of-range vertex index", path));
                     }
                     Vertex vertex;
-                    vertex.position = glm::vec3(
-                        attrib.vertices[3 * index.vertex_index + 0],
-                        attrib.vertices[3 * index.vertex_index + 1],
-                        attrib.vertices[3 * index.vertex_index + 2]);
+                    vertex.position = glm::vec3(attrib.vertices[3 * index.vertex_index + 0],
+                                                attrib.vertices[3 * index.vertex_index + 1],
+                                                attrib.vertices[3 * index.vertex_index + 2]);
                     if (index.normal_index >= 0 &&
                         static_cast<std::size_t>(3 * index.normal_index + 2) < attrib.normals.size())
                     {
-                        vertex.normal = glm::vec3(
-                            attrib.normals[3 * index.normal_index + 0],
-                            attrib.normals[3 * index.normal_index + 1],
-                            attrib.normals[3 * index.normal_index + 2]);
+                        vertex.normal = glm::vec3(attrib.normals[3 * index.normal_index + 0],
+                                                  attrib.normals[3 * index.normal_index + 1],
+                                                  attrib.normals[3 * index.normal_index + 2]);
                     }
                     if (index.texcoord_index >= 0 &&
                         static_cast<std::size_t>(2 * index.texcoord_index + 1) < attrib.texcoords.size())
                     {
                         // OBJ texture V origin is bottom-left; Vulkan samples top-left.
-                        vertex.uv0 = glm::vec2(
-                            attrib.texcoords[2 * index.texcoord_index + 0],
-                            1.0f - attrib.texcoords[2 * index.texcoord_index + 1]);
+                        vertex.uv0 = glm::vec2(attrib.texcoords[2 * index.texcoord_index + 0],
+                                               1.0f - attrib.texcoords[2 * index.texcoord_index + 1]);
                     }
                     const u32 newIndex = static_cast<u32>(mesh.vertices.size());
                     mesh.vertices.push_back(vertex);
@@ -759,8 +753,8 @@ namespace se
         int width = 0;
         int height = 0;
         int channels = 0;
-        stbi_uc* pixels = stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()),
-                                                &width, &height, &channels, STBI_rgb_alpha);
+        stbi_uc* pixels = stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()), &width, &height,
+                                                &channels, STBI_rgb_alpha);
         if (pixels == nullptr)
         {
             return Err(std::string{ "cannot decode image from memory" });
@@ -796,8 +790,8 @@ namespace se
         int width = 0;
         int height = 0;
         int channels = 0;
-        float* pixels = stbi_loadf_from_memory(encoded.data(), static_cast<int>(encoded.size()),
-                                               &width, &height, &channels, STBI_rgb_alpha);
+        float* pixels = stbi_loadf_from_memory(encoded.data(), static_cast<int>(encoded.size()), &width, &height,
+                                               &channels, STBI_rgb_alpha);
         if (pixels == nullptr)
         {
             return Err(std::string{ "cannot decode HDR image from memory" });
@@ -875,13 +869,12 @@ namespace se
         // Recompute the layout from the counts and require the header offsets to match
         // and the file to be large enough. This rejects a malformed huge count before
         // it reaches resize() (which would otherwise abort on a giant allocation).
-        const u64 verticesEnd = static_cast<u64>(sizeof(SMeshHeader)) + static_cast<u64>(header.vertexCount) * sizeof(Vertex);
+        const u64 verticesEnd =
+            static_cast<u64>(sizeof(SMeshHeader)) + static_cast<u64>(header.vertexCount) * sizeof(Vertex);
         const u64 indicesEnd = verticesEnd + static_cast<u64>(header.indexCount) * sizeof(u32);
         const u64 submeshesEnd = indicesEnd + static_cast<u64>(header.submeshCount) * sizeof(Submesh);
-        if (header.verticesOffset != sizeof(SMeshHeader) ||
-            header.indicesOffset != verticesEnd ||
-            header.submeshesOffset != indicesEnd ||
-            static_cast<u64>(fileSize) < submeshesEnd)
+        if (header.verticesOffset != sizeof(SMeshHeader) || header.indicesOffset != verticesEnd ||
+            header.submeshesOffset != indicesEnd || static_cast<u64>(fileSize) < submeshesEnd)
         {
             return Err(std::format("'{}' has an inconsistent or truncated layout", path));
         }
@@ -904,13 +897,12 @@ namespace se
         return mesh;
     }
 
-    auto saveMeshSkinned(const Mesh& mesh, const std::vector<VertexSkin>& skin, const std::string& path)
-        -> Result<void>
+    auto saveMeshSkinned(const Mesh& mesh, const std::vector<VertexSkin>& skin, const std::string& path) -> Result<void>
     {
         if (skin.size() != mesh.vertices.size())
         {
-            return Err(std::format("skin stream ({}) does not parallel the vertices ({})", skin.size(),
-                                   mesh.vertices.size()));
+            return Err(
+                std::format("skin stream ({}) does not parallel the vertices ({})", skin.size(), mesh.vertices.size()));
         }
         SMeshHeader header{};
         std::memcpy(header.magic, "SMSH", 4);
@@ -994,8 +986,8 @@ namespace se
             logError(std::format("geometry self-test: obj import failed: {}", obj.error()));
             return;
         }
-        logInfo(std::format("geometry self-test: cube.obj -> {} verts, {} indices, {} submeshes",
-                            obj->vertices.size(), obj->indices.size(), obj->submeshes.size()));
+        logInfo(std::format("geometry self-test: cube.obj -> {} verts, {} indices, {} submeshes", obj->vertices.size(),
+                            obj->indices.size(), obj->submeshes.size()));
 
         auto gltf = importGltf(modelsDir + "/cube.gltf");
         if (!gltf)

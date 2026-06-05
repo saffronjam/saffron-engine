@@ -50,9 +50,9 @@ export namespace se
     // structural change — never serialized or copied (entt ids are not stable across load).
     struct RelationshipComponent
     {
-        Uuid parent;                              // 0 == root
-        entt::entity parentHandle = entt::null;   // resolved cache
-        std::vector<entt::entity> children;       // derived cache
+        Uuid parent;                             // 0 == root
+        entt::entity parentHandle = entt::null;  // resolved cache
+        std::vector<entt::entity> children;      // derived cache
     };
 
     // Cached world matrix, overwritten each frame by updateWorldTransforms. Stays
@@ -107,10 +107,10 @@ export namespace se
     // A perspective camera; its view comes from the entity's TransformComponent.
     struct CameraComponent
     {
-        f32 fov = 45.0f;        // vertical field of view, degrees
+        f32 fov = 45.0f;  // vertical field of view, degrees
         f32 nearPlane = 0.1f;
         f32 farPlane = 100.0f;
-        bool primary = true;    // the scene renders through the first primary camera
+        bool primary = true;  // the scene renders through the first primary camera
     };
 
     // A directional light; the scene shades through the first one. direction points
@@ -169,7 +169,12 @@ export namespace se
     // A project asset (a model imported + baked to a mesh, or a texture). The catalog
     // maps these by id; each entry carries a human name (UTF-8, renameable) and the
     // relative path to the baked .smesh / copied texture under the asset root.
-    enum class AssetType { Mesh, Texture, Other };
+    enum class AssetType
+    {
+        Mesh,
+        Texture,
+        Other
+    };
 
     struct AssetEntry
     {
@@ -236,7 +241,7 @@ export namespace se
         {
             return base;
         }
-        for (u32 suffix = 2; ; suffix = suffix + 1)
+        for (u32 suffix = 2;; suffix = suffix + 1)
         {
             std::string candidate = base + " (" + std::to_string(suffix) + ")";
             bool clash = false;
@@ -292,13 +297,13 @@ export namespace se
         glm::vec3 clearColor{ 0.05f, 0.06f, 0.08f };  // Color mode + clear fallback
         Uuid skyTexture;                              // Texture mode panorama; 0 = none
         f32 skyIntensity = 1.0f;
-        f32 skyRotation = 0.0f;                       // yaw radians applied to the sky lookup
-        f32 exposure = 1.0f;                          // reserved; tonemap exposure is set via the renderer
+        f32 skyRotation = 0.0f;  // yaw radians applied to the sky lookup
+        f32 exposure = 1.0f;     // reserved; tonemap exposure is set via the renderer
         bool visible = true;
-        bool useSkyForAmbient = true;                 // drive fallback ambient from ambientColor below
-        glm::vec3 ambientColor{ 1.0f };               // non-IBL fallback ambient tint
+        bool useSkyForAmbient = true;    // drive fallback ambient from ambientColor below
+        glm::vec3 ambientColor{ 1.0f };  // non-IBL fallback ambient tint
         f32 ambientIntensity = 0.15f;
-        AtmosphereSettings atmosphere;                // physically based envCube source (off = gradient)
+        AtmosphereSettings atmosphere;  // physically based envCube source (off = gradient)
     };
 
     struct Scene
@@ -412,80 +417,90 @@ export namespace se
     void relinkHierarchy(Scene& scene)
     {
         std::unordered_map<u64, entt::entity> uuidToHandle;
-        forEach<IdComponent>(scene, [&](Entity entity, IdComponent& id)
-        {
-            uuidToHandle.emplace(id.id.value, entity.handle);
-            if (!hasComponent<RelationshipComponent>(scene, entity))
+        forEach<IdComponent>(scene,
+                             [&](Entity entity, IdComponent& id)
+                             {
+                                 uuidToHandle.emplace(id.id.value, entity.handle);
+                                 if (!hasComponent<RelationshipComponent>(scene, entity))
+                                 {
+                                     addComponent<RelationshipComponent>(scene, entity);
+                                 }
+                             });
+        forEach<RelationshipComponent>(scene,
+                                       [](Entity, RelationshipComponent& rel)
+                                       {
+                                           rel.parentHandle = entt::null;
+                                           rel.children.clear();
+                                       });
+        forEach<RelationshipComponent>(
+            scene,
+            [&](Entity entity, RelationshipComponent& rel)
             {
-                addComponent<RelationshipComponent>(scene, entity);
-            }
-        });
-        forEach<RelationshipComponent>(scene, [](Entity, RelationshipComponent& rel)
-        {
-            rel.parentHandle = entt::null;
-            rel.children.clear();
-        });
-        forEach<RelationshipComponent>(scene, [&](Entity entity, RelationshipComponent& rel)
-        {
-            if (rel.parent.value == 0)
-            {
-                return;
-            }
-            auto it = uuidToHandle.find(rel.parent.value);
-            if (it == uuidToHandle.end() || it->second == entity.handle)
-            {
-                logWarn(std::format("relationship parent {} {}; treating as root", rel.parent.value,
-                                    it == uuidToHandle.end() ? "not found" : "is the entity itself"));
-                rel.parent = Uuid{ 0 };
-                return;
-            }
-            rel.parentHandle = it->second;
-        });
+                if (rel.parent.value == 0)
+                {
+                    return;
+                }
+                auto it = uuidToHandle.find(rel.parent.value);
+                if (it == uuidToHandle.end() || it->second == entity.handle)
+                {
+                    logWarn(std::format("relationship parent {} {}; treating as root", rel.parent.value,
+                                        it == uuidToHandle.end() ? "not found" : "is the entity itself"));
+                    rel.parent = Uuid{ 0 };
+                    return;
+                }
+                rel.parentHandle = it->second;
+            });
         // Cut any parent cycle the source data carried (a hand-edited file can hold one;
         // setParent refuses to create them). A walk longer than the entity count must be
         // looping; resetting the current entity to root breaks that loop for all members.
         const std::size_t entityCount = uuidToHandle.size();
-        forEach<RelationshipComponent>(scene, [&](Entity, RelationshipComponent& rel)
-        {
-            std::size_t steps = 0;
-            for (entt::entity ancestor = rel.parentHandle; ancestor != entt::null;
-                 ancestor = getComponent<RelationshipComponent>(scene, Entity{ ancestor }).parentHandle)
+        forEach<RelationshipComponent>(
+            scene,
+            [&](Entity, RelationshipComponent& rel)
             {
-                steps = steps + 1;
-                if (steps > entityCount)
+                std::size_t steps = 0;
+                for (entt::entity ancestor = rel.parentHandle; ancestor != entt::null;
+                     ancestor = getComponent<RelationshipComponent>(scene, Entity{ ancestor }).parentHandle)
                 {
-                    logWarn(std::format("relationship parent {} forms a cycle; treating as root",
-                                        rel.parent.value));
-                    rel.parent = Uuid{ 0 };
-                    rel.parentHandle = entt::null;
-                    return;
+                    steps = steps + 1;
+                    if (steps > entityCount)
+                    {
+                        logWarn(
+                            std::format("relationship parent {} forms a cycle; treating as root", rel.parent.value));
+                        rel.parent = Uuid{ 0 };
+                        rel.parentHandle = entt::null;
+                        return;
+                    }
                 }
-            }
-        });
-        forEach<RelationshipComponent>(scene, [&](Entity entity, RelationshipComponent& rel)
-        {
-            if (rel.parentHandle != entt::null)
-            {
-                getComponent<RelationshipComponent>(scene, Entity{ rel.parentHandle }).children.push_back(entity.handle);
-            }
-        });
+            });
+        forEach<RelationshipComponent>(scene,
+                                       [&](Entity entity, RelationshipComponent& rel)
+                                       {
+                                           if (rel.parentHandle != entt::null)
+                                           {
+                                               getComponent<RelationshipComponent>(scene, Entity{ rel.parentHandle })
+                                                   .children.push_back(entity.handle);
+                                           }
+                                       });
         // Resolve skinned-mesh joint uuids to live handles with the same map; an
         // unresolved joint warns once here and deforms by identity in jointMatrices.
-        forEach<SkinnedMeshComponent>(scene, [&](Entity, SkinnedMeshComponent& skin)
-        {
-            skin.boneHandles.assign(skin.bones.size(), entt::null);
-            for (std::size_t i = 0; i < skin.bones.size(); i = i + 1)
+        forEach<SkinnedMeshComponent>(
+            scene,
+            [&](Entity, SkinnedMeshComponent& skin)
             {
-                auto it = uuidToHandle.find(skin.bones[i].value);
-                if (it == uuidToHandle.end())
+                skin.boneHandles.assign(skin.bones.size(), entt::null);
+                for (std::size_t i = 0; i < skin.bones.size(); i = i + 1)
                 {
-                    logWarn(std::format("skinned mesh joint {} not found; deforming with identity",
-                                        skin.bones[i].value));
-                    continue;
+                    auto it = uuidToHandle.find(skin.bones[i].value);
+                    if (it == uuidToHandle.end())
+                    {
+                        logWarn(std::format("skinned mesh joint {} not found; deforming with identity",
+                                            skin.bones[i].value));
+                        continue;
+                    }
+                    skin.boneHandles[i] = it->second;
                 }
-                skin.boneHandles[i] = it->second;
-            }
-        });
+            });
     }
 
     // Exact world matrix composed by walking the parent chain. Used where the cached
@@ -562,13 +577,14 @@ export namespace se
                 }
             }
         };
-        forEach<RelationshipComponent>(scene, [&](Entity entity, RelationshipComponent& rel)
-        {
-            if (rel.parentHandle == entt::null)
-            {
-                writeSubtree(writeSubtree, entity, glm::mat4(1.0f));
-            }
-        });
+        forEach<RelationshipComponent>(scene,
+                                       [&](Entity entity, RelationshipComponent& rel)
+                                       {
+                                           if (rel.parentHandle == entt::null)
+                                           {
+                                               writeSubtree(writeSubtree, entity, glm::mat4(1.0f));
+                                           }
+                                       });
     }
 
     // Fills `out` with worldMatrix(bones[i]) * inverseBind[i] per joint — the matrices
@@ -686,20 +702,21 @@ export namespace se
     {
         CameraView result;
         forEach<TransformComponent, CameraComponent>(scene,
-            [&](Entity entity, TransformComponent&, CameraComponent& camera)
-        {
-                if (result.valid || !camera.primary)
-                {
-                    return;
-                }
-                // The world matrix composes the parent chain, so a parented camera views
-                // from its world placement (and inherits parent scale into the view basis).
-                result.view = glm::inverse(worldMatrix(scene, entity));
-                result.fov = camera.fov;
-                result.nearPlane = camera.nearPlane;
-                result.farPlane = camera.farPlane;
-                result.valid = true;
-            });
+                                                     [&](Entity entity, TransformComponent&, CameraComponent& camera)
+                                                     {
+                                                         if (result.valid || !camera.primary)
+                                                         {
+                                                             return;
+                                                         }
+                                                         // The world matrix composes the parent chain, so a parented
+                                                         // camera views from its world placement (and inherits parent
+                                                         // scale into the view basis).
+                                                         result.view = glm::inverse(worldMatrix(scene, entity));
+                                                         result.fov = camera.fov;
+                                                         result.nearPlane = camera.nearPlane;
+                                                         result.farPlane = camera.farPlane;
+                                                         result.valid = true;
+                                                     });
         return result;
     }
 
@@ -721,7 +738,6 @@ export namespace se
         return glm::vec3{ jsonF32Or(j, "x", 0.0f), jsonF32Or(j, "y", 0.0f), jsonF32Or(j, "z", 0.0f) };
     }
 
-
     auto vec4ToJson(const glm::vec4& v) -> nlohmann::json
     {
         return nlohmann::json{ { "x", v.x }, { "y", v.y }, { "z", v.z }, { "w", v.w } };
@@ -729,8 +745,8 @@ export namespace se
 
     auto vec4FromJson(const nlohmann::json& j) -> glm::vec4
     {
-        return glm::vec4{ jsonF32Or(j, "x", 1.0f), jsonF32Or(j, "y", 1.0f),
-                          jsonF32Or(j, "z", 1.0f), jsonF32Or(j, "w", 1.0f) };
+        return glm::vec4{ jsonF32Or(j, "x", 1.0f), jsonF32Or(j, "y", 1.0f), jsonF32Or(j, "z", 1.0f),
+                          jsonF32Or(j, "w", 1.0f) };
     }
 
     auto nameComponentToJson(const NameComponent& c) -> nlohmann::json;
@@ -771,8 +787,8 @@ export namespace se
 
     struct ComponentTraits
     {
-        entt::id_type id = 0;   // == entt::type_hash<C>::value(); the storage() join key
-        std::string name;       // stable JSON key + UI header, e.g. "Transform"
+        entt::id_type id = 0;  // == entt::type_hash<C>::value(); the storage() join key
+        std::string name;      // stable JSON key + UI header, e.g. "Transform"
         bool removable = true;
         std::function<bool(Scene&, Entity)> has;
         std::function<void(Scene&, Entity)> addDefault;
@@ -780,7 +796,8 @@ export namespace se
         std::function<void(Scene&, Entity, Scene&, Entity)> copyTo;  // clone src -> dst
         std::function<nlohmann::json(Scene&, Entity)> serialize;
         std::function<Result<void>(Scene&, Entity, const nlohmann::json&)> deserialize;
-        std::function<void(Scene&, Entity)> drawInspector;  // opaque here; ImGui body lives in the editor
+        std::function<void(Scene&, Entity)>
+            drawInspector;  // opaque here; the host registers an empty body — the inspector is the React editor
     };
 
     struct ComponentRegistry
@@ -794,11 +811,9 @@ export namespace se
     // generic addComponent/getComponent/hasComponent/removeComponent. Adding a
     // new component type elsewhere = one call to this; zero edits to the rest.
     template <typename C>
-    void registerComponent(ComponentRegistry& reg, std::string name,
-                           std::function<void(Scene&, Entity)> drawFn,
+    void registerComponent(ComponentRegistry& reg, std::string name, std::function<void(Scene&, Entity)> drawFn,
                            std::function<nlohmann::json(const C&)> toJson,
-                           std::function<Result<void>(C&, const nlohmann::json&)> fromJson,
-                           bool removable = true)
+                           std::function<Result<void>(C&, const nlohmann::json&)> fromJson, bool removable = true)
     {
         ComponentTraits traits;
         traits.id = entt::type_hash<C>::value();
@@ -807,17 +822,14 @@ export namespace se
         traits.has = [](Scene& s, Entity e) -> auto { return hasComponent<C>(s, e); };
         traits.addDefault = [](Scene& s, Entity e) -> auto { addComponent<C>(s, e); };
         traits.remove = [](Scene& s, Entity e) -> auto { removeComponent<C>(s, e); };
-        traits.copyTo = [](Scene& src, Entity from, Scene& dst, Entity to)
-        -> auto {
+        traits.copyTo = [](Scene& src, Entity from, Scene& dst, Entity to) -> auto
+        {
             if (hasComponent<C>(src, from))
             {
                 addComponent<C>(dst, to, getComponent<C>(src, from));
             }
         };
-        traits.serialize = [toJson](Scene& s, Entity e) -> nlohmann::json
-        {
-            return toJson(getComponent<C>(s, e));
-        };
+        traits.serialize = [toJson](Scene& s, Entity e) -> nlohmann::json { return toJson(getComponent<C>(s, e)); };
         traits.deserialize = [fromJson](Scene& s, Entity e, const nlohmann::json& j) -> Result<void>
         {
             if (!hasComponent<C>(s, e))
@@ -875,8 +887,8 @@ export namespace se
         return components;
     }
 
-    auto deserializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity,
-                                                       const nlohmann::json& components) -> Result<void>
+    auto deserializeEntity(ComponentRegistry& reg, Scene& scene, Entity entity, const nlohmann::json& components)
+        -> Result<void>
     {
         for (auto it = components.begin(); it != components.end(); ++it)
         {
@@ -903,13 +915,14 @@ export namespace se
         doc["version"] = SceneVersion;
         doc["environment"] = environmentToJson(scene.environment);
         doc["entities"] = nlohmann::json::array();
-        forEach<IdComponent>(scene, [&](Entity entity, IdComponent& id)
-        {
-            nlohmann::json entry;
-            entry["id"] = uuidToJson(id.id.value);
-            entry["components"] = serializeEntity(reg, scene, entity);
-            doc["entities"].push_back(std::move(entry));
-        });
+        forEach<IdComponent>(scene,
+                             [&](Entity entity, IdComponent& id)
+                             {
+                                 nlohmann::json entry;
+                                 entry["id"] = uuidToJson(id.id.value);
+                                 entry["components"] = serializeEntity(reg, scene, entity);
+                                 doc["entities"].push_back(std::move(entry));
+                             });
         return doc;
     }
 
@@ -953,8 +966,7 @@ export namespace se
 
             if (entry.contains("components") && entry["components"].is_object())
             {
-                Result<void> result =
-                    deserializeEntity(reg, scene, Entity{ handle }, entry["components"]);
+                Result<void> result = deserializeEntity(reg, scene, Entity{ handle }, entry["components"]);
                 if (!result)
                 {
                     return Err(result.error());
@@ -1008,16 +1020,10 @@ export namespace se
     void runSceneSerializationSelfTest()
     {
         ComponentRegistry reg;
-        registerComponent<NameComponent>(reg, "Name",
-            [](Scene&, Entity) {},
-            nameComponentToJson,
-            nameComponentFromJson,
-            false);
-        registerComponent<TransformComponent>(reg, "Transform",
-            [](Scene&, Entity) {},
-            transformComponentToJson,
-            transformComponentFromJson,
-            false);
+        registerComponent<NameComponent>(
+            reg, "Name", [](Scene&, Entity) {}, nameComponentToJson, nameComponentFromJson, false);
+        registerComponent<TransformComponent>(
+            reg, "Transform", [](Scene&, Entity) {}, transformComponentToJson, transformComponentFromJson, false);
 
         Scene scene;
         createEntity(scene, "Camera");
@@ -1043,24 +1049,22 @@ export namespace se
         u32 count = 0;
         glm::vec3 cubePos{ 0.0f };
         forEach<NameComponent, TransformComponent>(loaded,
-            [&](Entity, NameComponent& name, TransformComponent& transform)
-        {
-                count = count + 1;
-                if (name.name == "Cube")
-                {
-                    cubePos = transform.translation;
-                }
-            });
-        logInfo(std::format("scene round-trip: {} entities, cube at ({:.1f}, {:.1f}, {:.1f})",
-                            count, cubePos.x, cubePos.y, cubePos.z));
+                                                   [&](Entity, NameComponent& name, TransformComponent& transform)
+                                                   {
+                                                       count = count + 1;
+                                                       if (name.name == "Cube")
+                                                       {
+                                                           cubePos = transform.translation;
+                                                       }
+                                                   });
+        logInfo(std::format("scene round-trip: {} entities, cube at ({:.1f}, {:.1f}, {:.1f})", count, cubePos.x,
+                            cubePos.y, cubePos.z));
 
         // Hierarchy serialization: the durable parent uuid survives a round trip, the
         // post-loop resolve pass rebuilds the caches regardless of entity order, and
         // older or corrupt documents migrate clean.
-        registerComponent<RelationshipComponent>(reg, "Relationship",
-            [](Scene&, Entity) {},
-            relationshipComponentToJson,
-            relationshipComponentFromJson,
+        registerComponent<RelationshipComponent>(
+            reg, "Relationship", [](Scene&, Entity) {}, relationshipComponentToJson, relationshipComponentFromJson,
             false);
 
         u32 failures = 0;
@@ -1075,13 +1079,14 @@ export namespace se
         auto findByEntityName = [](Scene& s, std::string_view name) -> Entity
         {
             Entity found{ entt::null };
-            forEach<NameComponent>(s, [&](Entity e, NameComponent& n)
-            {
-                if (n.name == name)
-                {
-                    found = e;
-                }
-            });
+            forEach<NameComponent>(s,
+                                   [&](Entity e, NameComponent& n)
+                                   {
+                                       if (n.name == name)
+                                       {
+                                           found = e;
+                                       }
+                                   });
             return found;
         };
 
@@ -1130,24 +1135,22 @@ export namespace se
         {
             u32 migratedRoots = 0;
             u32 migratedTotal = 0;
-            forEach<RelationshipComponent>(migrated, [&](Entity, RelationshipComponent& rel)
-            {
-                migratedTotal = migratedTotal + 1;
-                if (rel.parent.value == 0 && rel.parentHandle == entt::null)
-                {
-                    migratedRoots = migratedRoots + 1;
-                }
-            });
+            forEach<RelationshipComponent>(migrated,
+                                           [&](Entity, RelationshipComponent& rel)
+                                           {
+                                               migratedTotal = migratedTotal + 1;
+                                               if (rel.parent.value == 0 && rel.parentHandle == entt::null)
+                                               {
+                                                   migratedRoots = migratedRoots + 1;
+                                               }
+                                           });
             expect(migratedTotal == 2 && migratedRoots == 2, "v2 entities migrate to roots");
         }
 
         // A skinned mesh round-trips by uuid: bones + inverseBind survive, and the
         // resolve pass rebuilds boneHandles to the live joints.
-        registerComponent<SkinnedMeshComponent>(reg, "SkinnedMesh",
-            [](Scene&, Entity) {},
-            skinnedMeshComponentToJson,
-            skinnedMeshComponentFromJson,
-            true);
+        registerComponent<SkinnedMeshComponent>(
+            reg, "SkinnedMesh", [](Scene&, Entity) {}, skinnedMeshComponentToJson, skinnedMeshComponentFromJson, true);
         {
             Scene rig;
             Entity boneA = createEntity(rig, "BoneA");
@@ -1168,8 +1171,7 @@ export namespace se
             Entity loadedSkinned = findByEntityName(rigLoaded, "Skinned");
             Entity loadedBoneB = findByEntityName(rigLoaded, "BoneB");
             SkinnedMeshComponent& loadedSkin = getComponent<SkinnedMeshComponent>(rigLoaded, loadedSkinned);
-            expect(loadedSkin.mesh.value == 777 && loadedSkin.bones.size() == 2 &&
-                       loadedSkin.inverseBind.size() == 2,
+            expect(loadedSkin.mesh.value == 777 && loadedSkin.bones.size() == 2 && loadedSkin.inverseBind.size() == 2,
                    "skinned mesh uuids + inverse binds survive the round trip");
             expect(glm::abs(loadedSkin.inverseBind[1][3][1] + 2.0f) < 1e-6f,
                    "inverse bind matrix values survive the round trip");
@@ -1182,8 +1184,7 @@ export namespace se
         for (nlohmann::json& entry : dangling["entities"])
         {
             nlohmann::json& components = entry["components"];
-            if (components.contains("Relationship") &&
-                components["Relationship"]["parent"].get<std::string>() != "0")
+            if (components.contains("Relationship") && components["Relationship"]["parent"].get<std::string>() != "0")
             {
                 components["Relationship"]["parent"] = "424242";
             }
@@ -1283,28 +1284,30 @@ export namespace se
         expect(!valid(scene, parent) && !valid(scene, child), "destroy removes the subtree");
         expect(valid(scene, grandchild), "reparented entity survives its old ancestor's destroy");
         u32 dangling = 0;
-        forEach<RelationshipComponent>(scene, [&](Entity, RelationshipComponent& rel)
-        {
-            for (entt::entity c : rel.children)
-            {
-                if (!scene.registry.valid(c))
-                {
-                    dangling = dangling + 1;
-                }
-            }
-        });
+        forEach<RelationshipComponent>(scene,
+                                       [&](Entity, RelationshipComponent& rel)
+                                       {
+                                           for (entt::entity c : rel.children)
+                                           {
+                                               if (!scene.registry.valid(c))
+                                               {
+                                                   dangling = dangling + 1;
+                                               }
+                                           }
+                                       });
         expect(dangling == 0, "no children cache holds a destroyed handle");
 
         u32 roots = 0;
         u32 total = 0;
-        forEach<RelationshipComponent>(scene, [&](Entity, RelationshipComponent& rel)
-        {
-            total = total + 1;
-            if (rel.parent.value == 0 && rel.parentHandle == entt::null)
-            {
-                roots = roots + 1;
-            }
-        });
+        forEach<RelationshipComponent>(scene,
+                                       [&](Entity, RelationshipComponent& rel)
+                                       {
+                                           total = total + 1;
+                                           if (rel.parent.value == 0 && rel.parentHandle == entt::null)
+                                           {
+                                               roots = roots + 1;
+                                           }
+                                       });
         expect(total == 3 && roots == 2, "expected mover + mover2 + grandchild with two roots");
 
         // A parented primary camera views from its world placement.
@@ -1316,8 +1319,7 @@ export namespace se
         getComponent<TransformComponent>(scene, cam).translation = glm::vec3(1.0f, 0.0f, 0.0f);
         updateWorldTransforms(scene);
         const CameraView view = primaryCamera(scene);
-        expect(view.valid &&
-                   glm::distance(glm::vec3(glm::inverse(view.view)[3]), glm::vec3(4.0f, 4.0f, 5.0f)) < 1e-4f,
+        expect(view.valid && glm::distance(glm::vec3(glm::inverse(view.view)[3]), glm::vec3(4.0f, 4.0f, 5.0f)) < 1e-4f,
                "parented camera views from its world position");
 
         // Research gate (CPU half): jointMatrices() must produce worldBone * inverseBind
@@ -1331,16 +1333,14 @@ export namespace se
         Entity skinnedNode = createEntity(scene, "SkinnedNode");
         getComponent<TransformComponent>(scene, skinnedNode).translation = glm::vec3(50.0f, 0.0f, 0.0f);
         SkinnedMeshComponent& skin = addComponent<SkinnedMeshComponent>(scene, skinnedNode);
-        skin.bones = { getComponent<IdComponent>(scene, jointRoot).id,
-                       getComponent<IdComponent>(scene, jointTip).id };
+        skin.bones = { getComponent<IdComponent>(scene, jointRoot).id, getComponent<IdComponent>(scene, jointTip).id };
         skin.inverseBind = { glm::translate(glm::mat4(1.0f), glm::vec3(-1.0f, 0.0f, 0.0f)),
                              glm::translate(glm::mat4(1.0f), glm::vec3(-1.0f, -3.0f, 0.0f)) };
         relinkHierarchy(scene);
         updateWorldTransforms(scene);
         std::vector<glm::mat4> palette;
         jointMatrices(scene, skin, palette);
-        expect(palette.size() == 2 && nearEqual(palette[0], glm::mat4(1.0f)) &&
-                   nearEqual(palette[1], glm::mat4(1.0f)),
+        expect(palette.size() == 2 && nearEqual(palette[0], glm::mat4(1.0f)) && nearEqual(palette[1], glm::mat4(1.0f)),
                "bind-pose joint matrices are identity");
         getComponent<TransformComponent>(scene, jointTip).translation = glm::vec3(0.0f, 5.0f, 0.0f);
         updateWorldTransforms(scene);

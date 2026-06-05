@@ -23,9 +23,12 @@ namespace se
         {
             switch (mode)
             {
-                case SkyMode::Color: return "color";
-                case SkyMode::Texture: return "texture";
-                case SkyMode::Procedural: return "procedural";
+            case SkyMode::Color:
+                return "color";
+            case SkyMode::Texture:
+                return "texture";
+            case SkyMode::Procedural:
+                return "procedural";
             }
             return "procedural";
         }
@@ -53,9 +56,18 @@ namespace se
 
         auto skyModeFromName(const std::string& name) -> SkyMode
         {
-            if (name == "color") { return SkyMode::Color; }
-            if (name == "texture") { return SkyMode::Texture; }
-            if (name == "procedural") { return SkyMode::Procedural; }
+            if (name == "color")
+            {
+                return SkyMode::Color;
+            }
+            if (name == "texture")
+            {
+                return SkyMode::Texture;
+            }
+            if (name == "procedural")
+            {
+                return SkyMode::Procedural;
+            }
             logWarn(std::format("unknown sky mode '{}', defaulting to procedural", name));
             return SkyMode::Procedural;
         }
@@ -87,12 +99,18 @@ namespace se
             a.enabled = jsonBoolOr(j, "enabled", false);
             a.planetRadius = jsonF32Or(j, "planetRadius", 6360.0f);
             a.atmosphereHeight = jsonF32Or(j, "atmosphereHeight", 100.0f);
-            if (j.contains("rayleighScattering")) { a.rayleighScattering = vec3FromJson(j["rayleighScattering"]); }
+            if (j.contains("rayleighScattering"))
+            {
+                a.rayleighScattering = vec3FromJson(j["rayleighScattering"]);
+            }
             a.rayleighScaleHeight = jsonF32Or(j, "rayleighScaleHeight", 8.0f);
             a.mieScattering = jsonF32Or(j, "mieScattering", 3.996f);
             a.mieScaleHeight = jsonF32Or(j, "mieScaleHeight", 1.2f);
             a.mieAnisotropy = jsonF32Or(j, "mieAnisotropy", 0.8f);
-            if (j.contains("ozoneAbsorption")) { a.ozoneAbsorption = vec3FromJson(j["ozoneAbsorption"]); }
+            if (j.contains("ozoneAbsorption"))
+            {
+                a.ozoneAbsorption = vec3FromJson(j["ozoneAbsorption"]);
+            }
             a.sunDiskAngularRadius = jsonF32Or(j, "sunDiskAngularRadius", 0.00465f);
             a.sunDiskIntensity = jsonF32Or(j, "sunDiskIntensity", 20.0f);
             return a;
@@ -138,8 +156,9 @@ namespace se
 
     auto cameraComponentToJson(const CameraComponent& c) -> nlohmann::json
     {
-        return nlohmann::json{ { "fov", c.fov }, { "near", c.nearPlane },
-                               { "far", c.farPlane }, { "primary", c.primary } };
+        return nlohmann::json{
+            { "fov", c.fov }, { "near", c.nearPlane }, { "far", c.farPlane }, { "primary", c.primary }
+        };
     }
 
     auto cameraComponentFromJson(CameraComponent& c, const nlohmann::json& j) -> Result<void>
@@ -178,7 +197,8 @@ namespace se
     {
         return nlohmann::json{ { "direction", vec3ToJson(c.direction) },
                                { "color", vec3ToJson(c.color) },
-                               { "intensity", c.intensity }, { "ambient", c.ambient } };
+                               { "intensity", c.intensity },
+                               { "ambient", c.ambient } };
     }
 
     auto directionalLightComponentFromJson(DirectionalLightComponent& c, const nlohmann::json& j) -> Result<void>
@@ -192,8 +212,7 @@ namespace se
 
     auto pointLightComponentToJson(const PointLightComponent& c) -> nlohmann::json
     {
-        return nlohmann::json{ { "color", vec3ToJson(c.color) },
-                               { "intensity", c.intensity }, { "range", c.range } };
+        return nlohmann::json{ { "color", vec3ToJson(c.color) }, { "intensity", c.intensity }, { "range", c.range } };
     }
 
     auto pointLightComponentFromJson(PointLightComponent& c, const nlohmann::json& j) -> Result<void>
@@ -207,8 +226,10 @@ namespace se
     auto spotLightComponentToJson(const SpotLightComponent& c) -> nlohmann::json
     {
         return nlohmann::json{ { "direction", vec3ToJson(c.direction) },
-                               { "color", vec3ToJson(c.color) }, { "intensity", c.intensity },
-                               { "range", c.range }, { "innerAngle", c.innerAngle },
+                               { "color", vec3ToJson(c.color) },
+                               { "intensity", c.intensity },
+                               { "range", c.range },
+                               { "innerAngle", c.innerAngle },
                                { "outerAngle", c.outerAngle } };
     }
 
@@ -347,16 +368,25 @@ namespace se
             return env;
         }
         env.skyMode = skyModeFromName(jsonStringOr(j, "skyMode", "procedural"));
-        if (j.contains("clearColor")) { env.clearColor = vec3FromJson(j["clearColor"]); }
+        if (j.contains("clearColor"))
+        {
+            env.clearColor = vec3FromJson(j["clearColor"]);
+        }
         env.skyTexture = Uuid{ jsonU64Or(j, "skyTexture", 0) };
         env.skyIntensity = jsonF32Or(j, "skyIntensity", 1.0f);
         env.skyRotation = jsonF32Or(j, "skyRotation", 0.0f);
         env.exposure = jsonF32Or(j, "exposure", 1.0f);
         env.visible = jsonBoolOr(j, "visible", true);
         env.useSkyForAmbient = jsonBoolOr(j, "useSkyForAmbient", true);
-        if (j.contains("ambientColor")) { env.ambientColor = vec3FromJson(j["ambientColor"]); }
+        if (j.contains("ambientColor"))
+        {
+            env.ambientColor = vec3FromJson(j["ambientColor"]);
+        }
         env.ambientIntensity = jsonF32Or(j, "ambientIntensity", 0.15f);
-        if (j.contains("atmosphere")) { env.atmosphere = atmosphereFromJson(j["atmosphere"]); }
+        if (j.contains("atmosphere"))
+        {
+            env.atmosphere = atmosphereFromJson(j["atmosphere"]);
+        }
         return env;
     }
 }

@@ -27,13 +27,13 @@ export namespace se
         bool shouldClose = false;
 
         SubscriberList<> onClose;
-        SubscriberList<u32, u32> onResize;       // width, height (pixels)
-        SubscriberList<i32, bool> onKeyPressed;  // keycode, isRepeat
-        SubscriberList<i32> onKeyReleased;       // keycode
+        SubscriberList<u32, u32> onResize;          // width, height (pixels)
+        SubscriberList<i32, bool> onKeyPressed;     // keycode, isRepeat
+        SubscriberList<i32> onKeyReleased;          // keycode
         SubscriberList<std::string> onFileDropped;  // dropped file path
 
         // Raw SDL events are forwarded to each sink before typed dispatch.
-        // The UI layer uses this to feed ImGui without coupling Window to ImGui.
+        // The host uses this to feed the gizmo + editor fly-camera input.
         std::vector<std::function<void(const SDL_Event&)>> eventSinks;
     };
 
@@ -49,11 +49,8 @@ export namespace se
         {
             flags |= SDL_WINDOW_HIDDEN;
         }
-        SDL_Window* handle = SDL_CreateWindow(
-            config.title.c_str(),
-            static_cast<int>(config.width),
-            static_cast<int>(config.height),
-            flags);
+        SDL_Window* handle = SDL_CreateWindow(config.title.c_str(), static_cast<int>(config.width),
+                                              static_cast<int>(config.height), flags);
         if (handle == nullptr)
         {
             return Err(std::format("SDL_CreateWindow failed: {}", SDL_GetError()));
