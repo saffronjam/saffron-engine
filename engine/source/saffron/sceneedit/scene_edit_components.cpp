@@ -78,5 +78,19 @@ namespace se
             relationshipComponentToJson,
             relationshipComponentFromJson,
             false);
+
+        // Serde carries the mesh/rootBone/bones uuids + inverse bind matrices; the
+        // boneHandles cache is rebuilt by relinkHierarchy, never serialized.
+        registerComponent<SkinnedMeshComponent>(reg, "SkinnedMesh",
+            [](Scene&, Entity) {},
+            skinnedMeshComponentToJson,
+            skinnedMeshComponentFromJson,
+            true);
+
+        registerComponent<BoneComponent>(reg, "Bone",
+            [](Scene&, Entity) {},
+            boneComponentToJson,
+            boneComponentFromJson,
+            true);
     }
 }

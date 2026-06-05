@@ -90,9 +90,10 @@ export namespace se
         NativeGizmoHandle active = NativeGizmoHandle::None;
         bool dragging = false;
         glm::vec2 startMouse{ 0.0f };
-        glm::vec3 startTranslation{ 0.0f };
-        glm::vec3 startRotation{ 0.0f };
-        glm::vec3 startScale{ 1.0f };
+        glm::vec3 startTranslation{ 0.0f };       // world translation at drag begin
+        glm::vec3 startRotation{ 0.0f };          // world rotation (Euler) at drag begin
+        glm::vec3 startScale{ 1.0f };             // local scale (scale never rebases)
+        glm::mat4 startParentWorld{ 1.0f };       // frozen parent world for the whole drag
         Entity target{ entt::null };
     };
 
@@ -171,8 +172,8 @@ export namespace se
     auto pointSegmentDistance(glm::vec2 p, glm::vec2 a, glm::vec2 b) -> f32;
     // The display color for a gizmo handle (axis-tinted; highlighted when hovered/active).
     auto axisColor(NativeGizmoHandle handle, const NativeGizmoState& gizmo) -> glm::vec4;
-    // The gizmo's X/Y/Z basis: world identity, or the transform's rotated basis in Local space.
-    auto gizmoAxes(const TransformComponent& transform, NativeGizmoSpace space) -> std::array<glm::vec3, 3>;
+    // The gizmo's X/Y/Z basis: world identity, or the entity's world-rotated basis in Local space.
+    auto gizmoAxes(const glm::quat& worldRotation, NativeGizmoSpace space) -> std::array<glm::vec3, 3>;
     // The world-space axis for a single-axis handle (zero for plane/screen/uniform handles).
     auto handleAxis(NativeGizmoHandle handle, const std::array<glm::vec3, 3>& axes) -> glm::vec3;
     // Hit-tests the selected entity's gizmo at `mouse` (viewport pixels) for the active mode/space.
@@ -180,6 +181,9 @@ export namespace se
         -> NativeGizmoHandle;
     // Applies an in-progress gizmo drag, writing the dragged entity's TransformComponent.
     void applyNativeGizmoDrag(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse);
+    // Captures the drag-begin state (world translation/rotation, local scale, frozen parent
+    // world) — the one snapshot both the SDL and control gizmo-pointer paths share.
+    void snapshotNativeGizmoStart(SceneEditContext& editor, Entity target);
 
     // Mirrors the backend-neutral GizmoOp/GizmoSpace (the single source) onto nativeGizmo.mode/.space.
     void syncNativeGizmo(SceneEditContext& ctx);

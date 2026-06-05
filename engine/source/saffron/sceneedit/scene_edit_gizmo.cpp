@@ -4,6 +4,7 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/euler_angles.hpp>
 #include <glm/gtx/quaternion.hpp>
 
 #include <algorithm>
@@ -150,14 +151,14 @@ namespace se
         return glm::vec4{ 0.93f, 0.93f, 0.95f, 0.75f };
     }
 
-    auto gizmoAxes(const TransformComponent& transform, NativeGizmoSpace space) -> std::array<glm::vec3, 3>
+    auto gizmoAxes(const glm::quat& worldRotation, NativeGizmoSpace space) -> std::array<glm::vec3, 3>
     {
         if (space == NativeGizmoSpace::World)
         {
             return { glm::vec3{ 1.0f, 0.0f, 0.0f }, glm::vec3{ 0.0f, 1.0f, 0.0f }, glm::vec3{ 0.0f, 0.0f, 1.0f } };
         }
-        const glm::quat q = glm::quat(transform.rotation);
-        return { q * glm::vec3{ 1.0f, 0.0f, 0.0f }, q * glm::vec3{ 0.0f, 1.0f, 0.0f }, q * glm::vec3{ 0.0f, 0.0f, 1.0f } };
+        return { worldRotation * glm::vec3{ 1.0f, 0.0f, 0.0f }, worldRotation * glm::vec3{ 0.0f, 1.0f, 0.0f },
+                 worldRotation * glm::vec3{ 0.0f, 0.0f, 1.0f } };
     }
 
     auto handleAxis(NativeGizmoHandle handle, const std::array<glm::vec3, 3>& axes) -> glm::vec3
@@ -175,20 +176,20 @@ namespace se
         {
             return NativeGizmoHandle::None;
         }
-        TransformComponent& transform = getComponent<TransformComponent>(editor.scene, editor.selected);
-        const GizmoProjection origin = viewportProject(cam, width, height, transform.translation);
+        const glm::vec3 position = worldTranslation(editor.scene, editor.selected);
+        const GizmoProjection origin = viewportProject(cam, width, height, position);
         if (!origin.visible)
         {
             return NativeGizmoHandle::None;
         }
-        const auto axes = gizmoAxes(transform, editor.nativeGizmo.space);
-        const f32 distance = glm::length(cameraPosition(cam) - transform.translation);
+        const auto axes = gizmoAxes(worldRotation(editor.scene, editor.selected), editor.nativeGizmo.space);
+        const f32 distance = glm::length(cameraPosition(cam) - position);
         const f32 axisLen = std::max(0.75f, distance * 0.22f);
         const std::array<NativeGizmoHandle, 3> handles{ NativeGizmoHandle::X, NativeGizmoHandle::Y, NativeGizmoHandle::Z };
 
         if (editor.nativeGizmo.mode == NativeGizmoMode::Rotate)
         {
-            return hitRotateRing(cam, width, height, mouse, transform.translation, axes, axisLen * 0.72f);
+            return hitRotateRing(cam, width, height, mouse, position, axes, axisLen * 0.72f);
         }
 
         if (editor.nativeGizmo.mode == NativeGizmoMode::Scale && glm::length(mouse - origin.pixel) < 12.0f)
@@ -198,7 +199,7 @@ namespace se
 
         for (u32 i = 0; i < 3; i = i + 1)
         {
-            const GizmoProjection end = viewportProject(cam, width, height, transform.translation + axes[i] * axisLen);
+            const GizmoProjection end = viewportProject(cam, width, height, position + axes[i] * axisLen);
             if (!end.visible)
             {
                 continue;
@@ -222,16 +223,16 @@ namespace se
             {
                 const std::array<GizmoProjection, 4> corners{
                     viewportProject(cam, width, height,
-                                    transform.translation + axes[axisPair.first] * axisLen * quadMin +
+                                    position + axes[axisPair.first] * axisLen * quadMin +
                                         axes[axisPair.second] * axisLen * quadMin),
                     viewportProject(cam, width, height,
-                                    transform.translation + axes[axisPair.first] * axisLen * quadMin +
+                                    position + axes[axisPair.first] * axisLen * quadMin +
                                         axes[axisPair.second] * axisLen * quadMax),
                     viewportProject(cam, width, height,
-                                    transform.translation + axes[axisPair.first] * axisLen * quadMax +
+                                    position + axes[axisPair.first] * axisLen * quadMax +
                                         axes[axisPair.second] * axisLen * quadMax),
                     viewportProject(cam, width, height,
-                                    transform.translation + axes[axisPair.first] * axisLen * quadMax +
+                                    position + axes[axisPair.first] * axisLen * quadMax +
                                         axes[axisPair.second] * axisLen * quadMin)
                 };
                 if (pointInConvexQuad(mouse, corners))
@@ -243,6 +244,50 @@ namespace se
         return NativeGizmoHandle::None;
     }
 
+    namespace
+    {
+        auto parentOf(Scene& scene, Entity entity) -> entt::entity
+        {
+            if (!hasComponent<RelationshipComponent>(scene, entity))
+            {
+                return entt::null;
+            }
+            return getComponent<RelationshipComponent>(scene, entity).parentHandle;
+        }
+
+        auto rotationOf(const glm::mat4& m) -> glm::quat
+        {
+            glm::vec3 scale{ glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])),
+                             glm::length(glm::vec3(m[2])) };
+            scale = glm::max(scale, glm::vec3(1e-8f));
+            const glm::mat3 rotation{ glm::vec3(m[0]) / scale.x, glm::vec3(m[1]) / scale.y,
+                                      glm::vec3(m[2]) / scale.z };
+            return glm::quat_cast(rotation);
+        }
+    }
+
+    void snapshotNativeGizmoStart(SceneEditContext& editor, Entity target)
+    {
+        NativeGizmoState& gizmo = editor.nativeGizmo;
+        const TransformComponent& transform = getComponent<TransformComponent>(editor.scene, target);
+        gizmo.startScale = transform.scale;  // scale never rebases (TRS-only model)
+        gizmo.startParentWorld = glm::mat4{ 1.0f };
+        const entt::entity parent = parentOf(editor.scene, target);
+        if (parent == entt::null)
+        {
+            // Root: world == local. Keeping the raw Euler preserves rotate-drag continuity
+            // for angles a matrix extraction would wrap.
+            gizmo.startTranslation = transform.translation;
+            gizmo.startRotation = transform.rotation;
+            return;
+        }
+        gizmo.startParentWorld = composeWorldMatrix(editor.scene, Entity{ parent });
+        gizmo.startTranslation = worldTranslation(editor.scene, target);
+        glm::vec3 euler;
+        glm::extractEulerAngleZYX(glm::mat4_cast(worldRotation(editor.scene, target)), euler.z, euler.y, euler.x);
+        gizmo.startRotation = euler;
+    }
+
     void applyNativeGizmoDrag(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
     {
         NativeGizmoState& gizmo = editor.nativeGizmo;
@@ -252,7 +297,7 @@ namespace se
             return;
         }
         TransformComponent& transform = getComponent<TransformComponent>(editor.scene, gizmo.target);
-        const auto axes = gizmoAxes(transform, gizmo.space);
+        const auto axes = gizmoAxes(worldRotation(editor.scene, gizmo.target), gizmo.space);
         const glm::vec2 delta = mouse - gizmo.startMouse;
         const f32 distance = glm::length(cameraPosition(cam) - gizmo.startTranslation);
         const f32 unitsPerPixel = std::max(0.001f,
@@ -288,16 +333,34 @@ namespace se
                 const glm::vec3 axis = handleAxis(gizmo.active, axes);
                 move = axis * glm::dot(delta, projectedAxis(axis)) * unitsPerPixel;
             }
-            transform.translation = gizmo.startTranslation + move;
+            // The drag math runs in world space; rebase the result into the parent frame
+            // before writing the local transform (identity parent for a root).
+            transform.translation =
+                glm::vec3(glm::inverse(gizmo.startParentWorld) * glm::vec4(gizmo.startTranslation + move, 1.0f));
             return;
         }
 
         if (gizmo.mode == NativeGizmoMode::Rotate)
         {
             const f32 radians = (delta.x + delta.y) * 0.01f;
-            if (gizmo.active == NativeGizmoHandle::X) { transform.rotation = gizmo.startRotation + glm::vec3{ radians, 0.0f, 0.0f }; }
-            if (gizmo.active == NativeGizmoHandle::Y) { transform.rotation = gizmo.startRotation + glm::vec3{ 0.0f, radians, 0.0f }; }
-            if (gizmo.active == NativeGizmoHandle::Z) { transform.rotation = gizmo.startRotation + glm::vec3{ 0.0f, 0.0f, radians }; }
+            glm::vec3 worldEuler = gizmo.startRotation;
+            if (gizmo.active == NativeGizmoHandle::X) { worldEuler += glm::vec3{ radians, 0.0f, 0.0f }; }
+            if (gizmo.active == NativeGizmoHandle::Y) { worldEuler += glm::vec3{ 0.0f, radians, 0.0f }; }
+            if (gizmo.active == NativeGizmoHandle::Z) { worldEuler += glm::vec3{ 0.0f, 0.0f, radians }; }
+            const entt::entity parent = parentOf(editor.scene, gizmo.target);
+            if (parent == entt::null)
+            {
+                // Root: the world Euler IS the local Euler; writing it raw keeps the stored
+                // angles continuous instead of wrapping through a matrix extraction.
+                transform.rotation = worldEuler;
+                return;
+            }
+            // Peel the frozen parent rotation off the world result, then extract a stable
+            // Euler (extractEulerAngleZYX matches the engine's Rz*Ry*Rx convention).
+            const glm::quat localRot = glm::inverse(rotationOf(gizmo.startParentWorld)) * glm::quat(worldEuler);
+            glm::vec3 euler;
+            glm::extractEulerAngleZYX(glm::mat4_cast(localRot), euler.z, euler.y, euler.x);
+            transform.rotation = euler;
             return;
         }
 
