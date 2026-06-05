@@ -49,12 +49,19 @@ const COMPONENT_ORDER = [
 /// Name/Transform). Everything else shows a Remove control.
 const NON_REMOVABLE = new Set<string>(["Name", "Transform"]);
 
+/// Components the Inspector never renders: Relationship carries the hierarchy's
+/// durable parent uuid, edited through the tree / `set-parent` — never as a raw field;
+/// Bone is an empty joint tag (bone-ness shows in the outliner, not as a section).
+const HIDDEN_COMPONENTS = new Set<string>(["Relationship", "Bone"]);
+
 /// The full registered component set (for the Add Component list). Derived from the
 /// known order; a regenerated schema with new components extends COMPONENT_ORDER.
 const ADDABLE_COMPONENTS = COMPONENT_ORDER.filter((c) => c !== "Name");
 
-function orderedComponentNames(components: Record<string, unknown>): string[] {
-  const present = Object.keys(components);
+/// Shared with the hierarchy's component subrows so the tree leaves and the
+/// Inspector sections stay in lockstep (same order, same hidden set).
+export function orderedComponentNames(components: Record<string, unknown>): string[] {
+  const present = Object.keys(components).filter((c) => !HIDDEN_COMPONENTS.has(c));
   const known = COMPONENT_ORDER.filter((c) => present.includes(c));
   const extra = present.filter((c) => !COMPONENT_ORDER.includes(c as never));
   return [...known, ...extra];
@@ -65,6 +72,8 @@ export function InspectorPanel() {
   const inspected = useEditorStore((s) => s.componentsBySelected);
   const selectionVersion = useEditorStore((s) => s.selectionVersion);
   const applyOptimisticComponent = useEditorStore((s) => s.applyOptimisticComponent);
+  const focusComponent = useEditorStore((s) => s.focusComponent);
+  const setFocusComponent = useEditorStore((s) => s.setFocusComponent);
   const { message, flash } = useFlash();
 
   // Per-(component,field) coalescers, rebuilt when the selection changes so a stale
@@ -73,6 +82,20 @@ export function InspectorPanel() {
   useEffect(() => {
     coalescers.current.clear();
   }, [selectionVersion, selectedId]);
+
+  // Consume the one-shot "jump to component" signal from the hierarchy subrows:
+  // scroll the section into view when present, and always clear the signal so a
+  // stale value never fires on a later render (component absent, selection raced).
+  const sectionRefs = useRef(new Map<string, HTMLElement>());
+  useEffect(() => {
+    if (!focusComponent) {
+      return;
+    }
+    sectionRefs.current
+      .get(focusComponent)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setFocusComponent(null);
+  }, [focusComponent, setFocusComponent]);
 
   const componentsObj = inspected?.components as Record<string, unknown> | undefined;
   const names = useMemo(
@@ -189,6 +212,13 @@ export function InspectorPanel() {
             return (
               <section
                 key={component}
+                ref={(el) => {
+                  if (el) {
+                    sectionRefs.current.set(component, el);
+                  } else {
+                    sectionRefs.current.delete(component);
+                  }
+                }}
                 className="overflow-hidden rounded-md border border-border bg-background"
               >
                 <header className="flex h-8 items-center justify-between border-b border-border bg-muted/50 pr-1 pl-2.5">

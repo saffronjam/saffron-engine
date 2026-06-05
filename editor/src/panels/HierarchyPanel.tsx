@@ -1,82 +1,88 @@
-/// The Hierarchy panel: a flat list of scene entities (parity with the C++
-/// `hierarchyPanel`, which iterates `forEach<IdComponent, NameComponent>`). The
-/// list comes from `store.entities`, refreshed by the reconcile poll only when
-/// sceneVersion changes — this component never fetches; it just renders the
-/// store slice. A left-click selects (optimistic + `select`); a right-click opens
-/// a context menu offering Focus / Rename / Copy / Delete. A double-click on a row
-/// starts an inline rename (Enter commits via `rename-entity`, Esc cancels).
+/// The Hierarchy panel: a tree outliner over the scene entities, built client-side
+/// from the flat `store.entities` slice plus each entry's `parentId` (refreshed by
+/// the reconcile poll only when sceneVersion changes — this component never fetches).
+/// A pinned Environment sentinel sits above the entity rows. Left-click selects
+/// (optimistic + `select`); double-click renames inline (Enter commits via
+/// `rename-entity`, Esc cancels); right-click opens Focus / Rename / Copy /
+/// Parent to… / Unparent / Delete; dragging a row onto another reparents via
+/// `set-parent`.
 ///
 /// The context menu and the inline rename input are Radix/native controls anchored
-/// on each row in the left column. Rejected control calls surface in an inline flash
-/// at the bottom of the panel (no silent failures).
-import { useEffect, useRef, useState } from "react";
+/// on each row in the left column, and every drag affordance stays in the sidebar
+/// DOM (the reparented X11 viewport paints over anything floating). Rejected control
+/// calls surface in an inline flash at the bottom of the panel (no silent failures).
+import { useState } from "react";
+import { Bone, ListTree } from "lucide-react";
 import { client } from "../control/client";
 import { useEditorStore } from "../state/store";
 import { CreateMenu } from "../app/CreateMenu";
 import { errorText, useFlash } from "../lib/flash";
-import type { EntityRef } from "../protocol";
-import { Input } from "@/components/ui/input";
+import type { EntityListEntry } from "../protocol";
+import { HierarchyTree, type TreeActions } from "./HierarchyTree";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 
 export function HierarchyPanel() {
-  const entities = useEditorStore((s) => s.entities);
-  const selectedId = useEditorStore((s) => s.selectedId);
   const selectEntity = useEditorStore((s) => s.selectEntity);
   const setSelectedId = useEditorStore((s) => s.setSelectedId);
+  const setParent = useEditorStore((s) => s.setParent);
   const applyOptimisticEntityName = useEditorStore((s) => s.applyOptimisticEntityName);
+  const showComponentSubrows = useEditorStore((s) => s.showComponentSubrows);
+  const toggleComponentSubrows = useEditorStore((s) => s.toggleComponentSubrows);
+  const hideBones = useEditorStore((s) => s.hideBones);
+  const toggleHideBones = useEditorStore((s) => s.toggleHideBones);
   const { message, flash } = useFlash();
   const [renamingId, setRenamingId] = useState<string | null>(null);
 
-  // Left-click a row: optimistic local select, then tell the engine. The poll
-  // confirms via selectionVersion.
-  const onSelect = (entity: EntityRef): void => {
-    selectEntity(entity.id);
-    void client.selectEntity(entity.id).catch((err: unknown) => flash(errorText(err)));
-  };
-
-  // Aim the editor camera at the entity.
-  const onFocus = (id: string): void => {
-    void client.focus(id).catch((err: unknown) => flash(errorText(err)));
-  };
-
-  // Copy duplicates the entity; the engine selects the dup, so mirror it locally
-  // and let the sceneVersion bump refresh the list.
-  const onCopy = (id: string): void => {
-    void client
-      .copyEntity(id)
-      .then((ref) => {
-        selectEntity(ref.id);
-      })
-      .catch((err: unknown) => flash(errorText(err)));
-  };
-
-  // Delete removes the entity; clear selection if it was the selected one.
-  const onDelete = (id: string): void => {
-    if (useEditorStore.getState().selectedId === id) {
-      setSelectedId(null);
-    }
-    void client.destroyEntity(id).catch((err: unknown) => flash(errorText(err)));
-  };
-
-  // Inline rename: optimistically update the row name and commit via rename-entity;
-  // the sceneVersion bump re-fetches the authoritative list. A rejection reverts to
-  // the next poll's value and surfaces in the flash.
-  const commitRename = (id: string, next: string): void => {
-    setRenamingId(null);
-    const trimmed = next.trim();
-    if (trimmed === "") {
-      return;
-    }
-    applyOptimisticEntityName(id, trimmed);
-    void client.renameEntity(id, trimmed).catch((err: unknown) => flash(errorText(err)));
+  const actions: TreeActions = {
+    // Left-click a row: optimistic local select, then tell the engine. The poll
+    // confirms via selectionVersion.
+    onSelect: (entity: EntityListEntry): void => {
+      selectEntity(entity.id);
+      void client.selectEntity(entity.id).catch((err: unknown) => flash(errorText(err)));
+    },
+    // Aim the editor camera at the entity.
+    onFocus: (id: string): void => {
+      void client.focus(id).catch((err: unknown) => flash(errorText(err)));
+    },
+    // Copy duplicates the entity; the engine selects the dup, so mirror it locally
+    // and let the sceneVersion bump refresh the list.
+    onCopy: (id: string): void => {
+      void client
+        .copyEntity(id)
+        .then((ref) => {
+          selectEntity(ref.id);
+        })
+        .catch((err: unknown) => flash(errorText(err)));
+    },
+    // Delete removes the entity and its subtree; clear selection if it was selected.
+    onDelete: (id: string): void => {
+      if (useEditorStore.getState().selectedId === id) {
+        setSelectedId(null);
+      }
+      void client.destroyEntity(id).catch((err: unknown) => flash(errorText(err)));
+    },
+    // Reparent (drag-drop or the context menu); the store action relinks
+    // optimistically and rolls back on rejection — surface the error here.
+    onReparent: (id: string, parentId: string | null): void => {
+      void setParent(id, parentId).catch((err: unknown) => flash(errorText(err)));
+    },
+    renamingId,
+    onRenameStart: (id: string): void => setRenamingId(id),
+    // Inline rename: optimistically update the row name and commit via rename-entity;
+    // the sceneVersion bump re-fetches the authoritative list. A rejection reverts to
+    // the next poll's value and surfaces in the flash.
+    onRenameCommit: (id: string, next: string): void => {
+      setRenamingId(null);
+      const trimmed = next.trim();
+      if (trimmed === "") {
+        return;
+      }
+      applyOptimisticEntityName(id, trimmed);
+      void client.renameEntity(id, trimmed).catch((err: unknown) => flash(errorText(err)));
+    },
+    onRenameCancel: (): void => setRenamingId(null),
   };
 
   return (
@@ -85,60 +91,36 @@ export function HierarchyPanel() {
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Scene
         </span>
-        <CreateMenu />
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-pressed={hideBones}
+            title="Hide skeleton bones in the tree"
+            className={cn(hideBones ? "bg-accent text-foreground" : "text-muted-foreground")}
+            onClick={toggleHideBones}
+          >
+            <Bone />
+          </Button>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-pressed={showComponentSubrows}
+            title="Show the selected entity's components as tree rows"
+            className={cn(
+              showComponentSubrows ? "bg-accent text-foreground" : "text-muted-foreground",
+            )}
+            onClick={toggleComponentSubrows}
+          >
+            <ListTree />
+          </Button>
+          <CreateMenu />
+        </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="p-1" role="listbox" aria-label="Scene entities">
-          {entities.length === 0 ? (
-            <div className="p-2.5 text-center italic text-muted-foreground">No entities</div>
-          ) : (
-            entities.map((entity) => (
-              <ContextMenu key={entity.id}>
-                <ContextMenuTrigger asChild>
-                  {entity.id === renamingId ? (
-                    <RenameRow
-                      initial={entity.name}
-                      onCommit={(next) => commitRename(entity.id, next)}
-                      onCancel={() => setRenamingId(null)}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={entity.id === selectedId}
-                      className={cn(
-                        "block w-full truncate rounded-md px-2.5 py-1.5 text-left text-sm",
-                        entity.id === selectedId
-                          ? "bg-primary text-primary-foreground"
-                          : "text-foreground hover:bg-accent",
-                      )}
-                      onClick={() => onSelect(entity)}
-                      onMouseDown={() => {
-                        if (renamingId && renamingId !== entity.id) {
-                          setRenamingId(null);
-                        }
-                      }}
-                      onDoubleClick={() => setRenamingId(entity.id)}
-                    >
-                      {entity.name}
-                    </button>
-                  )}
-                </ContextMenuTrigger>
-                <ContextMenuContent className="min-w-36">
-                  <ContextMenuItem onSelect={() => onFocus(entity.id)}>Focus</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => setRenamingId(entity.id)}>
-                    Rename
-                  </ContextMenuItem>
-                  <ContextMenuItem onSelect={() => onCopy(entity.id)}>Copy</ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem variant="destructive" onSelect={() => onDelete(entity.id)}>
-                    Delete
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
-            ))
-          )}
-        </div>
+        <HierarchyTree actions={actions} />
       </ScrollArea>
       {message ? (
         <p className="flex-none border-t border-destructive/40 bg-destructive/10 px-2.5 py-1 text-[11px] text-destructive">
@@ -146,62 +128,5 @@ export function HierarchyPanel() {
         </p>
       ) : null}
     </div>
-  );
-}
-
-/// Inline rename input rendered in place of a row. Autofocuses and selects all,
-/// commits on Enter or blur, cancels on Escape. Enter and Escape unmount the input,
-/// which fires a native blur; a `settled` ref ensures the blur does not commit a second
-/// time after Enter and does not commit at all after Escape.
-function RenameRow({
-  initial,
-  onCommit,
-  onCancel,
-}: {
-  initial: string;
-  onCommit(next: string): void;
-  onCancel(): void;
-}) {
-  const [value, setValue] = useState(initial);
-  const settled = useRef(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  return (
-    <Input
-      ref={inputRef}
-      value={value}
-      className="h-7 px-2.5 py-1.5 text-sm"
-      onChange={(e) => setValue(e.target.value)}
-      onFocus={(e) => e.currentTarget.select()}
-      onBlur={() => {
-        if (settled.current) {
-          return;
-        }
-        settled.current = true;
-        onCommit(value);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          if (settled.current) {
-            return;
-          }
-          settled.current = true;
-          onCommit(value);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          settled.current = true;
-          onCancel();
-        }
-      }}
-    />
   );
 }

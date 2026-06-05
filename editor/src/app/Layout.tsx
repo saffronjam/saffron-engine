@@ -27,6 +27,7 @@ import { RenderStatsPanel } from "../panels/RenderStatsPanel";
 import { AssetsPanel } from "../panels/AssetsPanel";
 import { ViewportPanel } from "../panels/ViewportPanel";
 import { emitLayoutSettled } from "./layoutBus";
+import { useEditorStore, type BottomTab } from "../state/store";
 
 const SIDEBAR_DEFAULT_WIDTH = 280;
 const SIDEBAR_MIN_WIDTH = 240;
@@ -125,15 +126,21 @@ function clampSidebarWidth(width: number): number {
 /// tabbing it here next to Inspector/Environment is the accepted parity choice
 /// (keeps every panel in a non-viewport region — see the file header).
 function LeftBottomTabs() {
-  const syncViewportAfterTabChange = (): void => {
+  // Store-controlled so the hierarchy's Environment sentinel row can switch tabs;
+  // manual tab clicks route through the same slice (which also clears the sentinel
+  // highlight when leaving Environment).
+  const bottomTab = useEditorStore((s) => s.bottomTab);
+  const setBottomTab = useEditorStore((s) => s.setBottomTab);
+  const onTabChange = (value: string): void => {
+    setBottomTab(value as BottomTab);
     requestAnimationFrame(() => emitLayoutSettled({ force: true }));
   };
 
   return (
     <Tabs
-      defaultValue="inspector"
+      value={bottomTab}
       className="flex h-full min-h-0 flex-col gap-0"
-      onValueChange={syncViewportAfterTabChange}
+      onValueChange={onTabChange}
     >
       <TabsList
         variant="line"
