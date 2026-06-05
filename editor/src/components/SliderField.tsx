@@ -42,7 +42,9 @@ export function SliderField({
         max={max}
         step={step}
         onPointerDown={() => onDragStart?.()}
-        onValueChange={(values) => onChange(Number(clamp(values[0] ?? current, min, max).toFixed(3)))}
+        onValueChange={(values) =>
+          onChange(Number(clamp(values[0] ?? current, min, max).toFixed(3)))
+        }
         onValueCommit={() => onDragEnd?.()}
       />
       <span className="w-9 flex-none text-right font-mono text-[11px] tabular-nums text-muted-foreground">

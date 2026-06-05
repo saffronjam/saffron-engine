@@ -76,9 +76,7 @@ export function LoadingOverlay() {
     >
       {phase === "error" ? (
         <div className="flex max-w-[480px] flex-col items-center gap-3.5 p-6 text-center">
-          <div className="text-[15px] font-semibold text-destructive">
-            {message}
-          </div>
+          <div className="text-[15px] font-semibold text-destructive">{message}</div>
           {error ? (
             <pre className="max-h-40 w-full overflow-auto rounded-md border border-border bg-card px-3 py-2.5 text-left font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
               {error}

@@ -50,10 +50,7 @@ export function ComboField({ value, options, onChange }: ComboFieldProps) {
   const isNone = value === NONE_UUID || value === "";
   return (
     <div className="flex items-center gap-1 rounded-sm border border-border bg-background py-0.5 pr-1 pl-1.5">
-      <span
-        className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
-        title={value}
-      >
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground" title={value}>
         {isNone ? "(none)" : value}
       </span>
       <button
