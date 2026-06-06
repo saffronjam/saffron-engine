@@ -720,6 +720,24 @@ export namespace se
         bool dragging;
     };
 
+    struct FlyInputParams
+    {
+        std::optional<bool> active;
+        std::optional<f32> lookDx;
+        std::optional<f32> lookDy;
+        std::optional<bool> forward;
+        std::optional<bool> back;
+        std::optional<bool> left;
+        std::optional<bool> right;
+        std::optional<bool> up;
+        std::optional<bool> down;
+    };
+
+    struct FlyInputResult
+    {
+        bool active;
+    };
+
     struct SetProbesParams
     {
         std::optional<bool> enabled;
@@ -826,6 +844,7 @@ export namespace se
     auto dtoToJson(const EditorCamera& value) -> Json;
     auto dtoToJson(const GizmoState& value) -> Json;
     auto dtoToJson(const GizmoPointerResult& value) -> Json;
+    auto dtoToJson(const FlyInputResult& value) -> Json;
     auto dtoToJson(const SetProbesResult& value) -> Json;
     auto dtoToJson(const RecaptureProbesResult& value) -> Json;
     auto dtoToJson(const ProbeRef& value) -> Json;
@@ -872,6 +891,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<SetCameraParams>) -> Result<SetCameraParams>;
     auto parseDto(const Json& params, DtoTag<SetGizmoParams>) -> Result<SetGizmoParams>;
     auto parseDto(const Json& params, DtoTag<GizmoPointerParams>) -> Result<GizmoPointerParams>;
+    auto parseDto(const Json& params, DtoTag<FlyInputParams>) -> Result<FlyInputParams>;
     auto parseDto(const Json& params, DtoTag<SetProbesParams>) -> Result<SetProbesParams>;
     auto parseDto(const Json& params, DtoTag<SetExposureParams>) -> Result<SetExposureParams>;
 }

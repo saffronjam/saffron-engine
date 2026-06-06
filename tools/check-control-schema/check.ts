@@ -283,6 +283,8 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
       return { op: "rotate", space: "local" };
     case "gizmo-hover":
       return { phase: "hover", x: 0, y: 0 };
+    case "fly-idle":
+      return { active: false };
     case "exposure-zero":
       return { ev: 0 };
     case "new-project":

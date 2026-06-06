@@ -1510,6 +1510,102 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<FlyInputParams>) -> Result<FlyInputParams>
+    {
+        FlyInputParams out;
+
+        {
+            auto value = optionalField(params, "active", 0, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "active");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.active = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "lookDx", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "lookDx");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.lookDx = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "lookDy", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "lookDy");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.lookDy = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "forward", 3, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "forward");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.forward = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "back", 4, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "back");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.back = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "left", 5, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "left");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.left = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "right", 6, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "right");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.right = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "up", 7, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "up");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.up = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "down", 8, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "down");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.down = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
     auto parseDto(const Json& params, DtoTag<SetProbesParams>) -> Result<SetProbesParams>
     {
         SetProbesParams out;
@@ -2125,6 +2221,13 @@ namespace se
         Json out = Json::object();
         out["hovered"] = value.hovered;
         out["dragging"] = value.dragging;
+        return out;
+    }
+
+    auto dtoToJson(const FlyInputResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["active"] = value.active;
         return out;
     }
 

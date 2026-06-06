@@ -132,6 +132,8 @@ export namespace se
         GizmoOp gizmoOp = GizmoOp::Translate;       // W/E/R cycle translate/rotate/scale
         GizmoSpace gizmoSpace = GizmoSpace::World;  // gizmo reference space (world/local)
         NativeGizmoState nativeGizmo;               // overlay-gizmo hover/drag state (mode/space synced from above)
+        SceneEditCameraInput flyInput;              // latest fly-input command state; lookDelta accumulates
+                                                    // until the host drains it each frame
     };
 
     // The payload dragged from an asset tile onto a component picker field.

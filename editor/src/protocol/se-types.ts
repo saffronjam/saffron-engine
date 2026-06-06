@@ -499,6 +499,22 @@ export interface GizmoPointerResult {
   dragging: boolean;
 }
 
+export interface FlyInputParams {
+  active?: boolean;
+  lookDx?: number;
+  lookDy?: number;
+  forward?: boolean;
+  back?: boolean;
+  left?: boolean;
+  right?: boolean;
+  up?: boolean;
+  down?: boolean;
+}
+
+export interface FlyInputResult {
+  active: boolean;
+}
+
 export interface SetProbesParams {
   enabled?: boolean;
 }
@@ -743,6 +759,7 @@ export interface CommandParamsMap {
   "get-gizmo": EmptyParams;
   "set-gizmo": SetGizmoParams;
   "gizmo-pointer": GizmoPointerParams;
+  "fly-input": FlyInputParams;
   "set-probes": SetProbesParams;
   "recapture-probes": EmptyParams;
   "list-probes": EmptyParams;
@@ -819,6 +836,7 @@ export interface CommandResultMap {
   "get-gizmo": GizmoState;
   "set-gizmo": GizmoState;
   "gizmo-pointer": GizmoPointerResult;
+  "fly-input": FlyInputResult;
   "set-probes": SetProbesResult;
   "recapture-probes": RecaptureProbesResult;
   "list-probes": ListProbesResult;

@@ -324,6 +324,13 @@
       "fixture": "gizmo-hover"
     },
     {
+      "name": "fly-input",
+      "params": "FlyInputParams",
+      "result": "FlyInputResult",
+      "status": "typed",
+      "fixture": "fly-idle"
+    },
+    {
       "name": "set-probes",
       "params": "SetProbesParams",
       "result": "SetProbesResult",

@@ -4,9 +4,6 @@ module;
 // `import std`) — consistent with the engine's rendering/scene modules.
 #include <entt/entt.hpp>
 #include <SDL3/SDL.h>
-#include <X11/Xlib.h>
-// Xlib's None macro collides with the scoped-enum None members used below.
-#undef None
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -45,67 +42,7 @@ namespace se
         se::SceneEditContext* editor = nullptr;
         se::ControlContext* control = nullptr;
         se::AssetServer assets;
-        bool flyActive = false;          // RMB-fly: focus taken, keyboard grabbed, pointer locked
-        glm::vec2 flyLookDelta{ 0.0f };  // accumulated xrel/yrel, drained each onUpdate
     };
-
-    // The X11 display/window behind the SDL window, plus the parent it was reparented
-    // into. embedded is false when running standalone (parent is the root window).
-    struct X11WindowInfo
-    {
-        Display* display = nullptr;
-        ::Window window = 0;
-        ::Window parent = 0;
-        bool embedded = false;
-    };
-
-    auto x11WindowInfo(SDL_Window* window) -> X11WindowInfo
-    {
-        X11WindowInfo info;
-        SDL_PropertiesID props = SDL_GetWindowProperties(window);
-        info.display =
-            static_cast<Display*>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
-        info.window = static_cast<::Window>(SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
-        if (info.display == nullptr || info.window == 0)
-        {
-            return info;
-        }
-        ::Window root = 0;
-        ::Window* children = nullptr;
-        unsigned int childCount = 0;
-        if (XQueryTree(info.display, info.window, &root, &info.parent, &children, &childCount) != 0)
-        {
-            if (children != nullptr)
-            {
-                XFree(children);
-            }
-            info.embedded = info.parent != 0 && info.parent != root;
-        }
-        return info;
-    }
-
-    // Release the RMB-fly grabs + pointer lock, clear accumulated look, and hand the
-    // X11 input focus back to the Tauri parent. Idempotent (safe when not flying) —
-    // used on RMB-up, focus loss, ESC, and teardown.
-    void endSceneEditFly(HostState& state, SDL_Window* window)
-    {
-        if (!state.flyActive)
-        {
-            return;
-        }
-        state.flyActive = false;
-        state.flyLookDelta = glm::vec2{ 0.0f };
-        SDL_SetWindowRelativeMouseMode(window, false);
-        SDL_SetWindowMouseGrab(window, false);
-        SDL_SetWindowKeyboardGrab(window, false);
-        SDL_ShowCursor();
-        const X11WindowInfo x11 = x11WindowInfo(window);
-        if (x11.embedded)
-        {
-            XSetInputFocus(x11.display, x11.parent, RevertToParent, CurrentTime);
-            XFlush(x11.display);
-        }
-    }
 
     enum class BillboardKind
     {
@@ -115,9 +52,9 @@ namespace se
         Camera,
     };
 
-    // The overlay-gizmo + billboard geometry builders + the SDL pointer handler. These
-    // touch Rendering (OverlayVertex / submitOverlay / Renderer) + Assets (pickEntity) +
-    // SDL, so they stay in this TU; the pure-math hit-test/drag live in Saffron.SceneEdit.
+    // The overlay-gizmo + billboard geometry builders. These touch Rendering
+    // (OverlayVertex / submitOverlay / Renderer), so they stay in this TU; the
+    // pure-math hit-test/drag live in Saffron.SceneEdit.
 
     void addTriangle(std::vector<se::OverlayVertex>& vertices, glm::vec2 a, glm::vec2 b, glm::vec2 c, glm::vec4 color)
     {
@@ -381,43 +318,6 @@ namespace se
             });
     }
 
-    auto pickSceneEditBillboard(se::SceneEditContext& editor, const se::CameraView& cam, se::u32 width, se::u32 height,
-                                glm::vec2 mouse) -> se::Entity
-    {
-        if (width == 0 || height == 0)
-        {
-            return se::Entity{ entt::null };
-        }
-        constexpr se::f32 half = 14.0f;
-        se::Entity hit{ entt::null };
-        se::f32 best = half;
-        se::forEach<se::TransformComponent>(editor.scene,
-                                            [&](se::Entity e, se::TransformComponent&)
-                                            {
-                                                if (billboardKind(editor.scene, e) == BillboardKind::None)
-                                                {
-                                                    return;
-                                                }
-                                                const se::GizmoProjection p = se::viewportProject(
-                                                    cam, width, height, se::worldTranslation(editor.scene, e));
-                                                if (!p.visible)
-                                                {
-                                                    return;
-                                                }
-                                                const glm::vec2 d = glm::abs(mouse - p.pixel);
-                                                if (d.x <= half && d.y <= half)
-                                                {
-                                                    const se::f32 dist = glm::length(mouse - p.pixel);
-                                                    if (dist <= best)
-                                                    {
-                                                        best = dist;
-                                                        hit = e;
-                                                    }
-                                                }
-                                            });
-        return hit;
-    }
-
     // Builds the combined overlay (billboards first, gizmo on top) + submits it to the renderer.
     void submitNativeGizmo(se::SceneEditContext& editor, se::Renderer& renderer, const se::CameraView& cam,
                            se::u32 width, se::u32 height)
@@ -428,62 +328,6 @@ namespace se
         se::submitOverlay(renderer, std::move(vertices));
     }
 
-    // SDL pointer → overlay-gizmo hover/drag, or (on a miss) a mesh ray-pick that updates
-    // the selection. Wired to the window event sinks under the native viewport host.
-    auto handleNativeGizmoPointer(se::SceneEditContext& editor, se::AssetServer& assets, se::Renderer& renderer,
-                                  const se::CameraView& cam, const SDL_Event& event) -> bool
-    {
-        if (renderer.window == nullptr || renderer.window->width == 0 || renderer.window->height == 0)
-        {
-            return false;
-        }
-        se::NativeGizmoState& gizmo = editor.nativeGizmo;
-        const se::u32 width = renderer.window->width;
-        const se::u32 height = renderer.window->height;
-        if (event.type == SDL_EVENT_MOUSE_MOTION)
-        {
-            const glm::vec2 mouse{ event.motion.x, event.motion.y };
-            if (gizmo.dragging)
-            {
-                se::applyNativeGizmoDrag(editor, cam, width, height, mouse);
-                return true;
-            }
-            gizmo.hovered = se::hitNativeGizmo(editor, cam, width, height, mouse);
-            return gizmo.hovered != se::NativeGizmoHandle::None;
-        }
-        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
-        {
-            const glm::vec2 mouse{ event.button.x, event.button.y };
-            gizmo.hovered = se::hitNativeGizmo(editor, cam, width, height, mouse);
-            if (gizmo.hovered != se::NativeGizmoHandle::None)
-            {
-                gizmo.active = gizmo.hovered;
-                gizmo.dragging = true;
-                gizmo.startMouse = mouse;
-                gizmo.target = editor.selected;
-                se::snapshotNativeGizmoStart(editor, editor.selected);
-                return true;
-            }
-            const se::Entity billboard = pickSceneEditBillboard(editor, cam, width, height, mouse);
-            if (billboard.handle != entt::null)
-            {
-                se::setSelection(editor, billboard);
-                return true;
-            }
-            const glm::vec2 ndc{ mouse.x / static_cast<se::f32>(width) * 2.0f - 1.0f,
-                                 mouse.y / static_cast<se::f32>(height) * 2.0f - 1.0f };
-            se::setSelection(editor, se::pickEntity(editor.scene, assets, renderer, cam, ndc));
-            return true;
-        }
-        if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT)
-        {
-            gizmo.dragging = false;
-            gizmo.active = se::NativeGizmoHandle::None;
-            gizmo.target = se::Entity{ entt::null };
-            return true;
-        }
-        return false;
-    }
 }
 
 export namespace se
@@ -509,8 +353,14 @@ export namespace se
             state->control = se::newControlContext();
             state->assets = se::newAssetServer(se::assetPath("assets"));
             // The editor is the headless native-viewport host: always present-only (no engine
-            // panels), reparented under the Tauri window and driven over the control plane.
+            // panels), driven over the control plane.
             se::setPresentViewportOnly(app.renderer, true);
+            // The editor sets SAFFRON_VIEWPORT_SHM: frames publish into shared memory for
+            // its compositor-side presenter instead of presenting to the (hidden) swapchain.
+            if (const char* shm = std::getenv("SAFFRON_VIEWPORT_SHM"); shm != nullptr && shm[0] != '\0')
+            {
+                se::enableViewportShmPublish(app.renderer, shm);
+            }
 
             // The registry exists for its JSON serde (scene save/load + control plane); the
             // present-only host renders no inspector, so no draw lambdas / thumbnails.
@@ -602,58 +452,6 @@ export namespace se
                 se::setSelection(*state->editor, renderable);
             }
 
-            // Raw SDL input. Mouse events reach the reparented child by cursor position
-            // (overlay-gizmo hover/drag + mesh ray-pick on LMB); keyboard does not, because
-            // focus stays on the Tauri webview. So while RMB is held we take the X11 input
-            // focus, grab the keyboard, and lock the pointer (mouse grab + relative mode),
-            // releasing everything on RMB-up or focus loss. Gizmo/pick is suppressed while
-            // flying.
-            app.window.eventSinks.push_back(
-                [state, &app](const SDL_Event& event)
-                {
-                    SDL_Window* win = app.window.handle;
-                    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT)
-                    {
-                        state->flyActive = true;
-                        state->flyLookDelta = glm::vec2{ 0.0f };
-                        // A reparented X11 child never holds input focus (it stays on the
-                        // Tauri toplevel), and SDL only applies grabs and routes relative
-                        // motion to a focused window — take the focus for the duration of the
-                        // fly. The grabs + pointer lock are asserted in onUpdate, once SDL has
-                        // processed the focus change.
-                        const X11WindowInfo x11 = x11WindowInfo(win);
-                        if (x11.embedded)
-                        {
-                            XSetInputFocus(x11.display, x11.window, RevertToParent, CurrentTime);
-                            XFlush(x11.display);
-                        }
-                        return;
-                    }
-                    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_RIGHT)
-                    {
-                        endSceneEditFly(*state, win);
-                        return;
-                    }
-                    if (event.type == SDL_EVENT_MOUSE_MOTION && state->flyActive)
-                    {
-                        state->flyLookDelta.x += event.motion.xrel;
-                        state->flyLookDelta.y += event.motion.yrel;
-                        return;
-                    }
-                    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST || event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE)
-                    {
-                        endSceneEditFly(*state, win);
-                        return;
-                    }
-                    if (!state->flyActive)
-                    {
-                        se::syncNativeGizmo(*state->editor);
-                        const se::CameraView cam = se::sceneEditCameraView(state->editor->camera);
-                        static_cast<void>(
-                            handleNativeGizmoPointer(*state->editor, state->assets, app.renderer, cam, event));
-                    }
-                });
-
             se::Layer layer;
             layer.name = "HostLayer";
             layer.onUpdate = [state, &app](se::TimeSpan dt)
@@ -669,46 +467,12 @@ export namespace se
                     se::stepNativeGizmoDrag(*state->editor, cam, se::viewportWidth(app.renderer),
                                             se::viewportHeight(app.renderer), dt.seconds);
                 }
-                // Fly-cam: drive the editor eye from raw SDL input while RMB is held.
-                se::SceneEditCameraInput input;
-                input.active = state->flyActive;
-                if (state->flyActive)
-                {
-                    // (Re)assert the grabs + pointer lock each frame: SDL only engages
-                    // relative mouse once it has processed the focus change taken on
-                    // RMB-down, which lands a frame later for a reparented child. All are
-                    // idempotent. SDL_HideCursor covers compositors that show the system
-                    // cursor under relative mode.
-                    SDL_Window* win = app.window.handle;
-                    SDL_SetWindowKeyboardGrab(win, true);
-                    SDL_SetWindowMouseGrab(win, true);
-                    SDL_SetWindowRelativeMouseMode(win, true);
-                    SDL_HideCursor();
-
-                    input.lookDelta = state->flyLookDelta;
-                    const bool* keys = SDL_GetKeyboardState(nullptr);
-                    input.forward = keys[SDL_SCANCODE_W];
-                    input.back = keys[SDL_SCANCODE_S];
-                    input.left = keys[SDL_SCANCODE_A];
-                    input.right = keys[SDL_SCANCODE_D];
-                    input.up = keys[SDL_SCANCODE_SPACE];
-                    input.down = keys[SDL_SCANCODE_LSHIFT];
-                }
+                // Fly-cam: the editor streams pointer-lock input over the control plane
+                // (fly-input command). Drain the accumulated look delta each frame so a
+                // burst of samples between frames is not lost.
+                const se::SceneEditCameraInput input = state->editor->flyInput;
+                state->editor->flyInput.lookDelta = glm::vec2{ 0.0f };
                 se::updateSceneEditCamera(state->editor->camera, input, dt.seconds);
-                state->flyLookDelta = glm::vec2{ 0.0f };
-
-                if (state->flyActive)
-                {
-                    // Pin the cursor to the window center so it cannot escape the viewport.
-                    // Relative mode reports raw deltas and ignores this warp, so it adds no
-                    // drift; it covers compositors (XWayland) where relative mode does not
-                    // freeze the OS pointer.
-                    SDL_Window* win = app.window.handle;
-                    int w = 0;
-                    int h = 0;
-                    SDL_GetWindowSize(win, &w, &h);
-                    SDL_WarpMouseInWindow(win, static_cast<f32>(w) * 0.5f, static_cast<f32>(h) * 0.5f);
-                }
             };
             // Present-only host: the editor is the headless native-viewport host the Tauri
             // app spawns + reparents. There are no engine panels — the scene renders through
@@ -732,21 +496,12 @@ export namespace se
             se::attachLayer(app, std::move(layer));
 
             app.window.onKeyPressed.subscribe(
-                [state, &app](se::i32 key, bool isRepeat)
+                [&app](se::i32 key, bool isRepeat)
                 {
                     static_cast<void>(isRepeat);
                     if (key == KeyEscape)
                     {
-                        // While flying, ESC ends fly (releasing the grab) rather than
-                        // quitting the host; otherwise it closes the standalone window.
-                        if (state->flyActive)
-                        {
-                            endSceneEditFly(*state, app.window.handle);
-                        }
-                        else
-                        {
-                            app.window.shouldClose = true;
-                        }
+                        app.window.shouldClose = true;
                     }
                     return false;
                 });
@@ -754,7 +509,7 @@ export namespace se
 
         config.onExit = [state](se::App& app)
         {
-            endSceneEditFly(*state, app.window.handle);
+            static_cast<void>(app);
             if (state->control != nullptr)
             {
                 se::destroyControlContext(state->control);

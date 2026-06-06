@@ -271,6 +271,12 @@ const commands: CommandDef[] = [
     summary: "drive gizmo pointer",
   },
   {
+    name: "fly-input",
+    params: "FlyInputParams",
+    result: "FlyInputResult",
+    summary: "stream editor fly-cam input",
+  },
+  {
     name: "set-probes",
     params: "SetProbesParams",
     result: "SetProbesResult",
@@ -389,6 +395,7 @@ const commandFixtures = new Map<string, string>([
   ["get-gizmo", "empty"],
   ["set-gizmo", "gizmo-rotate-local"],
   ["gizmo-pointer", "gizmo-hover"],
+  ["fly-input", "fly-idle"],
   ["set-probes", "toggle-on"],
   ["recapture-probes", "empty"],
   ["list-probes", "empty"],

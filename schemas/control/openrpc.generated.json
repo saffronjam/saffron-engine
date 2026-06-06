@@ -834,6 +834,24 @@
       }
     },
     {
+      "name": "fly-input",
+      "summary": "stream editor fly-cam input",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/FlyInputParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FlyInputResult"
+        }
+      }
+    },
+    {
       "name": "set-probes",
       "summary": "toggle reflection-probe sampling",
       "params": [
@@ -1946,6 +1964,52 @@
       },
       "EnvironmentDto": {
         "$ref": "#/components/schemas/Environment"
+      },
+      "FlyInputParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "lookDx": {
+            "type": "number"
+          },
+          "lookDy": {
+            "type": "number"
+          },
+          "forward": {
+            "type": "boolean"
+          },
+          "back": {
+            "type": "boolean"
+          },
+          "left": {
+            "type": "boolean"
+          },
+          "right": {
+            "type": "boolean"
+          },
+          "up": {
+            "type": "boolean"
+          },
+          "down": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "FlyInputResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "active"
+        ]
       },
       "GizmoPointerParams": {
         "type": "object",

@@ -1045,6 +1045,28 @@ namespace se
                 return GizmoPointerResult{ handleName, gizmo.dragging };
             });
 
+        registerCommand<FlyInputParams, FlyInputResult>(
+            reg, "fly-input",
+            "fly-input {active, lookDx, lookDy, forward, back, left, right, up, down} — stream editor "
+            "fly-cam input (look deltas in pixels accumulate until the next frame)",
+            [](EngineContext& ctx, const FlyInputParams& params) -> Result<FlyInputResult>
+            {
+                SceneEditCameraInput& fly = ctx.sceneEdit.flyInput;
+                fly.active = params.active.value_or(false);
+                fly.lookDelta += glm::vec2{ params.lookDx.value_or(0.0f), params.lookDy.value_or(0.0f) };
+                fly.forward = params.forward.value_or(false);
+                fly.back = params.back.value_or(false);
+                fly.left = params.left.value_or(false);
+                fly.right = params.right.value_or(false);
+                fly.up = params.up.value_or(false);
+                fly.down = params.down.value_or(false);
+                if (!fly.active)
+                {
+                    fly.lookDelta = glm::vec2{ 0.0f };
+                }
+                return FlyInputResult{ fly.active };
+            });
+
         registerCommand<SetProbesParams, SetProbesResult>(
             reg, "set-probes", "set-probes {0|1} — toggle reflection-probe specular sampling",
             [](EngineContext& ctx, const SetProbesParams& params) -> Result<SetProbesResult>
