@@ -52,6 +52,7 @@ pub struct ViewportShared {
     pos: AtomicU64,    // packed logical (x << 32 | y), relative to the webview
     size: AtomicU64,   // packed logical (w << 32 | h)
     offset: AtomicU64, // packed logical origin of the webview within the toplevel surface
+    window: AtomicU64, // packed logical toplevel size (the backdrop stretches to it)
     hidden: AtomicBool,
 }
 
@@ -232,10 +233,12 @@ pub fn install(
         Err(_) => eprintln!("[viewport] webview is not a webkit2gtk::WebView; transparency may not apply"),
     }
 
-    // A FULLY transparent toplevel gets culled by the compositor, which starves GTK of
-    // frame callbacks and freezes its paint loop — and an unfrozen parent commit is
-    // exactly what adopts the subsurface below. Paint one near-invisible dot so the
-    // window is always "visible" to the compositor.
+    // The opaque backdrop lives BELOW the toplevel as its own subsurface (see run()) —
+    // painting under the webview from GTK does not survive WebKit's GL blit, which
+    // replaces rather than blends the pixels beneath its allocation. The toplevel still
+    // paints one near-invisible dot so the compositor never culls it as fully
+    // transparent (which would starve GTK of frame callbacks and freeze the paint loop
+    // the subsurface adoption depends on).
     gtk_window.connect_draw(|_, context| {
         context.set_source_rgba(0.0, 0.0, 0.0, 0.02);
         context.rectangle(0.0, 0.0, 2.0, 2.0);
@@ -257,6 +260,10 @@ pub fn install(
                 y = window_alloc.y() + ty;
             }
             shared.offset.store(pack_pair(x, y), Ordering::Relaxed);
+            shared.window.store(
+                pack_pair(window_alloc.x() + window_alloc.width(), window_alloc.y() + window_alloc.height()),
+                Ordering::Relaxed,
+            );
             // Subsurface position is double-buffered on the parent: nudge a parent commit.
             gtk_window.queue_draw();
         })
@@ -356,12 +363,42 @@ fn run(
     subsurface.place_below(&parent);
     subsurface.set_position(0, 0);
     let viewport = viewporter.get_viewport(&surface, &qh, ());
+
+    // Opaque theme backdrop below the viewport subsurface: one dark pixel stretched to
+    // the whole window. Every translucent or unpainted pixel of the (transparent) page
+    // resolves against it instead of the desktop — hairline seams between panels and the
+    // repaint-lag strip during interactive resizes render as they would in an opaque
+    // app. Painting this from GTK does not work: WebKit's GL blit replaces the pixels
+    // beneath its allocation rather than blending over them.
+    let backdrop_surface = compositor.create_surface(&qh, ());
+    let backdrop_sub = subcompositor.get_subsurface(&backdrop_surface, &parent, &qh, ());
+    backdrop_sub.set_desync();
+    backdrop_sub.place_below(&surface);
+    backdrop_sub.set_position(0, 0);
+    let backdrop_viewport = viewporter.get_viewport(&backdrop_surface, &qh, ());
+    let _backdrop_fd;
+    let _backdrop_buffer;
+    match backdrop_pixel_fd() {
+        Some(fd) => {
+            let pool: WlShmPool = wl_shm.create_pool(fd.as_fd(), 4, &qh, ());
+            let buffer = pool.create_buffer(0, 1, 1, 4, wl_shm::Format::Argb8888, &qh, ());
+            backdrop_surface.attach(Some(&buffer), 0, 0);
+            backdrop_surface.damage(0, 0, i32::MAX, i32::MAX);
+            _backdrop_fd = Some(fd);
+            _backdrop_buffer = Some(buffer);
+        }
+        None => {
+            eprintln!("[viewport] backdrop memfd failed; seams may show the desktop");
+            _backdrop_fd = None;
+            _backdrop_buffer = None;
+        }
+    }
     let _ = conn.flush();
 
     // Map the engine's segment (retry until the engine creates it) + keep an fd for the pool.
     let cname = CString::new(shm_name.clone()).map_err(|_| "bad shm name".to_string())?;
     let mut attempts = 0u32;
-    let (pool_fd, base, total) = loop {
+    let (mut pool_fd, mut base, mut total, mut seg_ino) = loop {
         if let Some(mapping) = open_shm(&cname) {
             break mapping;
         }
@@ -372,10 +409,11 @@ fn run(
         }
         thread::sleep(Duration::from_millis(100));
     };
-    let pool: WlShmPool = wl_shm.create_pool(pool_fd.as_fd(), total as i32, &qh, ());
+    let mut pool: WlShmPool = wl_shm.create_pool(pool_fd.as_fd(), total as i32, &qh, ());
     eprintln!("[viewport] wayland subsurface viewport up ({total} byte pool)");
 
-    let header = base as *const u32;
+    let mut header = base as *const u32;
+    let mut last_segment_check = std::time::Instant::now();
     let mut buffers: Vec<WlBuffer> = Vec::new();
     let mut buffer_dims = (0u32, 0u32);
     let mut last_seq = 0u32;
@@ -385,11 +423,50 @@ fn run(
     let mut last_report = std::time::Instant::now();
     let mut first_commit = true;
     let mut parked = false;
+    let mut buffer_attached = false;
+    let mut applied_window = 0u64;
     let mut frame_sent_at = std::time::Instant::now();
     let mut last_commit_at = std::time::Instant::now() - Duration::from_secs(1);
 
     loop {
         let _ = queue.dispatch_pending(&mut state);
+
+        // The engine recreates the segment when a frame outgrows the slot capacity (and a
+        // restarted engine makes a fresh one): same name, new inode. Remap and rebuild
+        // the pool + buffers, or this loop keeps reading the orphaned old mapping forever.
+        if last_segment_check.elapsed() >= Duration::from_millis(250) {
+            last_segment_check = std::time::Instant::now();
+            if let Some((ino, size)) = stat_shm(&cname) {
+                if ino != seg_ino || size != total {
+                    if let Some(mapping) = open_shm(&cname) {
+                        for buffer in buffers.drain(..) {
+                            buffer.destroy();
+                        }
+                        pool.destroy();
+                        unsafe { libc::munmap(base as *mut _, total) };
+                        (pool_fd, base, total, seg_ino) = mapping;
+                        header = base as *const u32;
+                        pool = wl_shm.create_pool(pool_fd.as_fd(), total as i32, &qh, ());
+                        buffer_dims = (0, 0);
+                        last_seq = 0;
+                        buffer_attached = false;
+                        eprintln!("[viewport] shm segment remapped ({total} byte pool)");
+                    }
+                }
+            }
+        }
+
+        // Stretch the backdrop to the toplevel size (applies the initial attach too).
+        let packed_window = shared.window.load(Ordering::Relaxed);
+        if packed_window != applied_window && packed_window != 0 {
+            let (w, h) = unpack_pair(packed_window);
+            if w > 0 && h > 0 {
+                backdrop_viewport.set_destination(w, h);
+                backdrop_surface.commit();
+                let _ = conn.flush();
+                applied_window = packed_window;
+            }
+        }
 
         // Parked (a modal or another tab owns the region): detach the buffer so the
         // subsurface vanishes; the webview DOM paints into the hole. Re-attach below
@@ -400,6 +477,7 @@ fn run(
                 surface.commit();
                 let _ = conn.flush();
                 parked = true;
+                buffer_attached = false;
                 state.frame_pending = false;
             }
             thread::sleep(Duration::from_millis(20));
@@ -412,6 +490,41 @@ fn run(
 
         let magic = unsafe { ptr::read_volatile(header) };
         let seq = unsafe { ptr::read_volatile(header.add(3)) };
+
+        // Geometry first, decoupled from frame arrival: position/destination changes apply
+        // to the already-attached buffer immediately (the old frame stretches to the new
+        // rect), so the subsurface stays glued to the panel during a dock drag even while
+        // the engine is still rendering at the old size.
+        let mut geometry_changed = false;
+        let packed = shared.size.load(Ordering::Relaxed);
+        if packed != applied_size && packed != 0 {
+            let (w, h) = unpack_pair(packed);
+            if w > 0 && h > 0 {
+                viewport.set_destination(w, h);
+                applied_size = packed;
+                geometry_changed = true;
+            }
+        }
+        let packed_pos = shared.pos.load(Ordering::Relaxed);
+        let packed_offset = shared.offset.load(Ordering::Relaxed);
+        let combined = {
+            let (x, y) = unpack_pair(packed_pos);
+            let (ox, oy) = unpack_pair(packed_offset);
+            pack_pair(x + ox, y + oy)
+        };
+        if combined != applied_pos {
+            let (x, y) = unpack_pair(combined);
+            // Applied on the parent's next commit; the bounds command queue_draws one.
+            subsurface.set_position(x, y);
+            applied_pos = combined;
+            geometry_changed = true;
+        }
+        // Commit geometry-only changes when a buffer is attached; otherwise the pending
+        // state simply rides along with the next frame commit.
+        if geometry_changed && buffer_attached {
+            surface.commit();
+            let _ = conn.flush();
+        }
 
         // Pace on the compositor's frame callback when it flows (= the monitor's refresh).
         // The callback only flows once the subsurface is actually presented, which needs a
@@ -473,29 +586,6 @@ fn run(
         surface.attach(Some(buffer), 0, 0);
         surface.damage(0, 0, i32::MAX, i32::MAX);
 
-        let packed = shared.size.load(Ordering::Relaxed);
-        if packed != applied_size && packed != 0 {
-            let (w, h) = unpack_pair(packed);
-            if w > 0 && h > 0 {
-                viewport.set_destination(w, h);
-                applied_size = packed;
-            }
-        }
-
-        let packed_pos = shared.pos.load(Ordering::Relaxed);
-        let packed_offset = shared.offset.load(Ordering::Relaxed);
-        let combined = {
-            let (x, y) = unpack_pair(packed_pos);
-            let (ox, oy) = unpack_pair(packed_offset);
-            pack_pair(x + ox, y + oy)
-        };
-        if combined != applied_pos {
-            let (x, y) = unpack_pair(combined);
-            // Applied on the parent's next commit; the offset tracker queue_draws.
-            subsurface.set_position(x, y);
-            applied_pos = combined;
-        }
-
         state.frame_pending = true;
         frame_sent_at = std::time::Instant::now();
         surface.frame(&qh, ());
@@ -508,6 +598,7 @@ fn run(
         let _ = conn.flush();
         last_commit_at = std::time::Instant::now();
         last_seq = seq;
+        buffer_attached = true;
         if first_commit {
             eprintln!("[viewport] first subsurface commit ({}x{} buffer)", width, height);
             first_commit = false;
@@ -542,7 +633,31 @@ fn run(
     }
 }
 
-fn open_shm(name: &std::ffi::CStr) -> Option<(OwnedFd, *const u8, usize)> {
+/// One ARGB pixel of the theme background (`--background`, oklch(0.145 0 0) = #0a0a0a)
+/// in an anonymous shm fd — the backdrop buffer wp_viewport stretches over the window.
+fn backdrop_pixel_fd() -> Option<OwnedFd> {
+    unsafe {
+        let fd = libc::memfd_create(c"saffron-backdrop".as_ptr(), libc::MFD_CLOEXEC);
+        if fd < 0 {
+            return None;
+        }
+        if libc::ftruncate(fd, 4) != 0 {
+            libc::close(fd);
+            return None;
+        }
+        let base = libc::mmap(ptr::null_mut(), 4, libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
+        if base == libc::MAP_FAILED {
+            libc::close(fd);
+            return None;
+        }
+        // ARGB8888 little-endian byte order: B, G, R, A.
+        (base as *mut u8).copy_from([0x0a, 0x0a, 0x0a, 0xff].as_ptr(), 4);
+        libc::munmap(base, 4);
+        Some(OwnedFd::from_raw_fd(fd))
+    }
+}
+
+fn open_shm(name: &std::ffi::CStr) -> Option<(OwnedFd, *const u8, usize, u64)> {
     unsafe {
         let fd = libc::shm_open(name.as_ptr(), libc::O_RDWR, 0);
         if fd < 0 {
@@ -559,6 +674,21 @@ fn open_shm(name: &std::ffi::CStr) -> Option<(OwnedFd, *const u8, usize)> {
             libc::close(fd);
             return None;
         }
-        Some((OwnedFd::from_raw_fd(fd), base as *const u8, size))
+        Some((OwnedFd::from_raw_fd(fd), base as *const u8, size, st.st_ino as u64))
+    }
+}
+
+/// Inode + size of the segment currently behind `name` — cheap probe to detect the
+/// engine recreating it (bigger frames, engine restart).
+fn stat_shm(name: &std::ffi::CStr) -> Option<(u64, usize)> {
+    unsafe {
+        let fd = libc::shm_open(name.as_ptr(), libc::O_RDONLY, 0);
+        if fd < 0 {
+            return None;
+        }
+        let mut st: libc::stat = std::mem::zeroed();
+        let ok = libc::fstat(fd, &mut st) == 0;
+        libc::close(fd);
+        if ok { Some((st.st_ino as u64, st.st_size as usize)) } else { None }
     }
 }

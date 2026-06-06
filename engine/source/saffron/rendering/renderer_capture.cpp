@@ -13,6 +13,7 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -211,11 +212,13 @@ namespace se
             return;
         }
 
-        // Grow-only segment: header + a fixed-capacity ring. Capacity follows the largest
-        // frame seen, so the reader's mapping stays valid across smaller resizes.
+        // Grow-only segment: header + a fixed-capacity ring. Capacity is floored at 4K so
+        // ordinary resizes never outgrow it (the reader must remap when the segment is
+        // recreated; shm pages are sparse, so unused capacity costs nothing).
         if (shm.fd < 0 || pixelBytes > shm.slotCapacity)
         {
-            const std::size_t capacity = pixelBytes;
+            constexpr std::size_t MinSlotCapacity = std::size_t{ 3840 } * 2160 * 4;
+            const std::size_t capacity = std::max(pixelBytes, MinSlotCapacity);
             const std::size_t totalBytes = ShmHeaderBytes + static_cast<std::size_t>(ShmRingSlots) * capacity;
             if (shm.base != nullptr)
             {

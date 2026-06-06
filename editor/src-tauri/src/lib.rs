@@ -278,6 +278,7 @@ fn set_viewport_bounds(
     window: tauri::WebviewWindow,
     state: State<'_, EditorState>,
     bounds: ViewportBounds,
+    resize_engine: bool,
 ) -> Result<(), String> {
     state.viewport.set_bounds(
         bounds.x.round() as i32,
@@ -292,20 +293,35 @@ fn set_viewport_bounds(
             gtk_window.queue_draw();
         }
     });
-    // The engine renders the viewport at device pixels; ignore failures while it boots.
-    let width = ((bounds.width * bounds.scale).round() as i64).max(1);
-    let height = ((bounds.height * bounds.scale).round() as i64).max(1);
-    let _ = control_request_with_params(
-        &state.socket_path,
-        "set-viewport-size",
-        json!({ "width": width, "height": height }),
-    );
+    // Resizing the engine's render target recreates the offscreen chain (expensive), so
+    // only the settled (debounced) bounds do it — live drag ticks stretch the current
+    // frame via the subsurface instead. Ignore failures while the engine boots.
+    if resize_engine {
+        let width = ((bounds.width * bounds.scale).round() as i64).max(1);
+        let height = ((bounds.height * bounds.scale).round() as i64).max(1);
+        let _ = control_request_with_params(
+            &state.socket_path,
+            "set-viewport-size",
+            json!({ "width": width, "height": height }),
+        );
+    }
     Ok(())
 }
 
 #[tauri::command]
-fn set_viewport_hidden(state: State<'_, EditorState>, hidden: bool) -> Result<(), String> {
+fn set_viewport_hidden(
+    window: tauri::WebviewWindow,
+    state: State<'_, EditorState>,
+    hidden: bool,
+) -> Result<(), String> {
     state.viewport.set_hidden(hidden);
+    // The opaque underlay punches its hole per the hidden flag; repaint it.
+    let nudge = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        if let Ok(gtk_window) = nudge.gtk_window() {
+            gtk_window.queue_draw();
+        }
+    });
     Ok(())
 }
 

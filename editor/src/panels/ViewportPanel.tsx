@@ -12,13 +12,14 @@ import { LoadingOverlay } from "../app/LoadingOverlay";
 import { onLayoutSettled } from "../app/layoutBus";
 
 /// Resize-end commit debounce: after the last layout/resize change settles, send one
-/// final exact bounds so the subsurface lands precisely even if the live throttle
-/// dropped the last frame of a drag.
+/// final exact bounds — this is the tier that also resizes the engine's render target
+/// (expensive offscreen recreation, so never on live drag ticks).
 const RESIZE_END_DEBOUNCE_MS = 150;
 
-/// Live-sync throttle during a drag: the subsurface tracks the host div at most this
-/// often so a fast split-drag does not flood the bridge (it may lag <=1 frame).
-const LIVE_SYNC_THROTTLE_MS = 50;
+/// Live-sync throttle during a drag: the subsurface geometry (position + stretched
+/// destination) tracks the host div at this cadence; the engine keeps rendering at the
+/// old size until the end commit.
+const LIVE_SYNC_THROTTLE_MS = 16;
 
 /// Pointer travel (CSS px) below which a press-release is treated as a click
 /// (ray-pick) rather than a gizmo drag.
@@ -178,7 +179,10 @@ export function ViewportPanel() {
     let lastLiveSent = 0;
     let liveTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const commit = async (force = false): Promise<void> => {
+    // Live tier moves/stretches the subsurface only; the end tier (resizeEngine) also
+    // commits the device-pixel render size so the engine re-renders sharp at the final
+    // rect — once per gesture instead of per drag tick.
+    const commit = async (resizeEngine: boolean, force = false): Promise<void> => {
       if (cancelled) {
         return;
       }
@@ -186,12 +190,12 @@ export function ViewportPanel() {
       if (cancelled || !bounds) {
         return;
       }
-      if (!force && boundsEqual(lastSent, bounds)) {
+      if (!force && !resizeEngine && boundsEqual(lastSent, bounds)) {
         return;
       }
       lastSent = bounds;
       try {
-        await client.setViewportBounds(bounds);
+        await client.setViewportBounds(bounds, resizeEngine);
       } catch {
         // The bridge may be briefly unavailable; the next sync recovers.
       }
@@ -203,7 +207,7 @@ export function ViewportPanel() {
       }
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        void commit(force);
+        void commit(true, force);
       }, RESIZE_END_DEBOUNCE_MS);
     };
 
@@ -212,12 +216,12 @@ export function ViewportPanel() {
       const elapsed = now - lastLiveSent;
       if (elapsed >= LIVE_SYNC_THROTTLE_MS) {
         lastLiveSent = now;
-        void commit();
+        void commit(false);
       } else if (liveTimer === null) {
         liveTimer = setTimeout(() => {
           liveTimer = null;
           lastLiveSent = Date.now();
-          void commit();
+          void commit(false);
         }, LIVE_SYNC_THROTTLE_MS - elapsed);
       }
     };
@@ -227,7 +231,7 @@ export function ViewportPanel() {
       scheduleEndCommit();
     };
 
-    void commit(true);
+    void commit(true, true);
     const observer = new ResizeObserver(onGeometryChange);
     observer.observe(el);
     window.addEventListener("resize", onGeometryChange);

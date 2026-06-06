@@ -394,9 +394,11 @@ export const client = {
   startEngine(): Promise<void> {
     return invoke<void>("start_engine");
   },
-  /// Route the viewport panel's rect to the subsurface presenter + the engine.
-  setViewportBounds(bounds: ViewportBounds): Promise<void> {
-    return invoke<void>("set_viewport_bounds", { bounds });
+  /// Route the viewport panel's rect to the subsurface presenter. `resizeEngine` also
+  /// commits the device-pixel render size to the engine (expensive target recreation) —
+  /// send it on settled bounds, not on live drag ticks.
+  setViewportBounds(bounds: ViewportBounds, resizeEngine: boolean): Promise<void> {
+    return invoke<void>("set_viewport_bounds", { bounds, resizeEngine });
   },
   /// Park/unpark the subsurface (a modal or another tab owns the region).
   setViewportHidden(hidden: boolean): Promise<void> {
