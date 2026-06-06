@@ -562,6 +562,32 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<SetViewportSizeParams>) -> Result<SetViewportSizeParams>
+    {
+        SetViewportSizeParams out;
+
+        {
+            auto value = optionalField(params, "width", 0, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readI32(*value, "width");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.width = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "height", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readI32(*value, "height");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.height = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
     auto parseDto(const Json& params, DtoTag<CreateEntityParams>) -> Result<CreateEntityParams>
     {
         CreateEntityParams out;
@@ -1950,6 +1976,14 @@ namespace se
         out["width"] = value.width;
         out["height"] = value.height;
         out["message"] = value.message;
+        return out;
+    }
+
+    auto dtoToJson(const SetViewportSizeResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["width"] = value.width;
+        out["height"] = value.height;
         return out;
     }
 

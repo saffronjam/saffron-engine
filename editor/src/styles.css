@@ -108,16 +108,19 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    /* Transparent (no bg-background): the viewport panel is a hole down to the
+       engine's wayland subsurface below the window. Every visible region paints
+       its own opaque background (sidebar, panels, topbar, titlebar, footer). */
+    @apply text-foreground;
     font-family: var(--font-sans);
     font-size: 14px;
     -webkit-font-smoothing: antialiased;
   }
 }
 
-/* The viewport host is the native X11 reparent target: a plain positioned
-   layer the engine paints over. It must stay transparent and is not a
-   shadcn/Tailwind concern, so it keeps explicit positioning here. */
+/* The viewport host marks the rect the engine's subsurface is glued to: a plain
+   positioned transparent layer the render shows through. Not a shadcn/Tailwind
+   concern, so it keeps explicit positioning here. */
 .viewport-host {
   position: absolute;
   inset: 0;

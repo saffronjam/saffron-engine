@@ -10,7 +10,9 @@
       #root {
         height: 100%;
         margin: 0;
-        background: #242424;
+        /* Transparent so the viewport panel is a hole down to the engine's subsurface;
+           every opaque surface is painted by the React panels themselves. */
+        background: transparent;
       }
     </style>
   </head>

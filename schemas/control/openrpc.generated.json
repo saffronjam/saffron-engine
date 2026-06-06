@@ -276,6 +276,24 @@
       }
     },
     {
+      "name": "set-viewport-size",
+      "summary": "set the offscreen render size",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetViewportSizeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SetViewportSizeResult"
+        }
+      }
+    },
+    {
       "name": "list-entities",
       "summary": "list all entities",
       "params": [
@@ -3112,6 +3130,35 @@
         },
         "required": [
           "entity"
+        ]
+      },
+      "SetViewportSizeParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          }
+        },
+        "required": []
+      },
+      "SetViewportSizeResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "width",
+          "height"
         ]
       },
       "ThumbnailParams": {

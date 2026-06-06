@@ -42,6 +42,7 @@ namespace se
         se::SceneEditContext* editor = nullptr;
         se::ControlContext* control = nullptr;
         se::AssetServer assets;
+        bool shmPublish = false;  // frames publish to shared memory; the editor owns the render size
     };
 
     enum class BillboardKind
@@ -360,6 +361,7 @@ export namespace se
             if (const char* shm = std::getenv("SAFFRON_VIEWPORT_SHM"); shm != nullptr && shm[0] != '\0')
             {
                 se::enableViewportShmPublish(app.renderer, shm);
+                state->shmPublish = true;
             }
 
             // The registry exists for its JSON serde (scene save/load + control plane); the
@@ -474,23 +476,30 @@ export namespace se
                 state->editor->flyInput.lookDelta = glm::vec2{ 0.0f };
                 se::updateSceneEditCamera(state->editor->camera, input, dt.seconds);
             };
-            // Present-only host: the editor is the headless native-viewport host the Tauri
-            // app spawns + reparents. There are no engine panels — the scene renders through
-            // the editor (fly-cam) camera into the swapchain, with the gizmo handles + entity
-            // billboards drawn by the engine overlay pass. The full editor UI is the React/
-            // Tauri frontend, which drives this host over the control plane.
+            // Headless host: the Tauri editor spawns this process and presents its frames
+            // from shared memory. There are no engine panels — the scene renders through
+            // the editor (fly-cam) camera into the offscreen target, with the gizmo handles
+            // + entity billboards drawn by the engine overlay pass. The full editor UI is
+            // the React/Tauri frontend, which drives this host over the control plane.
             layer.onUi = [state, &app]()
             {
                 // The pickers + serde read the catalog through the scene (a borrowed
                 // pointer, valid only for this frame); also set on the control side.
                 state->editor->scene.catalog = &state->assets.catalog;
-                se::setViewportDesiredSize(app.renderer, app.window.width, app.window.height);
+                // Publish mode: the editor owns the render size (set-viewport-size); the
+                // hidden SDL window's size is meaningless. Present mode tracks the window.
+                if (!state->shmPublish)
+                {
+                    se::setViewportDesiredSize(app.renderer, app.window.width, app.window.height);
+                }
                 se::syncNativeGizmo(*state->editor);
                 se::CameraView cam = se::sceneEditCameraView(state->editor->camera);
-                if (app.window.width > 0 && app.window.height > 0)
+                const se::u32 viewWidth = se::viewportWidth(app.renderer);
+                const se::u32 viewHeight = se::viewportHeight(app.renderer);
+                if (viewWidth > 0 && viewHeight > 0)
                 {
                     se::renderScene(app.renderer, state->editor->scene, state->assets, cam);
-                    se::submitNativeGizmo(*state->editor, app.renderer, cam, app.window.width, app.window.height);
+                    se::submitNativeGizmo(*state->editor, app.renderer, cam, viewWidth, viewHeight);
                 }
             };
             se::attachLayer(app, std::move(layer));

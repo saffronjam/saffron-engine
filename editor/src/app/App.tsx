@@ -176,6 +176,14 @@ export function App() {
     setViewportHidden(true);
   }, [sceneTabActive, setViewportHidden]);
 
+  // The single bridge to the presenter's park state: whatever sets the store flag
+  // (the asset View modal, the asset workspace tab), the subsurface follows — even
+  // while the ViewportPanel itself is unmounted.
+  const viewportHidden = useEditorStore((s) => s.viewportHidden);
+  useEffect(() => {
+    void client.setViewportHidden(viewportHidden).catch(() => {});
+  }, [viewportHidden]);
+
   return (
     <TooltipProvider delayDuration={300}>
       <div

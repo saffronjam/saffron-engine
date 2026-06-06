@@ -119,6 +119,12 @@ const commands: CommandDef[] = [
     result: "ViewportNativeInfoResult",
     summary: "native viewport bridge status",
   },
+  {
+    name: "set-viewport-size",
+    params: "SetViewportSizeParams",
+    result: "SetViewportSizeResult",
+    summary: "set the offscreen render size",
+  },
   { name: "list-entities", params: "EmptyParams", result: "EntityList", summary: "list all entities" },
   {
     name: "list-components",
@@ -384,6 +390,7 @@ const commandFixtures = new Map<string, string>([
   ["set-gizmo", "gizmo-rotate-local"],
   ["gizmo-pointer", "gizmo-hover"],
   ["fly-input", "fly-idle"],
+  ["set-viewport-size", "viewport-size"],
   ["set-probes", "toggle-on"],
   ["recapture-probes", "empty"],
   ["list-probes", "empty"],

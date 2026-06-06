@@ -1,3 +1,4 @@
+use gtk::prelude::WidgetExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
@@ -5,14 +6,25 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, RunEvent, State};
 
+mod wayland_viewport;
+
+/// The NVIDIA Vulkan ICD the toolbox lacks but the host provides; also the marker that
+/// this is an NVIDIA box (the WebKit env workarounds below key off it).
+const NVIDIA_ICD: &str = "/run/host/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json";
+
+fn nvidia_present() -> bool {
+    std::path::Path::new(NVIDIA_ICD).exists() || std::path::Path::new("/sys/module/nvidia").exists()
+}
+
 struct EditorState {
     engine: Mutex<Option<Child>>,
     socket_path: String,
+    viewport: Arc<wayland_viewport::ViewportShared>,
 }
 
 const MAIN_WINDOW_WIDTH: f64 = 1600.0;
@@ -48,6 +60,7 @@ impl Default for EditorState {
         Self {
             engine: Mutex::new(None),
             socket_path: socket_path(),
+            viewport: Arc::default(),
         }
     }
 }
@@ -56,6 +69,11 @@ impl Default for EditorState {
 fn socket_path() -> String {
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     format!("{dir}/saffron-editor-{}.sock", std::process::id())
+}
+
+// Per-PID shm segment the engine publishes viewport frames into; the presenter maps it.
+fn viewport_shm_name() -> String {
+    format!("/saffron-viewport-{}", std::process::id())
 }
 
 fn engine_binary() -> String {
@@ -163,10 +181,25 @@ fn control_request(socket_path: &str, command: &str) -> Result<Value, String> {
 fn spawn_engine(socket_path: &str) -> Result<Child, String> {
     let _ = fs::remove_file(socket_path);
     ensure_app_dirs()?;
-    Command::new(engine_binary())
+    let mut command = Command::new(engine_binary());
+    command
         .env("SAFFRON_EDITOR_NATIVE_VIEWPORT", "1")
         .env("SAFFRON_CONTROL_SOCK", socket_path)
         .env("SAFFRON_APPDATA_DIR", app_data_dir())
+        // The engine publishes frames into shared memory for the subsurface presenter
+        // instead of presenting to its (hidden) swapchain.
+        .env("SAFFRON_VIEWPORT_SHM", viewport_shm_name());
+    // Unthrottled headless publish renders thousands of fps for nothing; cap well above
+    // any display rate. An explicit SAFFRON_MAX_FPS in the environment wins.
+    if std::env::var_os("SAFFRON_MAX_FPS").is_none() {
+        command.env("SAFFRON_MAX_FPS", "500");
+    }
+    // The toolbox ships only Mesa ICD manifests; point Vulkan at the host's NVIDIA ICD
+    // so the engine renders on hardware instead of llvmpipe.
+    if std::env::var_os("VK_ICD_FILENAMES").is_none() && std::path::Path::new(NVIDIA_ICD).exists() {
+        command.env("VK_ICD_FILENAMES", NVIDIA_ICD);
+    }
+    command
         .current_dir(repo_root())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -195,6 +228,8 @@ fn teardown(state: &EditorState) {
         }
     }
     let _ = fs::remove_file(&state.socket_path);
+    // The engine unlinks its shm segment on clean exit; cover the killed case too.
+    let _ = fs::remove_file(format!("/dev/shm{}", viewport_shm_name()));
 }
 
 // ONE generic passthrough: any `se` command reaches the engine with zero Rust changes.
@@ -223,6 +258,54 @@ fn start_engine(state: State<'_, EditorState>) -> Result<(), String> {
         .lock()
         .map_err(|_| "engine lock poisoned".to_string())?
         .replace(child);
+    Ok(())
+}
+
+/// The viewport panel's logical CSS rect within the webview, plus the window scale
+/// factor. The presenter positions the subsurface in logical coordinates; the engine
+/// renders at device pixels.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct ViewportBounds {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    scale: f64,
+}
+
+#[tauri::command]
+fn set_viewport_bounds(
+    window: tauri::WebviewWindow,
+    state: State<'_, EditorState>,
+    bounds: ViewportBounds,
+) -> Result<(), String> {
+    state.viewport.set_bounds(
+        bounds.x.round() as i32,
+        bounds.y.round() as i32,
+        bounds.width.round() as i32,
+        bounds.height.round() as i32,
+    );
+    // The subsurface position is double-buffered on the parent; nudge a parent commit.
+    let nudge = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        if let Ok(gtk_window) = nudge.gtk_window() {
+            gtk_window.queue_draw();
+        }
+    });
+    // The engine renders the viewport at device pixels; ignore failures while it boots.
+    let width = ((bounds.width * bounds.scale).round() as i64).max(1);
+    let height = ((bounds.height * bounds.scale).round() as i64).max(1);
+    let _ = control_request_with_params(
+        &state.socket_path,
+        "set-viewport-size",
+        json!({ "width": width, "height": height }),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn set_viewport_hidden(state: State<'_, EditorState>, hidden: bool) -> Result<(), String> {
+    state.viewport.set_hidden(hidden);
     Ok(())
 }
 
@@ -348,6 +431,26 @@ fn install_stderr_noise_filter() {
 }
 
 pub fn run() {
+    // WebKitGTK's default DMABUF renderer renders NOTHING on NVIDIA Wayland, and the
+    // non-DMABUF fallback loses transparency (an opaque page would hide the subsurface).
+    // Steering WebKit onto Mesa's software EGL keeps a transparent, working webview; the
+    // engine still renders on the hardware ICD. Gated on NVIDIA so AMD/Intel keep the
+    // fast DMABUF path. Explicit values in the environment win.
+    #[cfg(target_os = "linux")]
+    if nvidia_present() {
+        if std::env::var_os("__EGL_VENDOR_LIBRARY_FILENAMES").is_none() {
+            unsafe {
+                std::env::set_var(
+                    "__EGL_VENDOR_LIBRARY_FILENAMES",
+                    "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+                )
+            };
+        }
+        if std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none() {
+            unsafe { std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1") };
+        }
+    }
+
     // WebKitGTK's EGL init on NVIDIA prints Mesa GPU-probe chatter to stderr before
     // falling back cleanly. EGL_LOG_LEVEL gates the "libEGL warning:" lines (respecting
     // an explicit value); the bare Mesa loader lines ("pci id for fd …") have no env
@@ -364,6 +467,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             control,
             start_engine,
+            set_viewport_bounds,
+            set_viewport_hidden,
             quit_engine,
             engine_alive,
             app_data_info,
@@ -373,6 +478,10 @@ pub fn run() {
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 configure_main_window(&window);
+                let shared = Arc::clone(&app.state::<EditorState>().viewport);
+                if let Err(err) = wayland_viewport::install(&window, viewport_shm_name(), shared) {
+                    let _ = app.handle().emit("viewport-error", err);
+                }
             }
             if let Err(err) = auto_start(app.handle()) {
                 let _ = app.handle().emit("viewport-error", err);

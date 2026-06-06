@@ -28,12 +28,15 @@ import type {
   ProjectInfo,
 } from "../protocol";
 
-/// Device-pixel bounds the native viewport window is reparented over.
+/// The viewport panel's logical CSS rect plus the window scale factor. Rust positions
+/// the wayland subsurface in logical coordinates and tells the engine to render at
+/// `width*scale × height*scale` device pixels.
 export interface ViewportBounds {
   x: number;
   y: number;
   width: number;
   height: number;
+  scale: number;
 }
 
 /// Result of a viewport `pick`: the engine tests billboards then mesh AABBs and
@@ -372,9 +375,32 @@ export const client = {
     return call("viewport-native-info");
   },
 
-  // --- engine lifecycle (dedicated Rust commands, NOT the passthrough) ---
+  /// Stream editor fly-cam input (pointer-lock look deltas in pixels + move keys).
+  flyInput(input: {
+    active: boolean;
+    lookDx?: number;
+    lookDy?: number;
+    forward?: boolean;
+    back?: boolean;
+    left?: boolean;
+    right?: boolean;
+    up?: boolean;
+    down?: boolean;
+  }): Promise<{ active: boolean }> {
+    return call("fly-input", input);
+  },
+
+  // --- engine lifecycle + presenter (dedicated Rust commands, NOT the passthrough) ---
   startEngine(): Promise<void> {
     return invoke<void>("start_engine");
+  },
+  /// Route the viewport panel's rect to the subsurface presenter + the engine.
+  setViewportBounds(bounds: ViewportBounds): Promise<void> {
+    return invoke<void>("set_viewport_bounds", { bounds });
+  },
+  /// Park/unpark the subsurface (a modal or another tab owns the region).
+  setViewportHidden(hidden: boolean): Promise<void> {
+    return invoke<void>("set_viewport_hidden", { hidden });
   },
   quitEngine(): Promise<void> {
     return invoke<void>("quit_engine");

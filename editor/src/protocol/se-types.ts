@@ -238,6 +238,16 @@ export interface ViewportNativeInfoResult {
   message: string;
 }
 
+export interface SetViewportSizeParams {
+  width?: number;
+  height?: number;
+}
+
+export interface SetViewportSizeResult {
+  width: number;
+  height: number;
+}
+
 export interface EntityList {
   entities: EntityListEntry[];
 }
@@ -696,6 +706,7 @@ export interface CommandParamsMap {
   "set-skinning": ToggleParams;
   "set-depth-prepass": ToggleParams;
   "viewport-native-info": EmptyParams;
+  "set-viewport-size": SetViewportSizeParams;
   "list-entities": EmptyParams;
   "list-components": EmptyParams;
   "create-entity": CreateEntityParams;
@@ -771,6 +782,7 @@ export interface CommandResultMap {
   "set-skinning": SetSkinningResult;
   "set-depth-prepass": SetDepthPrepassResult;
   "viewport-native-info": ViewportNativeInfoResult;
+  "set-viewport-size": SetViewportSizeResult;
   "list-entities": EntityList;
   "list-components": ComponentList;
   "create-entity": EntityRef;

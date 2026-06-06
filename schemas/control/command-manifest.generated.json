@@ -107,6 +107,13 @@
       "fixture": "empty"
     },
     {
+      "name": "set-viewport-size",
+      "params": "SetViewportSizeParams",
+      "result": "SetViewportSizeResult",
+      "status": "typed",
+      "fixture": "viewport-size"
+    },
+    {
       "name": "list-entities",
       "params": "EmptyParams",
       "result": "EntityList",

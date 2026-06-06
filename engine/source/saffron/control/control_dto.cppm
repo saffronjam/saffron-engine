@@ -256,6 +256,18 @@ export namespace se
         std::string message;
     };
 
+    struct SetViewportSizeParams
+    {
+        std::optional<i32> width;
+        std::optional<i32> height;
+    };
+
+    struct SetViewportSizeResult
+    {
+        i32 width;
+        i32 height;
+    };
+
     struct ProjectInfoDto
     {
         bool loaded;
@@ -775,6 +787,7 @@ export namespace se
     auto dtoToJson(const SetSkinningResult& value) -> Json;
     auto dtoToJson(const SetDepthPrepassResult& value) -> Json;
     auto dtoToJson(const ViewportNativeInfoResult& value) -> Json;
+    auto dtoToJson(const SetViewportSizeResult& value) -> Json;
     auto dtoToJson(const ProjectInfoDto& value) -> Json;
     auto dtoToJson(const ImportModelResult& value) -> Json;
     auto dtoToJson(const ImportTextureResult& value) -> Json;
@@ -819,6 +832,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<Vec4>) -> Result<Vec4>;
     auto parseDto(const Json& params, DtoTag<SetAaParams>) -> Result<SetAaParams>;
     auto parseDto(const Json& params, DtoTag<ToggleParams>) -> Result<ToggleParams>;
+    auto parseDto(const Json& params, DtoTag<SetViewportSizeParams>) -> Result<SetViewportSizeParams>;
     auto parseDto(const Json& params, DtoTag<SetGiParams>) -> Result<SetGiParams>;
     auto parseDto(const Json& params, DtoTag<NewProjectParams>) -> Result<NewProjectParams>;
     auto parseDto(const Json& params, DtoTag<PathParams>) -> Result<PathParams>;
