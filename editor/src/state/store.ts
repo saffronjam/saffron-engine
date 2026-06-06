@@ -41,9 +41,6 @@ export interface EditorState {
   /// the sceneVersion/selectionVersion keying so a scene mutation never collapses
   /// the tree; setEntities prunes ids that vanished from the scene.
   expandedIds: Set<string>;
-  /// The selected non-entity tree row (the pinned Environment node). Never written
-  /// to selectedId, so get-selection/inspect are never handed a non-entity id.
-  selectedSentinel: "environment" | null;
   bottomTab: BottomTab;
   sceneVersion: number;
   selectionVersion: number;
@@ -96,7 +93,6 @@ export interface EditorState {
   selectEntity(id: string): void;
   toggleExpanded(id: string): void;
   setExpanded(id: string, expanded: boolean): void;
-  selectSentinel(sentinel: "environment" | null): void;
   setBottomTab(bottomTab: BottomTab): void;
   /// Engine-authoritative reparent (null detaches to root): optimistically relink the
   /// moved entity's parentId in place — selection untouched — and hold dragActive over
@@ -143,7 +139,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   entities: [],
   selectedId: null,
   expandedIds: new Set<string>(),
-  selectedSentinel: null,
   bottomTab: "inspector",
   sceneVersion: -1,
   selectionVersion: -1,
@@ -187,7 +182,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   // Optimistic local selection: set immediately on a hierarchy click so the row
   // highlights without waiting a poll interval; the reconcile poll confirms via
   // selectionVersion (engine is authoritative if a newer version arrives).
-  selectEntity: (id) => set({ selectedId: id, selectedSentinel: null }),
+  selectEntity: (id) => set({ selectedId: id }),
   toggleExpanded: (id) =>
     set((s) => {
       const expandedIds = new Set(s.expandedIds);
@@ -211,18 +206,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       persistExpanded(expandedIds);
       return { expandedIds };
     }),
-  selectSentinel: (sentinel) =>
-    set((s) => ({
-      selectedSentinel: sentinel,
-      bottomTab: sentinel === "environment" ? "environment" : s.bottomTab,
-    })),
-  setBottomTab: (bottomTab) =>
-    set((s) => ({
-      bottomTab,
-      // Leaving the Environment tab drops the sentinel highlight so the tree and
-      // the tab strip never disagree about what is active.
-      selectedSentinel: bottomTab === "environment" ? s.selectedSentinel : null,
-    })),
+  setBottomTab: (bottomTab) => set({ bottomTab }),
   setParent: async (id, parentId) => {
     const previous = useEditorStore.getState().entities.find((e) => e.id === id)?.parentId;
     useEditorStore.getState().setDragActive(true);
@@ -350,7 +334,6 @@ export const useEditorStore = create<EditorState>((set) => ({
       entities: [],
       selectedId: null,
       expandedIds: new Set<string>(),
-      selectedSentinel: null,
       componentsBySelected: null,
       assets: [],
       assetFolders: [],

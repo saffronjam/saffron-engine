@@ -124,9 +124,8 @@ function clampSidebarWidth(width: number): number {
 /// one node. Keeping every panel in a non-viewport region avoids the native viewport
 /// painting over them (see the file header).
 function LeftBottomTabs() {
-  // Store-controlled so the hierarchy's Environment sentinel row can switch tabs;
-  // manual tab clicks route through the same slice (which also clears the sentinel
-  // highlight when leaving Environment).
+  // Store-controlled so other surfaces can switch tabs (e.g. an inspector deep-link);
+  // manual tab clicks route through the same slice.
   const bottomTab = useEditorStore((s) => s.bottomTab);
   const setBottomTab = useEditorStore((s) => s.setBottomTab);
   const onTabChange = (value: string): void => {

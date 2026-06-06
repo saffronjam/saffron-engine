@@ -1,5 +1,5 @@
-/// The outliner tree: a pinned Environment sentinel row plus the entity forest built
-/// client-side from the flat store slice (`buildTree` over `parentId`). Rows indent by
+/// The outliner tree: the entity forest built client-side from the flat store slice
+/// (`buildTree` over `parentId`). Rows indent by
 /// depth, show a twisty only when they have something to expand (child entities, or —
 /// behind the header toggle — the selected row's read-only component subrows), select
 /// on click, rename inline on double-click, and reparent by dragging one row onto
@@ -11,7 +11,7 @@
 /// indicator — because the reparented X11 viewport child paints over anything floating.
 /// The context menu stays Radix-anchored to the sidebar for the same reason.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Globe } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useEditorStore, buildTree, reanchorPastBones, type TreeNode } from "../state/store";
 import { orderedComponentNames } from "./InspectorPanel";
 import type { EntityListEntry } from "../protocol";
@@ -118,7 +118,6 @@ export function HierarchyTree({ actions }: { actions: TreeActions }) {
 
   return (
     <div className="p-1" role="tree" aria-label="Scene entities">
-      <EnvironmentRow />
       {entities.length === 0 ? (
         <div className="p-2.5 text-center italic text-muted-foreground">No entities</div>
       ) : (
@@ -152,32 +151,6 @@ export function HierarchyTree({ actions }: { actions: TreeActions }) {
         </div>
       ) : null}
     </div>
-  );
-}
-
-/// The pinned Environment sentinel: not an entity, not in buildTree output — it has
-/// no id, cannot be deleted, dragged, or dropped on. Selecting it switches the bottom
-/// tab to the Environment panel; the highlight is gated on the sentinel flag, never
-/// `selectedId`, so `get-selection`/`inspect` are never handed a non-entity id.
-function EnvironmentRow() {
-  const selectedSentinel = useEditorStore((s) => s.selectedSentinel);
-  const selectSentinel = useEditorStore((s) => s.selectSentinel);
-  const active = selectedSentinel === "environment";
-  return (
-    <button
-      type="button"
-      role="treeitem"
-      aria-selected={active}
-      draggable={false}
-      className={cn(
-        "mb-1 flex w-full items-center gap-1.5 truncate rounded-md px-2.5 py-1.5 text-left text-sm",
-        active ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-accent",
-      )}
-      onClick={() => selectSentinel("environment")}
-    >
-      <Globe className="size-3.5 flex-none opacity-70" />
-      Environment
-    </button>
   );
 }
 

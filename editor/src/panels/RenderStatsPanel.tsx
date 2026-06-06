@@ -122,7 +122,6 @@ export function RenderStatsPanel() {
   if (!stats) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PanelHeader />
         <div className="p-3.5 text-center italic text-muted-foreground">
           {ready ? "Waiting for stats…" : "Engine not ready"}
         </div>
@@ -179,7 +178,6 @@ export function RenderStatsPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PanelHeader />
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 p-2.5">
           <section className="flex flex-col gap-1 rounded-md border border-border bg-background px-2.5 py-2">
@@ -209,11 +207,6 @@ export function RenderStatsPanel() {
               }
             />
           </section>
-
-          <p className="px-0.5 text-[10px] italic leading-tight text-muted-foreground">
-            Engine frame and GPU are the renderer's timings. UI poll is the reconcile rate and UI
-            frame is the webview repaint rate — both client-side, independent of the viewport.
-          </p>
 
           <Separator className="my-0.5" />
 
@@ -279,15 +272,6 @@ export function RenderStatsPanel() {
   );
 }
 
-function PanelHeader() {
-  return (
-    <div className="flex h-10 flex-none items-center border-b border-border px-3">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Render Stats
-      </span>
-    </div>
-  );
-}
 
 /// Normalize a rejected control call into a readable message. The Rust passthrough
 /// rejects with the engine's error string (e.g. "ray tracing not supported …").

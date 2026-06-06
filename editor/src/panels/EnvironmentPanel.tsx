@@ -138,7 +138,6 @@ export function EnvironmentPanel() {
   if (!environment) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PanelHeader />
         <div className="p-3.5 text-center italic text-muted-foreground">
           {ready ? "Loading environment…" : "Engine not ready"}
         </div>
@@ -180,7 +179,6 @@ export function EnvironmentPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PanelHeader />
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 p-2.5">
           <Row label="Sky Mode">
@@ -383,12 +381,3 @@ export function EnvironmentPanel() {
   );
 }
 
-function PanelHeader() {
-  return (
-    <div className="flex h-10 flex-none items-center border-b border-border px-3">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Environment
-      </span>
-    </div>
-  );
-}
