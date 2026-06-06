@@ -119,18 +119,6 @@ const commands: CommandDef[] = [
     result: "ViewportNativeInfoResult",
     summary: "native viewport bridge status",
   },
-  {
-    name: "attach-native-viewport",
-    params: "AttachNativeViewportParams",
-    result: "AttachNativeViewportResult",
-    summary: "attach native viewport",
-  },
-  {
-    name: "resize-native-viewport",
-    params: "ResizeNativeViewportParams",
-    result: "ResizeNativeViewportResult",
-    summary: "resize native viewport",
-  },
   { name: "list-entities", params: "EmptyParams", result: "EntityList", summary: "list all entities" },
   {
     name: "list-components",
@@ -415,8 +403,6 @@ const commandFixtures = new Map<string, string>([
 ]);
 
 const commandSkips = new Map<string, string>([
-  ["attach-native-viewport", "requires a real parent native window handle"],
-  ["resize-native-viewport", "mutates the native viewport window"],
   ["import-model", "requires an external model fixture path"],
   ["import-texture", "requires an external texture fixture path"],
   ["create-asset-folder", "mutates the project asset catalog"],
@@ -568,16 +554,15 @@ function cppParseValue(type: string, valueExpr: string, keyExpr: string): string
   }
 }
 
-function cppParseField(def: StructDef, field: Field, index: number): string {
+function cppParseField(field: Field, index: number): string {
   const key = JSON.stringify(field.name);
   const assign = `out.${field.name}`;
-  const positional = namedOnlyField(def, field) ? "false" : "true";
   const optional = optionalInner(field.type);
   if (optional) {
     const parse = cppParseValue(optional, "*value", key);
     return `
         {
-            auto value = optionalField(params, ${key}, ${index}, ${positional});
+            auto value = optionalField(params, ${key}, ${index}, true);
             if (value && !value->is_null())
             {
                 auto parsed = ${parse};
@@ -589,19 +574,12 @@ function cppParseField(def: StructDef, field: Field, index: number): string {
   const parse = cppParseValue(field.type, "**value", key);
   return `
         {
-            auto value = requiredField(params, ${key}, ${index}, ${positional});
+            auto value = requiredField(params, ${key}, ${index}, true);
             if (!value) { return Err(std::move(value.error())); }
             auto parsed = ${parse};
             if (!parsed) { return Err(std::move(parsed.error())); }
             ${assign} = std::move(*parsed);
         }`;
-}
-
-function namedOnlyField(def: StructDef, field: Field): boolean {
-  return (
-    (def.name === "AttachNativeViewportParams" || def.name === "ResizeNativeViewportParams") &&
-    ["x", "y", "width", "height"].includes(field.name)
-  );
 }
 
 function cppJsonValue(type: string, expr: string): string {
@@ -680,7 +658,7 @@ function emitCpp(structs: Map<string, StructDef>, enums: Map<string, EnumDef>): 
       const body =
         def.fields.length === 0
           ? ""
-          : def.fields.map((field, index) => cppParseField(def, field, index)).join("\n");
+          : def.fields.map((field, index) => cppParseField(field, index)).join("\n");
       return `auto parseDto(const Json& params, DtoTag<${def.name}>) -> Result<${def.name}>
     {
         ${def.name} out;

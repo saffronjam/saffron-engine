@@ -107,20 +107,6 @@
       "fixture": "empty"
     },
     {
-      "name": "attach-native-viewport",
-      "params": "AttachNativeViewportParams",
-      "result": "AttachNativeViewportResult",
-      "status": "typed",
-      "skip": "requires a real parent native window handle"
-    },
-    {
-      "name": "resize-native-viewport",
-      "params": "ResizeNativeViewportParams",
-      "result": "ResizeNativeViewportResult",
-      "status": "typed",
-      "skip": "mutates the native viewport window"
-    },
-    {
       "name": "list-entities",
       "params": "EmptyParams",
       "result": "EntityList",

@@ -2479,7 +2479,6 @@ name = "saffron-editor"
 version = "0.1.0"
 dependencies = [
  "libc",
- "raw-window-handle",
  "serde",
  "serde_json",
  "tauri",

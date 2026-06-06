@@ -183,14 +183,6 @@ namespace
                         result.value("controlSocket", "").c_str());
             return;
         }
-        if (cmd == "attach-native-viewport" || cmd == "resize-native-viewport")
-        {
-            std::printf("%s  %dx%d @ (%d,%d)\n",
-                        (result.value("attached", false) || result.value("resized", false)) ? "ok" : "fail",
-                        result.value("width", 0), result.value("height", 0), result.value("x", 0),
-                        result.value("y", 0));
-            return;
-        }
         if (cmd == "get-selection")
         {
             if (result.contains("entity") && result["entity"].is_object())

@@ -276,42 +276,6 @@
       }
     },
     {
-      "name": "attach-native-viewport",
-      "summary": "attach native viewport",
-      "params": [
-        {
-          "name": "params",
-          "schema": {
-            "$ref": "#/components/schemas/AttachNativeViewportParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AttachNativeViewportResult"
-        }
-      }
-    },
-    {
-      "name": "resize-native-viewport",
-      "summary": "resize native viewport",
-      "params": [
-        {
-          "name": "params",
-          "schema": {
-            "$ref": "#/components/schemas/ResizeNativeViewportParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/ResizeNativeViewportResult"
-        }
-      }
-    },
-    {
       "name": "list-entities",
       "summary": "list all entities",
       "params": [
@@ -1634,62 +1598,6 @@
           "slot"
         ]
       },
-      "AttachNativeViewportParams": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "parentXid": {
-            "type": "string"
-          },
-          "x": {
-            "type": "integer"
-          },
-          "y": {
-            "type": "integer"
-          },
-          "width": {
-            "type": "integer"
-          },
-          "height": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "parentXid"
-        ]
-      },
-      "AttachNativeViewportResult": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "attached": {
-            "type": "boolean"
-          },
-          "transport": {
-            "type": "string"
-          },
-          "x": {
-            "type": "integer"
-          },
-          "y": {
-            "type": "integer"
-          },
-          "width": {
-            "type": "integer"
-          },
-          "height": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "attached",
-          "transport",
-          "x",
-          "y",
-          "width",
-          "height"
-        ]
-      },
       "ComponentList": {
         "type": "object",
         "additionalProperties": false,
@@ -2561,53 +2469,6 @@
           "hdr",
           "exposureEv",
           "aa"
-        ]
-      },
-      "ResizeNativeViewportParams": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "x": {
-            "type": "integer"
-          },
-          "y": {
-            "type": "integer"
-          },
-          "width": {
-            "type": "integer"
-          },
-          "height": {
-            "type": "integer"
-          }
-        },
-        "required": []
-      },
-      "ResizeNativeViewportResult": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "resized": {
-            "type": "boolean"
-          },
-          "x": {
-            "type": "integer"
-          },
-          "y": {
-            "type": "integer"
-          },
-          "width": {
-            "type": "integer"
-          },
-          "height": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "resized",
-          "x",
-          "y",
-          "width",
-          "height"
         ]
       },
       "ScreenshotParams": {

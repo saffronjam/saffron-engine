@@ -562,106 +562,6 @@ namespace se
         return out;
     }
 
-    auto parseDto(const Json& params, DtoTag<AttachNativeViewportParams>) -> Result<AttachNativeViewportParams>
-    {
-        AttachNativeViewportParams out;
-
-        {
-            auto value = requiredField(params, "parentXid", 0, true);
-            if (!value) { return Err(std::move(value.error())); }
-            auto parsed = readWireUuid(**value, "parentXid");
-            if (!parsed) { return Err(std::move(parsed.error())); }
-            out.parentXid = std::move(*parsed);
-        }
-
-        {
-            auto value = optionalField(params, "x", 1, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "x");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.x = std::move(*parsed);
-            }
-        }
-
-        {
-            auto value = optionalField(params, "y", 2, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "y");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.y = std::move(*parsed);
-            }
-        }
-
-        {
-            auto value = optionalField(params, "width", 3, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "width");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.width = std::move(*parsed);
-            }
-        }
-
-        {
-            auto value = optionalField(params, "height", 4, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "height");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.height = std::move(*parsed);
-            }
-        }
-        return out;
-    }
-
-    auto parseDto(const Json& params, DtoTag<ResizeNativeViewportParams>) -> Result<ResizeNativeViewportParams>
-    {
-        ResizeNativeViewportParams out;
-
-        {
-            auto value = optionalField(params, "x", 0, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "x");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.x = std::move(*parsed);
-            }
-        }
-
-        {
-            auto value = optionalField(params, "y", 1, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "y");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.y = std::move(*parsed);
-            }
-        }
-
-        {
-            auto value = optionalField(params, "width", 2, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "width");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.width = std::move(*parsed);
-            }
-        }
-
-        {
-            auto value = optionalField(params, "height", 3, false);
-            if (value && !value->is_null())
-            {
-                auto parsed = readI32(*value, "height");
-                if (!parsed) { return Err(std::move(parsed.error())); }
-                out.height = std::move(*parsed);
-            }
-        }
-        return out;
-    }
-
     auto parseDto(const Json& params, DtoTag<CreateEntityParams>) -> Result<CreateEntityParams>
     {
         CreateEntityParams out;
@@ -2050,29 +1950,6 @@ namespace se
         out["width"] = value.width;
         out["height"] = value.height;
         out["message"] = value.message;
-        return out;
-    }
-
-    auto dtoToJson(const AttachNativeViewportResult& value) -> Json
-    {
-        Json out = Json::object();
-        out["attached"] = value.attached;
-        out["transport"] = value.transport;
-        out["x"] = value.x;
-        out["y"] = value.y;
-        out["width"] = value.width;
-        out["height"] = value.height;
-        return out;
-    }
-
-    auto dtoToJson(const ResizeNativeViewportResult& value) -> Json
-    {
-        Json out = Json::object();
-        out["resized"] = value.resized;
-        out["x"] = value.x;
-        out["y"] = value.y;
-        out["width"] = value.width;
-        out["height"] = value.height;
         return out;
     }
 

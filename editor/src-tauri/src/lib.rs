@@ -1,4 +1,3 @@
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
@@ -10,14 +9,6 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, RunEvent, State};
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-struct Bounds {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-}
 
 struct EditorState {
     engine: Mutex<Option<Child>>,
@@ -115,16 +106,6 @@ fn write_recent_projects_file(recents: &RecentProjects) -> Result<(), String> {
     fs::write(recents_path(), text).map_err(|err| format!("write recent projects: {err}"))
 }
 
-fn parent_xid(window: &tauri::WebviewWindow) -> Result<u64, String> {
-    let handle = window
-        .window_handle()
-        .map_err(|err| format!("get editor window handle: {err}"))?;
-    match handle.as_raw() {
-        RawWindowHandle::Xlib(handle) => Ok(handle.window),
-        other => Err(format!("unsupported editor window handle: {other:?}")),
-    }
-}
-
 fn configure_main_window(window: &tauri::WebviewWindow) {
     let _ = window.set_title("Saffron Editor");
     let _ = window.set_min_size(Some(LogicalSize::new(
@@ -186,7 +167,6 @@ fn spawn_engine(socket_path: &str) -> Result<Child, String> {
         .env("SAFFRON_EDITOR_NATIVE_VIEWPORT", "1")
         .env("SAFFRON_CONTROL_SOCK", socket_path)
         .env("SAFFRON_APPDATA_DIR", app_data_dir())
-        .env("SDL_VIDEODRIVER", "x11")
         .current_dir(repo_root())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -244,36 +224,6 @@ fn start_engine(state: State<'_, EditorState>) -> Result<(), String> {
         .map_err(|_| "engine lock poisoned".to_string())?
         .replace(child);
     Ok(())
-}
-
-#[tauri::command]
-async fn attach_native_viewport(
-    window: tauri::WebviewWindow,
-    state: State<'_, EditorState>,
-    bounds: Bounds,
-) -> Result<(), String> {
-    let parent = parent_xid(&window)?;
-    // parentXid as a string so the u64 XID survives JSON without precision loss.
-    control_request_with_params(
-        &state.socket_path,
-        "attach-native-viewport",
-        json!({
-            "parentXid": parent.to_string(),
-            "x": bounds.x, "y": bounds.y, "width": bounds.width, "height": bounds.height
-        }),
-    )
-    .map(|_| ())
-}
-
-#[tauri::command]
-fn resize_native_viewport(state: State<'_, EditorState>, bounds: Bounds) -> Result<(), String> {
-    // The phase-1 engine command does XMoveResize only (no reparent) → no flicker.
-    control_request_with_params(
-        &state.socket_path,
-        "resize-native-viewport",
-        json!({ "x": bounds.x, "y": bounds.y, "width": bounds.width, "height": bounds.height }),
-    )
-    .map(|_| ())
 }
 
 #[tauri::command]
@@ -398,16 +348,6 @@ fn install_stderr_noise_filter() {
 }
 
 pub fn run() {
-    // The native viewport reparents the engine's X11 window into this GTK host, so the
-    // host itself must be X11 — on a Wayland session GTK otherwise picks the Wayland
-    // backend, which has no XID to reparent into and aborts with a protocol error. Force
-    // XWayland (matches the engine's SDL_VIDEODRIVER=x11); GTK reads GDK_BACKEND once at
-    // init, and run() is still single-threaded here, so setting it first is sound.
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("GDK_BACKEND").is_none() {
-        unsafe { std::env::set_var("GDK_BACKEND", "x11") };
-    }
-
     // WebKitGTK's EGL init on NVIDIA prints Mesa GPU-probe chatter to stderr before
     // falling back cleanly. EGL_LOG_LEVEL gates the "libEGL warning:" lines (respecting
     // an explicit value); the bare Mesa loader lines ("pci id for fd …") have no env
@@ -424,8 +364,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             control,
             start_engine,
-            attach_native_viewport,
-            resize_native_viewport,
             quit_engine,
             engine_alive,
             app_data_info,

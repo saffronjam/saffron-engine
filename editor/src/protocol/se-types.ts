@@ -238,38 +238,6 @@ export interface ViewportNativeInfoResult {
   message: string;
 }
 
-export interface AttachNativeViewportParams {
-  parentXid: WireUuid;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-}
-
-export interface AttachNativeViewportResult {
-  attached: boolean;
-  transport: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface ResizeNativeViewportParams {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-}
-
-export interface ResizeNativeViewportResult {
-  resized: boolean;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface EntityList {
   entities: EntityListEntry[];
 }
@@ -728,8 +696,6 @@ export interface CommandParamsMap {
   "set-skinning": ToggleParams;
   "set-depth-prepass": ToggleParams;
   "viewport-native-info": EmptyParams;
-  "attach-native-viewport": AttachNativeViewportParams;
-  "resize-native-viewport": ResizeNativeViewportParams;
   "list-entities": EmptyParams;
   "list-components": EmptyParams;
   "create-entity": CreateEntityParams;
@@ -805,8 +771,6 @@ export interface CommandResultMap {
   "set-skinning": SetSkinningResult;
   "set-depth-prepass": SetDepthPrepassResult;
   "viewport-native-info": ViewportNativeInfoResult;
-  "attach-native-viewport": AttachNativeViewportResult;
-  "resize-native-viewport": ResizeNativeViewportResult;
   "list-entities": EntityList;
   "list-components": ComponentList;
   "create-entity": EntityRef;

@@ -2,7 +2,6 @@ module;
 
 #include <nlohmann/json.hpp>
 #include <SDL3/SDL.h>
-#include <X11/Xlib.h>
 
 #include <unistd.h>
 
@@ -252,86 +251,13 @@ namespace se
             {
                 std::string controlPath = controlSocketPath();
                 return ViewportNativeInfoResult{ "linux",
-                                                 "x11-child-window",
-                                                 "engine-window-ready",
+                                                 "wayland-subsurface",
+                                                 "engine-ready",
                                                  controlPath,
                                                  static_cast<i32>(viewportWidth(ctx.renderer)),
                                                  static_cast<i32>(viewportHeight(ctx.renderer)),
-                                                 "engine SDL/Vulkan window can be reparented into an X11 host" };
-            });
-
-        registerCommand<AttachNativeViewportParams, AttachNativeViewportResult>(
-            reg, "attach-native-viewport",
-            "attach-native-viewport {parentXid,x?,y?,width?,height?} — reparent the engine window into an X11 host",
-            [](EngineContext& ctx, const AttachNativeViewportParams& params) -> Result<AttachNativeViewportResult>
-            {
-                const i32 x = params.x.value_or(0);
-                const i32 y = params.y.value_or(0);
-                const i32 width = std::max(1, params.width.value_or(static_cast<i32>(ctx.window.width)));
-                const i32 height = std::max(1, params.height.value_or(static_cast<i32>(ctx.window.height)));
-
-                SDL_SetWindowBordered(ctx.window.handle, false);
-                SDL_SetWindowSize(ctx.window.handle, width, height);
-                SDL_SetWindowPosition(ctx.window.handle, x, y);
-                SDL_SyncWindow(ctx.window.handle);
-
-                SDL_PropertiesID props = SDL_GetWindowProperties(ctx.window.handle);
-                Display* display =
-                    static_cast<Display*>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
-                const ::Window child =
-                    static_cast<::Window>(SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
-                if (display == nullptr || child == 0)
-                {
-                    return Err(
-                        std::string{ "engine window is not using SDL's X11 backend; run with SDL_VIDEODRIVER=x11" });
-                }
-
-                XReparentWindow(display, child, static_cast<::Window>(params.parentXid.value), x, y);
-                XMoveResizeWindow(display, child, x, y, static_cast<unsigned int>(width),
-                                  static_cast<unsigned int>(height));
-                SDL_ShowWindow(ctx.window.handle);
-                XMapRaised(display, child);
-                XFlush(display);
-
-                ctx.window.width = static_cast<u32>(width);
-                ctx.window.height = static_cast<u32>(height);
-                setViewportDesiredSize(ctx.renderer, static_cast<u32>(width), static_cast<u32>(height));
-                setPresentViewportOnly(ctx.renderer, true);
-
-                return AttachNativeViewportResult{ true, "x11-child-window", x, y, width, height };
-            });
-
-        registerCommand<ResizeNativeViewportParams, ResizeNativeViewportResult>(
-            reg, "resize-native-viewport",
-            "resize-native-viewport {x,y,width,height} — move/resize the reparented child (no reparent)",
-            [](EngineContext& ctx, const ResizeNativeViewportParams& params) -> Result<ResizeNativeViewportResult>
-            {
-                const i32 x = params.x.value_or(0);
-                const i32 y = params.y.value_or(0);
-                const i32 width = std::max(1, params.width.value_or(static_cast<i32>(ctx.window.width)));
-                const i32 height = std::max(1, params.height.value_or(static_cast<i32>(ctx.window.height)));
-
-                SDL_SetWindowSize(ctx.window.handle, width, height);
-                SDL_SetWindowPosition(ctx.window.handle, x, y);
-
-                SDL_PropertiesID props = SDL_GetWindowProperties(ctx.window.handle);
-                Display* display =
-                    static_cast<Display*>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
-                const ::Window child =
-                    static_cast<::Window>(SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
-                if (display == nullptr || child == 0)
-                {
-                    return Err(
-                        std::string{ "engine window is not using SDL's X11 backend; run with SDL_VIDEODRIVER=x11" });
-                }
-                XMoveResizeWindow(display, child, x, y, static_cast<unsigned int>(width),
-                                  static_cast<unsigned int>(height));
-                XFlush(display);
-
-                ctx.window.width = static_cast<u32>(width);
-                ctx.window.height = static_cast<u32>(height);
-                setViewportDesiredSize(ctx.renderer, static_cast<u32>(width), static_cast<u32>(height));
-                return ResizeNativeViewportResult{ true, x, y, width, height };
+                                                 "engine renders offscreen; the editor presents frames "
+                                                 "from shared memory on a wayland subsurface" };
             });
     }
 }

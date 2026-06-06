@@ -372,15 +372,9 @@ export const client = {
     return call("viewport-native-info");
   },
 
-  // --- window-handle lifecycle (dedicated Rust commands, NOT the passthrough) ---
+  // --- engine lifecycle (dedicated Rust commands, NOT the passthrough) ---
   startEngine(): Promise<void> {
     return invoke<void>("start_engine");
-  },
-  attachViewport(bounds: ViewportBounds): Promise<void> {
-    return invoke<void>("attach_native_viewport", { bounds });
-  },
-  resizeViewport(bounds: ViewportBounds): Promise<void> {
-    return invoke<void>("resize_native_viewport", { bounds });
   },
   quitEngine(): Promise<void> {
     return invoke<void>("quit_engine");
