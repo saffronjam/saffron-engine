@@ -436,6 +436,13 @@
       "fixture": "mesh-asset"
     },
     {
+      "name": "probe-asset",
+      "params": "AssetMetadataParams",
+      "result": "AssetMetadataDto",
+      "status": "typed",
+      "fixture": "mesh-asset"
+    },
+    {
       "name": "delete-asset",
       "params": "DeleteAssetParams",
       "result": "DeleteAssetResult",

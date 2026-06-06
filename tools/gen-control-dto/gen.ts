@@ -54,6 +54,7 @@ const scalarTypes = new Set([
   "i32",
   "u32",
   "u64",
+  "i64",
   "f32",
   "WireUuid",
   "EntitySelector",
@@ -325,6 +326,12 @@ const commands: CommandDef[] = [
     result: "AssetUsagesResult",
     summary: "list scene usages of an asset",
   },
+  {
+    name: "probe-asset",
+    params: "AssetMetadataParams",
+    result: "AssetMetadataDto",
+    summary: "probe asset metadata (size, vertices, created)",
+  },
   { name: "delete-asset", params: "DeleteAssetParams", result: "DeleteAssetResult", summary: "delete asset" },
   { name: "assign-asset", params: "AssignAssetParams", result: "AssignAssetResult", summary: "assign asset to entity" },
   { name: "save-scene", params: "PathParams", result: "PathResult", summary: "save-scene {path}" },
@@ -392,6 +399,7 @@ const commandFixtures = new Map<string, string>([
   ["list-assets", "empty"],
   ["rename-asset", "mesh-asset-rename"],
   ["asset-usages", "mesh-asset"],
+  ["probe-asset", "mesh-asset"],
   ["assign-asset", "cube-mesh-asset"],
   ["save-project", "empty"],
   ["load-project", "project-name"],
@@ -598,6 +606,8 @@ function cppJsonValue(type: string, expr: string): string {
     case "bool":
     case "i32":
     case "u32":
+    case "u64":
+    case "i64":
     case "f32":
     case "std::string":
       return expr;
@@ -976,6 +986,8 @@ function tsType(type: string): string {
       return "boolean";
     case "i32":
     case "u32":
+    case "u64":
+    case "i64":
     case "f32":
       return "number";
     case "WireUuid":
@@ -1209,6 +1221,8 @@ function jsonSchemaFor(type: string): Record<string, unknown> {
       return { type: "boolean" };
     case "i32":
     case "u32":
+    case "u64":
+    case "i64":
       return { type: "integer" };
     case "f32":
       return { type: "number" };

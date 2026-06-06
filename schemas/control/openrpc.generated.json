@@ -1122,6 +1122,24 @@
       }
     },
     {
+      "name": "probe-asset",
+      "summary": "probe asset metadata (size, vertices, created)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/AssetMetadataParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AssetMetadataDto"
+        }
+      }
+    },
+    {
       "name": "delete-asset",
       "summary": "delete asset",
       "params": [
@@ -1388,6 +1406,71 @@
         "required": [
           "assets",
           "folders"
+        ]
+      },
+      "AssetMetadataDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "mesh",
+              "texture",
+              "other"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer"
+          },
+          "vertexCount": {
+            "type": "integer"
+          },
+          "triangleCount": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "path",
+          "sizeBytes",
+          "createdAt"
+        ]
+      },
+      "AssetMetadataParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "asset"
         ]
       },
       "AssetRef": {
@@ -3251,7 +3334,7 @@
         "additionalProperties": false,
         "properties": {
           "value": {
-            "$ref": "#/components/schemas/u64"
+            "type": "integer"
           }
         },
         "required": [

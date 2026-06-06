@@ -3,6 +3,7 @@ module;
 #include <nlohmann/json.hpp>
 #include <entt/entt.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
@@ -17,6 +18,7 @@ import Saffron.Core;
 import Saffron.Json;
 import Saffron.Window;
 import Saffron.Rendering;
+import Saffron.Geometry;
 import Saffron.Scene;
 import Saffron.SceneEdit;
 import Saffron.Assets;
@@ -595,6 +597,62 @@ namespace se
                 return AssetUsagesResult{ collectAssetUsages(ctx.sceneEdit.scene, (*resolved)->id) };
             });
 
+        registerCommand<AssetMetadataParams, AssetMetadataDto>(
+            reg, "probe-asset", "probe-asset {asset}",
+            [](EngineContext& ctx, const AssetMetadataParams& params) -> Result<AssetMetadataDto>
+            {
+                auto resolved = resolveAsset(ctx, params.asset);
+                if (!resolved)
+                {
+                    return Err(resolved.error());
+                }
+                const AssetEntry& entry = **resolved;
+                const std::filesystem::path abs = std::filesystem::path(ctx.assets.root) / entry.path;
+
+                u64 sizeBytes = 0;
+                {
+                    std::error_code ec;
+                    const auto size = std::filesystem::file_size(abs, ec);
+                    if (!ec)
+                    {
+                        sizeBytes = static_cast<u64>(size);
+                    }
+                }
+
+                i64 createdAt = 0;
+                {
+                    std::error_code ec;
+                    const auto ftime = std::filesystem::last_write_time(abs, ec);
+                    if (!ec)
+                    {
+                        const auto sys = std::chrono::file_clock::to_sys(ftime);
+                        createdAt = std::chrono::duration_cast<std::chrono::seconds>(sys.time_since_epoch()).count();
+                    }
+                }
+
+                std::optional<u32> vertexCount;
+                std::optional<u32> triangleCount;
+                if (entry.type == AssetType::Mesh)
+                {
+                    if (auto counts = meshFileCounts(abs.string()))
+                    {
+                        vertexCount = counts->vertexCount;
+                        triangleCount = counts->indexCount / 3;
+                    }
+                }
+
+                return AssetMetadataDto{ WireUuid{ entry.id.value },
+                                        entry.name,
+                                        assetTypeDto(entry.type),
+                                        entry.path,
+                                        entry.folder.empty() ? std::optional<std::string>{}
+                                                             : std::optional<std::string>{ entry.folder },
+                                        sizeBytes,
+                                        vertexCount,
+                                        triangleCount,
+                                        createdAt };
+            });
+
         registerCommand<DeleteAssetParams, DeleteAssetResult>(
             reg, "delete-asset", "delete-asset {asset}",
             [](EngineContext& ctx, const DeleteAssetParams& params) -> Result<DeleteAssetResult>
@@ -632,19 +690,32 @@ namespace se
                 {
                     return Err(entity.error());
                 }
-                auto resolved = resolveAsset(ctx, params.asset);
-                if (!resolved)
+                // The null sentinel (id 0 / empty selector) clears the slot rather than
+                // resolving an asset, so the editor's "(none)" choice unassigns mesh/albedo.
+                const json& sel = params.asset.value;
+                const std::string selector = sel.is_string() ? sel.get<std::string>() : std::string{};
+                const bool clearing = selector == "0" || selector.empty() ||
+                                      (sel.is_number_unsigned() && sel.get<u64>() == 0) ||
+                                      (sel.is_number_integer() && sel.get<i64>() == 0);
+                Uuid assignId{ 0 };
+                std::string assignName;
+                if (!clearing)
                 {
-                    return Err(resolved.error());
+                    auto resolved = resolveAsset(ctx, params.asset);
+                    if (!resolved)
+                    {
+                        return Err(resolved.error());
+                    }
+                    assignId = (*resolved)->id;
+                    assignName = (*resolved)->name;
                 }
-                const AssetEntry* match = *resolved;
                 if (params.slot == AssetSlotDto::Mesh)
                 {
                     if (!hasComponent<MeshComponent>(ctx.sceneEdit.scene, *entity))
                     {
                         addComponent<MeshComponent>(ctx.sceneEdit.scene, *entity);
                     }
-                    getComponent<MeshComponent>(ctx.sceneEdit.scene, *entity).mesh = match->id;
+                    getComponent<MeshComponent>(ctx.sceneEdit.scene, *entity).mesh = assignId;
                 }
                 else if (params.slot == AssetSlotDto::Albedo)
                 {
@@ -652,10 +723,10 @@ namespace se
                     {
                         addComponent<MaterialComponent>(ctx.sceneEdit.scene, *entity);
                     }
-                    getComponent<MaterialComponent>(ctx.sceneEdit.scene, *entity).albedoTexture = match->id;
+                    getComponent<MaterialComponent>(ctx.sceneEdit.scene, *entity).albedoTexture = assignId;
                 }
                 ctx.sceneEdit.sceneVersion += 1;
-                return AssignAssetResult{ WireUuid{ match->id.value }, match->name, params.slot };
+                return AssignAssetResult{ WireUuid{ assignId.value }, assignName, params.slot };
             });
 
         registerCommand<PathParams, PathResult>(reg, "save-scene", "save-scene {path}",

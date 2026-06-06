@@ -398,6 +398,24 @@ export namespace se
         std::vector<AssetUsageDto> usages;
     };
 
+    struct AssetMetadataParams
+    {
+        AssetSelector asset;
+    };
+
+    struct AssetMetadataDto
+    {
+        WireUuid id;
+        std::string name;
+        AssetTypeDto type;
+        std::string path;
+        std::optional<std::string> folder;
+        u64 sizeBytes;
+        std::optional<u32> vertexCount;
+        std::optional<u32> triangleCount;
+        i64 createdAt;
+    };
+
     struct DeleteAssetParams
     {
         AssetSelector asset;
@@ -785,6 +803,7 @@ export namespace se
     auto dtoToJson(const AssetRef& value) -> Json;
     auto dtoToJson(const AssetUsageDto& value) -> Json;
     auto dtoToJson(const AssetUsagesResult& value) -> Json;
+    auto dtoToJson(const AssetMetadataDto& value) -> Json;
     auto dtoToJson(const DeleteAssetResult& value) -> Json;
     auto dtoToJson(const AssignAssetResult& value) -> Json;
     auto dtoToJson(const PathResult& value) -> Json;
@@ -831,6 +850,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<DeleteAssetFolderParams>) -> Result<DeleteAssetFolderParams>;
     auto parseDto(const Json& params, DtoTag<MoveAssetParams>) -> Result<MoveAssetParams>;
     auto parseDto(const Json& params, DtoTag<AssetUsagesParams>) -> Result<AssetUsagesParams>;
+    auto parseDto(const Json& params, DtoTag<AssetMetadataParams>) -> Result<AssetMetadataParams>;
     auto parseDto(const Json& params, DtoTag<DeleteAssetParams>) -> Result<DeleteAssetParams>;
     auto parseDto(const Json& params, DtoTag<AssignAssetParams>) -> Result<AssignAssetParams>;
     auto parseDto(const Json& params, DtoTag<ScreenshotParams>) -> Result<ScreenshotParams>;

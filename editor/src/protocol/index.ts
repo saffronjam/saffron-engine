@@ -17,6 +17,7 @@ import type {
 
 export type {
   AddEntityParams,
+  AssetMetadataDto,
   AssetUsageDto,
   AssetUsagesParams,
   AssetUsagesResult,

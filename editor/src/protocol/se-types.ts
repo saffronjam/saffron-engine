@@ -621,6 +621,22 @@ export interface AssetUsageDto {
   slot: string;
 }
 
+export interface AssetMetadataParams {
+  asset: WireUuid | string | number;
+}
+
+export interface AssetMetadataDto {
+  id: WireUuid;
+  name: string;
+  type: "mesh" | "texture" | "other";
+  path: string;
+  folder?: string;
+  sizeBytes: number;
+  vertexCount?: number;
+  triangleCount?: number;
+  createdAt: number;
+}
+
 export interface DeleteAssetParams {
   asset: WireUuid | string | number;
 }
@@ -743,6 +759,7 @@ export interface CommandParamsMap {
   "delete-asset-folder": DeleteAssetFolderParams;
   "move-asset": MoveAssetParams;
   "asset-usages": AssetUsagesParams;
+  "probe-asset": AssetMetadataParams;
   "delete-asset": DeleteAssetParams;
   "assign-asset": AssignAssetParams;
   "save-scene": PathParams;
@@ -818,6 +835,7 @@ export interface CommandResultMap {
   "delete-asset-folder": AssetList;
   "move-asset": AssetRef;
   "asset-usages": AssetUsagesResult;
+  "probe-asset": AssetMetadataDto;
   "delete-asset": DeleteAssetResult;
   "assign-asset": AssignAssetResult;
   "save-scene": PathResult;
