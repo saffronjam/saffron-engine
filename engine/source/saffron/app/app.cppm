@@ -62,6 +62,24 @@ export namespace se
             }
             return parsed;
         }
+
+        auto maxFpsFromEnv() -> u64
+        {
+            const char* raw = std::getenv("SAFFRON_MAX_FPS");
+            if (raw == nullptr)
+            {
+                return 0;
+            }
+            std::string_view text{ raw };
+            u64 parsed = 0;
+            std::from_chars_result result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+            if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || parsed == 0)
+            {
+                logError(std::format("invalid SAFFRON_MAX_FPS='{}', ignoring", text));
+                return 0;
+            }
+            return parsed;
+        }
     }
 
     // Owns the main loop. Returns a process exit code.
@@ -105,9 +123,11 @@ export namespace se
         }
 
         const u64 frameLimit = detail::frameLimitFromEnv();
+        const u64 maxFps = detail::maxFpsFromEnv();
         u64 frameCount = 0;
         app.running = true;
         std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point nextFrame = last;
 
         while (app.running)
         {
@@ -165,6 +185,22 @@ export namespace se
             {
                 logInfo(std::format("frame limit reached ({}), exiting", frameLimit));
                 app.running = false;
+            }
+
+            // SAFFRON_MAX_FPS caps the loop rate (headless publish renders unthrottled
+            // otherwise). Catch up without accumulating debt after a slow frame.
+            if (maxFps != 0)
+            {
+                nextFrame += std::chrono::nanoseconds(1'000'000'000 / maxFps);
+                const std::chrono::steady_clock::time_point current = std::chrono::steady_clock::now();
+                if (nextFrame < current)
+                {
+                    nextFrame = current;
+                }
+                else
+                {
+                    std::this_thread::sleep_until(nextFrame);
+                }
             }
         }
 
