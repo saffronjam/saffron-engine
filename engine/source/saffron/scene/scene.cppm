@@ -408,6 +408,22 @@ export namespace se
         }
     }
 
+    // The entity carrying the given uuid, or a null handle. Cross-scene lookups must go
+    // by uuid — entt handles can coincide between registries and alias silently.
+    auto findEntityByUuid(Scene& scene, u64 uuid) -> Entity
+    {
+        Entity found{ entt::null };
+        forEach<IdComponent>(scene,
+                             [&](Entity entity, IdComponent& id)
+                             {
+                                 if (id.id.value == uuid)
+                                 {
+                                     found = entity;
+                                 }
+                             });
+        return found;
+    }
+
     // Rebuilds the parentHandle/children caches from the durable parent uuids. Entities
     // missing a RelationshipComponent (e.g. created by the raw loader path) get a default
     // root one, so every entity stays hierarchy-addressable. Dangling parent uuids,
@@ -612,11 +628,36 @@ export namespace se
         }
     }
 
+    // Decomposes `local` into the entity's TransformComponent. TRS-only — under a sheared
+    // source matrix the shear is lost (accepted: TransformComponent stores Euler + scale,
+    // no shear). Returns false, leaving the transform untouched, when the matrix does not
+    // decompose.
+    auto setLocalFromMatrix(Scene& scene, Entity entity, const glm::mat4& local) -> bool
+    {
+        glm::vec3 scale;
+        glm::quat orientation;
+        glm::vec3 translation;
+        glm::vec3 skew;
+        glm::vec4 perspective;
+        if (!glm::decompose(local, scale, orientation, translation, skew, perspective))
+        {
+            return false;
+        }
+        // Euler XYZ via the stable ZYX matrix extraction: glm::quat(eulerXYZ) composes
+        // Rz*Ry*Rx, and glm::eulerAngles is numerically unstable at yaw +-90 degrees
+        // (its asin/atan2 split poisons pitch/roll there).
+        glm::vec3 euler;
+        glm::extractEulerAngleZYX(glm::mat4_cast(orientation), euler.z, euler.y, euler.x);
+        TransformComponent& transform = getComponent<TransformComponent>(scene, entity);
+        transform.translation = translation;
+        transform.rotation = euler;
+        transform.scale = scale;
+        return true;
+    }
+
     // Engine-authoritative reparent. Refuses self-parenting and cycles (walks newParent's
     // ancestry); with keepWorld (the editor convention) the child's local TRS is rebased
-    // so its world transform is unchanged. The rebase decompose is TRS-only — under a
-    // sheared parent the shear is lost (accepted: TransformComponent stores Euler + scale,
-    // no shear). A null-handle newParent detaches to root.
+    // so its world transform is unchanged. A null-handle newParent detaches to root.
     auto setParent(Scene& scene, Entity child, Entity newParent, bool keepWorld = true) -> Result<void>
     {
         if (!valid(scene, child))
@@ -661,24 +702,7 @@ export namespace se
         {
             const glm::mat4 parentWorld =
                 newParent.handle == entt::null ? glm::mat4{ 1.0f } : composeWorldMatrix(scene, newParent);
-            const glm::mat4 local = glm::inverse(parentWorld) * childWorld;
-            glm::vec3 scale;
-            glm::quat orientation;
-            glm::vec3 translation;
-            glm::vec3 skew;
-            glm::vec4 perspective;
-            if (glm::decompose(local, scale, orientation, translation, skew, perspective))
-            {
-                // Euler XYZ via the stable ZYX matrix extraction: glm::quat(eulerXYZ)
-                // composes Rz*Ry*Rx, and glm::eulerAngles is numerically unstable at
-                // yaw +-90 degrees (its asin/atan2 split poisons pitch/roll there).
-                glm::vec3 euler;
-                glm::extractEulerAngleZYX(glm::mat4_cast(orientation), euler.z, euler.y, euler.x);
-                TransformComponent& transform = getComponent<TransformComponent>(scene, child);
-                transform.translation = translation;
-                transform.rotation = euler;
-                transform.scale = scale;
-            }
+            setLocalFromMatrix(scene, child, glm::inverse(parentWorld) * childWorld);
         }
 
         relinkHierarchy(scene);
