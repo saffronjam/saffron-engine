@@ -1,9 +1,11 @@
 /// Bounded scalar field rendered as a shadcn Slider + a monospace numeric readout
 /// (used for `slider`-kind fields like Material.metallic/roughness, clamped 0..1).
-/// Dumb: value + onChange; the panel owns coalescing and drag-gating. The Radix
-/// Slider's `onValueChange` is the live scrub (drag) and `onValueCommit` is the end,
-/// so they bracket onDragStart/onDragEnd exactly like NumberDrag's pointer scrub.
+/// Renders drag-local state (useScrubValue) so the thumb never waits on the wire;
+/// the panel owns coalescing and drag-gating. The Radix Slider's `onValueChange` is
+/// the live scrub (drag) and `onValueCommit` is the end, so they bracket
+/// onDragStart/onDragEnd exactly like NumberDrag's pointer scrub.
 import { Slider } from "@/components/ui/slider";
+import { useScrubValue } from "@/lib/useScrubValue";
 
 export interface SliderFieldProps {
   value: number;
@@ -32,7 +34,8 @@ export function SliderField({
   onDragStart,
   onDragEnd,
 }: SliderFieldProps) {
-  const current = clamp(value, min, max);
+  const scrub = useScrubValue(value, onChange);
+  const current = clamp(scrub.value, min, max);
   return (
     <div className="flex items-center gap-2">
       <Slider
@@ -41,11 +44,17 @@ export function SliderField({
         min={min}
         max={max}
         step={step}
-        onPointerDown={() => onDragStart?.()}
+        onPointerDown={() => {
+          scrub.begin();
+          onDragStart?.();
+        }}
         onValueChange={(values) =>
-          onChange(Number(clamp(values[0] ?? current, min, max).toFixed(3)))
+          scrub.set(Number(clamp(values[0] ?? current, min, max).toFixed(3)))
         }
-        onValueCommit={() => onDragEnd?.()}
+        onValueCommit={() => {
+          scrub.end();
+          onDragEnd?.();
+        }}
       />
       <span className="w-9 flex-none text-right font-mono text-[11px] tabular-nums text-muted-foreground">
         {current.toFixed(2)}

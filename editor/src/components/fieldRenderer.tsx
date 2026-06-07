@@ -166,9 +166,11 @@ export function renderField(
           axes={axes}
           value={display}
           step={hint.step}
-          onChange={(axis, v) => {
-            const wireValue = hint.convertRadians ? v * DEG_TO_RAD : v;
-            onChange({ ...wire, [axis]: wireValue });
+          onChange={(patch) => {
+            const wirePatch = hint.convertRadians
+              ? Object.fromEntries(Object.entries(patch).map(([a, v]) => [a, v * DEG_TO_RAD]))
+              : patch;
+            onChange({ ...wire, ...wirePatch });
           }}
           onDragStart={ctx.onDragStart}
           onDragEnd={ctx.onDragEnd}
@@ -183,7 +185,7 @@ export function renderField(
         <ColorField
           kind={hint.kind}
           value={wire}
-          onChange={(axis, v) => onChange({ ...wire, [axis]: v })}
+          onChange={(patch) => onChange({ ...wire, ...patch })}
           onDragStart={ctx.onDragStart}
           onDragEnd={ctx.onDragEnd}
         />

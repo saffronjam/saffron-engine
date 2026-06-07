@@ -2,11 +2,13 @@
 /// drag math, generalized to one axis). Pointer-capture on the wrapper scrubs the
 /// value by `clientX` delta * step; the numeric `<input>` swallows its own pointer
 /// so typing in the box never starts a scrub. Optional `track` renders a 0..1-style
-/// slider fill behind the value for `slider` fields. Dumb: value + onChange only;
-/// the panel owns coalescing and drag-gating (onDragStart/onDragEnd bracket a scrub).
+/// slider fill behind the value for `slider` fields. Renders drag-local state
+/// (useScrubValue) so the readout never waits on the wire; the panel owns
+/// coalescing and drag-gating (onDragStart/onDragEnd bracket a scrub).
 import { useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useScrubValue } from "@/lib/useScrubValue";
 
 export function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
@@ -49,6 +51,7 @@ export function NumberDrag({
   onDragStart,
   onDragEnd,
 }: NumberDragProps) {
+  const scrub = useScrubValue(value, onChange);
   const dragRef = useRef<{ startX: number; startValue: number } | null>(null);
 
   function beginDrag(event: React.PointerEvent<HTMLDivElement>): void {
@@ -56,8 +59,9 @@ export function NumberDrag({
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
       startX: event.clientX,
-      startValue: Number.isFinite(value) ? value : 0,
+      startValue: Number.isFinite(scrub.value) ? scrub.value : 0,
     };
+    scrub.begin();
     onDragStart?.();
   }
 
@@ -68,19 +72,20 @@ export function NumberDrag({
     }
     const delta = event.clientX - drag.startX;
     const next = clamp(drag.startValue + delta * step, min, max);
-    onChange(Number(next.toFixed(3)));
+    scrub.set(Number(next.toFixed(3)));
   }
 
   function endDrag(): void {
     if (dragRef.current) {
       dragRef.current = null;
+      scrub.end();
       onDragEnd?.();
     }
   }
 
   const fill =
     track && min !== undefined && max !== undefined && max > min
-      ? ((clamp(value, min, max) - min) / (max - min)) * 100
+      ? ((clamp(scrub.value, min, max) - min) / (max - min)) * 100
       : null;
 
   return (
@@ -102,13 +107,13 @@ export function NumberDrag({
         step={step}
         min={min}
         max={max}
-        value={formatNumber(value)}
+        value={formatNumber(scrub.value)}
         className={cn(
           "relative h-7 rounded-sm bg-background px-1.5 py-0.5 font-mono text-[11px]",
           track && "bg-transparent",
         )}
         onPointerDown={(event) => event.stopPropagation()}
-        onChange={(event) => onChange(clamp(Number(event.currentTarget.value), min, max))}
+        onChange={(event) => scrub.set(clamp(Number(event.currentTarget.value), min, max))}
       />
     </div>
   );

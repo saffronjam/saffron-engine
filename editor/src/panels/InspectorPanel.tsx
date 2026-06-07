@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { humanizeFieldName } from "@/lib/humanize";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -160,12 +161,16 @@ export function InspectorPanel() {
       }
       return client.setComponentField(id, component, field, assetId);
     }
-    // Transform/Material have server-side merge helpers — send only the changed field.
+    // Transform/Material have server-side merge helpers — send only the changed
+    // field. Mid-drag sends ask the engine to animate toward the value (read at
+    // send time, so the post-release re-push goes out exact, cancelling the
+    // animation).
+    const smooth = useEditorStore.getState().dragActive;
     if (component === "Transform") {
-      return client.setTransform(id, { [field]: dto[field] } as Partial<Transform>);
+      return client.setTransform(id, { [field]: dto[field] } as Partial<Transform>, smooth);
     }
     if (component === "Material") {
-      return client.setMaterial(id, { [field]: dto[field] } as Partial<Material>);
+      return client.setMaterial(id, { [field]: dto[field] } as Partial<Material>, smooth);
     }
     // Everything else: set-component does NOT merge, send the whole DTO.
     return client.setComponent(id, component, dto);
@@ -182,7 +187,20 @@ export function InspectorPanel() {
 
   const setDragActive = useEditorStore.getState().setDragActive;
   const onDragStart = (): void => setDragActive(true);
-  const onDragEnd = (): void => setDragActive(false);
+  // Release: ungate the poll, then re-push the field's latest optimistic value so
+  // the stream always ends with one exact (non-smooth) write of the final state.
+  // Read from the store, not the render closure — the widget's pointerup listener
+  // holds the ctx captured at pointerdown, stale by release.
+  const onFieldDragEnd = (component: string, field: string): void => {
+    setDragActive(false);
+    const components = useEditorStore.getState().componentsBySelected?.components as
+      | Record<string, unknown>
+      | undefined;
+    const current = components?.[component];
+    if (current) {
+      coalescerFor(component, field).push({ ...(current as object) });
+    }
+  };
 
   const onRemove = (component: string): void => {
     void client
@@ -217,16 +235,20 @@ export function InspectorPanel() {
                     {component}
                   </span>
                   {removable ? (
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      className="text-muted-foreground hover:text-destructive"
-                      title={`Remove ${component}`}
-                      onClick={() => onRemove(component)}
-                    >
-                      <X />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() => onRemove(component)}
+                        >
+                          <X />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Remove {component}</TooltipContent>
+                    </Tooltip>
                   ) : null}
                 </header>
                 <div className="flex flex-col gap-1.5 px-2 py-1.5">
@@ -241,7 +263,7 @@ export function InspectorPanel() {
                           field,
                           value,
                           (next) => onFieldChange(component, field, next),
-                          { onDragStart, onDragEnd },
+                          { onDragStart, onDragEnd: () => onFieldDragEnd(component, field) },
                         )}
                       </div>
                     </div>

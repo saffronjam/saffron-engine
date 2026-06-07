@@ -2,19 +2,24 @@
 /// LINEAR floats in 0..1 on the wire (matching the C++ `ColorEdit3`/`ColorEdit4`
 /// linear behavior the inspector ports). The swatch opens a Popover with a
 /// saturation/hue (and alpha) canvas; per-channel numeric inputs keep HDR-range and
-/// alpha editable beyond the 0..1 the canvas exposes. Dumb: value + onChange; the
-/// panel owns coalescing and drag-gating.
+/// alpha editable beyond the 0..1 the canvas exposes. Renders drag-local state
+/// (useScrubValue) so the canvas tracks the pointer exactly — the round trip
+/// through store and wire never gates the handle. The panel owns coalescing and
+/// drag-gating.
 import { RgbaColorPicker, RgbColorPicker } from "react-colorful";
 import { formatNumber } from "./NumberDrag";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useScrubValue } from "@/lib/useScrubValue";
 
 export interface ColorFieldProps {
   /// "color3" for Vec3 (rgb) or "color4" for Vec4 (rgba); alpha shown only for color4.
   kind: "color3" | "color4";
   value: Record<string, number>;
-  onChange(axis: string, value: number): void;
+  /// One atomic patch per edit: the canvas emits all changed channels together so a
+  /// drag is a single write, never per-axis calls racing onto a stale base.
+  onChange(patch: Record<string, number>): void;
   onDragStart?(): void;
   onDragEnd?(): void;
 }
@@ -31,25 +36,30 @@ export function ColorField({ kind, value, onChange, onDragStart, onDragEnd }: Co
   const hasAlpha = kind === "color4";
   const channels = hasAlpha ? (["x", "y", "z", "w"] as const) : (["x", "y", "z"] as const);
   const labels: Record<string, string> = { x: "R", y: "G", z: "B", w: "A" };
+  const scrub = useScrubValue(value, onChange);
+  const color = scrub.value;
 
-  const hex = `#${channelToHex(value.x ?? 0)}${channelToHex(value.y ?? 0)}${channelToHex(value.z ?? 0)}`;
+  const hex = `#${channelToHex(color.x ?? 0)}${channelToHex(color.y ?? 0)}${channelToHex(color.z ?? 0)}`;
 
   // Gate the reconcile poll across a canvas drag: a pointerdown on the picker opens
-  // the drag, a single window pointerup closes it.
+  // the drag, a single window pointerup closes it (flush before ungating so the
+  // panel's release re-push reads the final value).
   const beginCanvasDrag = (): void => {
+    scrub.begin();
     onDragStart?.();
     const end = (): void => {
+      scrub.end();
       onDragEnd?.();
       window.removeEventListener("pointerup", end);
     };
     window.addEventListener("pointerup", end);
   };
 
-  const setRgb = (rgb: { r: number; g: number; b: number }): void => {
-    onChange("x", Number((rgb.r / 255).toFixed(3)));
-    onChange("y", Number((rgb.g / 255).toFixed(3)));
-    onChange("z", Number((rgb.b / 255).toFixed(3)));
-  };
+  const rgbPatch = (rgb: { r: number; g: number; b: number }): Record<string, number> => ({
+    x: Number((rgb.r / 255).toFixed(3)),
+    y: Number((rgb.g / 255).toFixed(3)),
+    z: Number((rgb.b / 255).toFixed(3)),
+  });
 
   return (
     <div className="flex items-center gap-1.5">
@@ -67,24 +77,21 @@ export function ColorField({ kind, value, onChange, onDragStart, onDragEnd }: Co
             {hasAlpha ? (
               <RgbaColorPicker
                 color={{
-                  r: channelToByte(value.x ?? 0),
-                  g: channelToByte(value.y ?? 0),
-                  b: channelToByte(value.z ?? 0),
-                  a: Math.min(1, Math.max(0, value.w ?? 1)),
+                  r: channelToByte(color.x ?? 0),
+                  g: channelToByte(color.y ?? 0),
+                  b: channelToByte(color.z ?? 0),
+                  a: Math.min(1, Math.max(0, color.w ?? 1)),
                 }}
-                onChange={(c) => {
-                  setRgb(c);
-                  onChange("w", Number(c.a.toFixed(3)));
-                }}
+                onChange={(c) => scrub.set({ ...color, ...rgbPatch(c), w: Number(c.a.toFixed(3)) })}
               />
             ) : (
               <RgbColorPicker
                 color={{
-                  r: channelToByte(value.x ?? 0),
-                  g: channelToByte(value.y ?? 0),
-                  b: channelToByte(value.z ?? 0),
+                  r: channelToByte(color.x ?? 0),
+                  g: channelToByte(color.y ?? 0),
+                  b: channelToByte(color.z ?? 0),
                 }}
-                onChange={setRgb}
+                onChange={(c) => scrub.set({ ...color, ...rgbPatch(c) })}
               />
             )}
           </div>
@@ -104,9 +111,11 @@ export function ColorField({ kind, value, onChange, onDragStart, onDragEnd }: Co
               step={0.01}
               min={0}
               max={axis === "w" ? 1 : undefined}
-              value={formatNumber(value[axis] ?? 0)}
+              value={formatNumber(color[axis] ?? 0)}
               className="h-7 rounded-none border-0 bg-transparent px-0.5 py-0.5 font-mono text-[11px] shadow-none focus-visible:ring-0"
-              onChange={(event) => onChange(axis, Number(event.currentTarget.value))}
+              onChange={(event) =>
+                scrub.set({ ...color, [axis]: Number(event.currentTarget.value) })
+              }
             />
           </label>
         ))}

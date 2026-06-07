@@ -158,8 +158,8 @@ export function EnvironmentPanel() {
 
   const onVecChannel =
     (field: "clearColor" | "ambientColor") =>
-    (axis: string, value: number): void => {
-      const next = { ...(env[field] as Vec3), [axis]: value } as Vec3;
+    (channels: Record<string, number>): void => {
+      const next = { ...(env[field] as Vec3), ...channels } as Vec3;
       patch(field, next);
     };
 
@@ -173,8 +173,8 @@ export function EnvironmentPanel() {
   };
   const onAtmosVec =
     (field: "rayleighScattering" | "ozoneAbsorption") =>
-    (axis: string, value: number): void => {
-      patchAtmos(field, { ...(atmos[field] as Vec3), [axis]: value } as Atmosphere[typeof field]);
+    (channels: Record<string, number>): void => {
+      patchAtmos(field, { ...(atmos[field] as Vec3), ...channels } as Atmosphere[typeof field]);
     };
 
   return (
@@ -380,4 +380,3 @@ export function EnvironmentPanel() {
     </div>
   );
 }
-
