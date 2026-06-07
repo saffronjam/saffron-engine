@@ -8,6 +8,8 @@ module;
 #include <format>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 module Saffron.Control;
 
@@ -77,7 +79,14 @@ namespace se
         return GizmoState{ editor.gizmoOp == GizmoOp::Rotate  ? GizmoOpDto::Rotate
                            : editor.gizmoOp == GizmoOp::Scale ? GizmoOpDto::Scale
                                                               : GizmoOpDto::Translate,
-                           editor.gizmoSpace == GizmoSpace::Local ? GizmoSpaceDto::Local : GizmoSpaceDto::World };
+                           editor.gizmoSpace == GizmoSpace::Local ? GizmoSpaceDto::Local : GizmoSpaceDto::World,
+                           editor.preserveChildren };
+    }
+
+    auto playStateResultDto(const SceneEditContext& editor) -> PlayStateResult
+    {
+        return PlayStateResult{ playStateName(editor.playState), static_cast<i32>(editor.playVersion),
+                                static_cast<i32>(editor.sceneVersion), editor.hadPrimaryCamera };
     }
 
     auto vec3Json(const Vec3& value) -> json
@@ -99,16 +108,17 @@ namespace se
         {
             return Entity{ entt::null };
         }
+        Scene& scene = activeScene(editor);
         constexpr f32 half = 13.0f;  // a touch larger than the drawn glyph for easier clicking
         Entity hit{ entt::null };
         f32 best = half;
         auto test = [&](Entity e)
         {
-            if (!hasComponent<TransformComponent>(editor.scene, e) || hasComponent<MeshComponent>(editor.scene, e))
+            if (!hasComponent<TransformComponent>(scene, e) || hasComponent<MeshComponent>(scene, e))
             {
                 return;
             }
-            const glm::vec3 pos = worldTranslation(editor.scene, e);
+            const glm::vec3 pos = worldTranslation(scene, e);
             const GizmoProjection p = viewportProject(cam, width, height, pos);
             if (!p.visible)
             {
@@ -125,20 +135,20 @@ namespace se
                 }
             }
         };
-        forEach<PointLightComponent>(editor.scene, [&](Entity e, PointLightComponent&) { test(e); });
-        forEach<SpotLightComponent>(editor.scene,
+        forEach<PointLightComponent>(scene, [&](Entity e, PointLightComponent&) { test(e); });
+        forEach<SpotLightComponent>(scene,
                                     [&](Entity e, SpotLightComponent&)
                                     {
-                                        if (!hasComponent<PointLightComponent>(editor.scene, e))
+                                        if (!hasComponent<PointLightComponent>(scene, e))
                                         {
                                             test(e);
                                         }
                                     });
-        forEach<CameraComponent>(editor.scene,
+        forEach<CameraComponent>(scene,
                                  [&](Entity e, CameraComponent&)
                                  {
-                                     if (!hasComponent<PointLightComponent>(editor.scene, e) &&
-                                         !hasComponent<SpotLightComponent>(editor.scene, e))
+                                     if (!hasComponent<PointLightComponent>(scene, e) &&
+                                         !hasComponent<SpotLightComponent>(scene, e))
                                      {
                                          test(e);
                                      }
@@ -154,22 +164,22 @@ namespace se
             {
                 EntityList out;
                 forEach<IdComponent, NameComponent>(
-                    ctx.sceneEdit.scene,
+                    activeScene(ctx.sceneEdit),
                     [&](Entity entity, IdComponent& id, NameComponent& name)
                     {
                         EntityListEntry entry{ WireUuid{ id.id.value }, name.name, std::nullopt, std::nullopt };
                         // Omit parentId for roots (and bone for non-joints) so the
                         // optional fields stay genuinely optional.
-                        if (hasComponent<RelationshipComponent>(ctx.sceneEdit.scene, entity))
+                        if (hasComponent<RelationshipComponent>(activeScene(ctx.sceneEdit), entity))
                         {
                             const u64 parent =
-                                getComponent<RelationshipComponent>(ctx.sceneEdit.scene, entity).parent.value;
+                                getComponent<RelationshipComponent>(activeScene(ctx.sceneEdit), entity).parent.value;
                             if (parent != 0)
                             {
                                 entry.parentId = WireUuid{ parent };
                             }
                         }
-                        if (hasComponent<BoneComponent>(ctx.sceneEdit.scene, entity))
+                        if (hasComponent<BoneComponent>(activeScene(ctx.sceneEdit), entity))
                         {
                             entry.bone = true;
                         }
@@ -194,9 +204,9 @@ namespace se
             reg, "create-entity", "create-entity {name}",
             [](EngineContext& ctx, const CreateEntityParams& params) -> Result<EntityRef>
             {
-                Entity entity = createEntity(ctx.sceneEdit.scene, params.name);
+                Entity entity = createEntity(activeScene(ctx.sceneEdit), params.name);
                 ctx.sceneEdit.sceneVersion += 1;
-                return entityRefDto(ctx.sceneEdit.scene, entity);
+                return entityRefDto(activeScene(ctx.sceneEdit), entity);
             });
 
         registerCommand<EntityParams, DestroyEntityResult>(
@@ -208,10 +218,10 @@ namespace se
                 {
                     return Err(entity.error());
                 }
-                const u64 id = getComponent<IdComponent>(ctx.sceneEdit.scene, *entity).id.value;
+                const u64 id = getComponent<IdComponent>(activeScene(ctx.sceneEdit), *entity).id.value;
                 // destroyEntity takes the whole subtree, so clear the selection when it
                 // sits anywhere under the doomed root (walk the selection's ancestry).
-                Scene& scene = ctx.sceneEdit.scene;
+                Scene& scene = activeScene(ctx.sceneEdit);
                 entt::entity cursor =
                     scene.registry.valid(ctx.sceneEdit.selected.handle) ? ctx.sceneEdit.selected.handle : entt::null;
                 while (cursor != entt::null)
@@ -251,13 +261,13 @@ namespace se
                 }
                 // setParent carries the self/cycle guards and the world-preserving rebase;
                 // the selection stays intact (only sceneVersion bumps).
-                auto ok = setParent(ctx.sceneEdit.scene, *child, newParent);
+                auto ok = setParent(activeScene(ctx.sceneEdit), *child, newParent);
                 if (!ok)
                 {
                     return Err(ok.error());
                 }
                 ctx.sceneEdit.sceneVersion += 1;
-                return entityRefDto(ctx.sceneEdit.scene, *child);
+                return entityRefDto(activeScene(ctx.sceneEdit), *child);
             });
 
         registerCommand<ComponentParams, AddComponentResult>(
@@ -274,11 +284,11 @@ namespace se
                 {
                     return Err(std::format("unknown component '{}'", params.component));
                 }
-                if (row->has(ctx.sceneEdit.scene, *entity))
+                if (row->has(activeScene(ctx.sceneEdit), *entity))
                 {
                     return Err(std::format("entity already has '{}'", params.component));
                 }
-                row->addDefault(ctx.sceneEdit.scene, *entity);
+                row->addDefault(activeScene(ctx.sceneEdit), *entity);
                 ctx.sceneEdit.sceneVersion += 1;
                 return AddComponentResult{ row->name };
             });
@@ -301,7 +311,7 @@ namespace se
                 {
                     return Err(std::format("component '{}' is not removable", row->name));
                 }
-                row->remove(ctx.sceneEdit.scene, *entity);
+                row->remove(activeScene(ctx.sceneEdit), *entity);
                 ctx.sceneEdit.sceneVersion += 1;
                 return RemoveComponentResult{ row->name };
             });
@@ -322,7 +332,7 @@ namespace se
                 {
                     return Err(std::format("unknown component '{}'", params.component));
                 }
-                auto result = row->deserialize(ctx.sceneEdit.scene, *entity, params.json);
+                auto result = row->deserialize(activeScene(ctx.sceneEdit), *entity, params.json);
                 if (!result)
                 {
                     return Err(result.error());
@@ -331,7 +341,7 @@ namespace se
                 // caches follow (a cyclic parent is cut back to root with a warning).
                 if (row->name == "Relationship")
                 {
-                    relinkHierarchy(ctx.sceneEdit.scene);
+                    relinkHierarchy(activeScene(ctx.sceneEdit));
                 }
                 ctx.sceneEdit.sceneVersion += 1;
                 return SetComponentResult{ row->name };
@@ -340,7 +350,7 @@ namespace se
         // Routes through the Transform row's deserialize so the wire shape matches
         // scene files exactly: {translation:{x,y,z}, rotation:{x,y,z} Euler radians, scale:{x,y,z}}.
         registerCommand<SetTransformParams, EntityRef>(
-            reg, "set-transform", "set-transform {entity, translation?, rotation?, scale?}",
+            reg, "set-transform", "set-transform {entity, translation?, rotation?, scale?, smooth?:0|1}",
             [](EngineContext& ctx, const SetTransformParams& params) -> Result<EntityRef>
             {
                 auto entity = resolveEntity(ctx, params.entity);
@@ -353,13 +363,51 @@ namespace se
                 {
                     return Err(std::string{ "Transform component is not registered" });
                 }
-                if (!row->has(ctx.sceneEdit.scene, *entity))
+                if (!row->has(activeScene(ctx.sceneEdit), *entity))
                 {
                     return Err(std::string{ "entity has no Transform" });
                 }
+                // With preserve-children, freeze each direct child's world pose so the
+                // write below can rebase their locals (the children visually stay put).
+                std::vector<std::pair<entt::entity, glm::mat4>> childWorlds;
+                if (ctx.sceneEdit.preserveChildren &&
+                    hasComponent<RelationshipComponent>(activeScene(ctx.sceneEdit), *entity))
+                {
+                    for (entt::entity child :
+                         getComponent<RelationshipComponent>(activeScene(ctx.sceneEdit), *entity).children)
+                    {
+                        if (hasComponent<TransformComponent>(activeScene(ctx.sceneEdit), Entity{ child }))
+                        {
+                            childWorlds.emplace_back(child,
+                                                     composeWorldMatrix(activeScene(ctx.sceneEdit), Entity{ child }));
+                        }
+                    }
+                }
+                // Smooth edits become per-frame animation targets (stepEditSmoothing)
+                // instead of writes — except under preserve-children, where every write
+                // must rebase the subtree, so the edit applies exact.
+                if (params.smooth.value_or(false) && childWorlds.empty())
+                {
+                    TransformSmoothTarget& target = transformSmoothEntryFor(ctx.sceneEdit, *entity);
+                    if (params.translation)
+                    {
+                        target.translation = toGlm(*params.translation);
+                    }
+                    if (params.rotation)
+                    {
+                        target.rotation = toGlm(*params.rotation);
+                    }
+                    if (params.scale)
+                    {
+                        target.scale = toGlm(*params.scale);
+                    }
+                    ctx.sceneEdit.sceneVersion += 1;
+                    return entityRefDto(activeScene(ctx.sceneEdit), *entity);
+                }
+                cancelTransformSmoothing(ctx.sceneEdit, *entity);
                 // Merge provided fields over the current transform so unspecified
                 // fields (e.g. scale) are preserved rather than reset to defaults.
-                json body = row->serialize(ctx.sceneEdit.scene, *entity);
+                json body = row->serialize(activeScene(ctx.sceneEdit), *entity);
                 if (params.translation)
                 {
                     body["translation"] = vec3Json(*params.translation);
@@ -372,13 +420,21 @@ namespace se
                 {
                     body["scale"] = vec3Json(*params.scale);
                 }
-                auto result = row->deserialize(ctx.sceneEdit.scene, *entity, body);
+                auto result = row->deserialize(activeScene(ctx.sceneEdit), *entity, body);
                 if (!result)
                 {
                     return Err(result.error());
                 }
+                if (!childWorlds.empty())
+                {
+                    const glm::mat4 invWorld = glm::inverse(composeWorldMatrix(activeScene(ctx.sceneEdit), *entity));
+                    for (const auto& [child, world] : childWorlds)
+                    {
+                        setLocalFromMatrix(activeScene(ctx.sceneEdit), Entity{ child }, invWorld * world);
+                    }
+                }
                 ctx.sceneEdit.sceneVersion += 1;
-                return entityRefDto(ctx.sceneEdit.scene, *entity);
+                return entityRefDto(activeScene(ctx.sceneEdit), *entity);
             });
 
         // Adds/updates the entity's Material, merging the provided fields over its
@@ -386,7 +442,7 @@ namespace se
         registerCommand<SetMaterialParams, EntityRef>(
             reg, "set-material",
             "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid, metallic?, roughness?, "
-            "emissive?:{x,y,z}, emissiveStrength?, unlit?:0|1}",
+            "emissive?:{x,y,z}, emissiveStrength?, unlit?:0|1, smooth?:0|1}",
             [](EngineContext& ctx, const SetMaterialParams& params) -> Result<EntityRef>
             {
                 auto entity = resolveEntity(ctx, params.entity);
@@ -399,12 +455,16 @@ namespace se
                 {
                     return Err(std::string{ "Material component is not registered" });
                 }
-                if (!row->has(ctx.sceneEdit.scene, *entity))
+                if (!row->has(activeScene(ctx.sceneEdit), *entity))
                 {
-                    row->addDefault(ctx.sceneEdit.scene, *entity);
+                    row->addDefault(activeScene(ctx.sceneEdit), *entity);
                 }
-                json body = row->serialize(ctx.sceneEdit.scene, *entity);
-                if (params.baseColor)
+                const bool smooth = params.smooth.value_or(false);
+                json body = row->serialize(activeScene(ctx.sceneEdit), *entity);
+                // With smooth, numeric fields become per-frame animation targets instead of
+                // direct writes (merging only texture/unlit here keeps the JSON round-trip
+                // from stomping the component's mid-animation values back).
+                if (params.baseColor && !smooth)
                 {
                     body["baseColor"] = vec4Json(*params.baseColor);
                 }
@@ -412,19 +472,19 @@ namespace se
                 {
                     body["albedoTexture"] = params.albedoTexture->value;
                 }
-                if (params.metallic)
+                if (params.metallic && !smooth)
                 {
                     body["metallic"] = *params.metallic;
                 }
-                if (params.roughness)
+                if (params.roughness && !smooth)
                 {
                     body["roughness"] = *params.roughness;
                 }
-                if (params.emissive)
+                if (params.emissive && !smooth)
                 {
                     body["emissive"] = vec3Json(*params.emissive);
                 }
-                if (params.emissiveStrength)
+                if (params.emissiveStrength && !smooth)
                 {
                     body["emissiveStrength"] = *params.emissiveStrength;
                 }
@@ -432,13 +492,42 @@ namespace se
                 {
                     body["unlit"] = *params.unlit;
                 }
-                auto result = row->deserialize(ctx.sceneEdit.scene, *entity, body);
+                auto result = row->deserialize(activeScene(ctx.sceneEdit), *entity, body);
                 if (!result)
                 {
                     return Err(result.error());
                 }
+                if (smooth)
+                {
+                    MaterialSmoothTarget& target = materialSmoothEntryFor(ctx.sceneEdit, *entity);
+                    if (params.baseColor)
+                    {
+                        target.baseColor = glm::vec4{ params.baseColor->x, params.baseColor->y, params.baseColor->z,
+                                                      params.baseColor->w };
+                    }
+                    if (params.metallic)
+                    {
+                        target.metallic = *params.metallic;
+                    }
+                    if (params.roughness)
+                    {
+                        target.roughness = *params.roughness;
+                    }
+                    if (params.emissive)
+                    {
+                        target.emissive = glm::vec3{ params.emissive->x, params.emissive->y, params.emissive->z };
+                    }
+                    if (params.emissiveStrength)
+                    {
+                        target.emissiveStrength = *params.emissiveStrength;
+                    }
+                }
+                else
+                {
+                    cancelMaterialSmoothing(ctx.sceneEdit, *entity);
+                }
                 ctx.sceneEdit.sceneVersion += 1;
-                return entityRefDto(ctx.sceneEdit.scene, *entity);
+                return entityRefDto(activeScene(ctx.sceneEdit), *entity);
             });
 
         // Sets the directional light (the given entity, else the first one),
@@ -464,7 +553,7 @@ namespace se
                 }
                 else
                 {
-                    forEach<DirectionalLightComponent>(ctx.sceneEdit.scene,
+                    forEach<DirectionalLightComponent>(activeScene(ctx.sceneEdit),
                                                        [&](Entity entity, DirectionalLightComponent&)
                                                        {
                                                            if (target.handle == entt::null)
@@ -473,11 +562,11 @@ namespace se
                                                            }
                                                        });
                 }
-                if (target.handle == entt::null || !row->has(ctx.sceneEdit.scene, target))
+                if (target.handle == entt::null || !row->has(activeScene(ctx.sceneEdit), target))
                 {
                     return Err(std::string{ "no DirectionalLight to set" });
                 }
-                json body = row->serialize(ctx.sceneEdit.scene, target);
+                json body = row->serialize(activeScene(ctx.sceneEdit), target);
                 if (params.direction)
                 {
                     body["direction"] = vec3Json(*params.direction);
@@ -494,13 +583,13 @@ namespace se
                 {
                     body["ambient"] = *params.ambient;
                 }
-                auto result = row->deserialize(ctx.sceneEdit.scene, target, body);
+                auto result = row->deserialize(activeScene(ctx.sceneEdit), target, body);
                 if (!result)
                 {
                     return Err(result.error());
                 }
                 ctx.sceneEdit.sceneVersion += 1;
-                return entityRefDto(ctx.sceneEdit.scene, target);
+                return entityRefDto(activeScene(ctx.sceneEdit), target);
             });
 
         registerCommand<EntityParams, EntityRef>(reg, "select", "select {entity}",
@@ -512,7 +601,7 @@ namespace se
                                                          return Err(entity.error());
                                                      }
                                                      setSelection(ctx.sceneEdit, *entity);
-                                                     return entityRefDto(ctx.sceneEdit.scene, *entity);
+                                                     return entityRefDto(activeScene(ctx.sceneEdit), *entity);
                                                  });
 
         registerCommand<PickParams, PickResult>(
@@ -521,7 +610,9 @@ namespace se
             {
                 const f32 u = params.u.value_or(0.5f);
                 const f32 v = params.v.value_or(0.5f);
-                const CameraView cam = sceneEditCameraView(ctx.sceneEdit.camera);
+                // The eye the frame was rendered with, so a click during play ray-casts from
+                // the game camera, not the parked fly-cam.
+                const CameraView cam = renderCameraView(ctx.sceneEdit);
                 const u32 width = viewportWidth(ctx.renderer);
                 const u32 height = viewportHeight(ctx.renderer);
                 const glm::vec2 mouse{ u * static_cast<f32>(width), v * static_cast<f32>(height) };
@@ -532,20 +623,20 @@ namespace se
                 if (billboard.handle != entt::null)
                 {
                     setSelection(ctx.sceneEdit, billboard);
-                    EntityRef ref = entityRefDto(ctx.sceneEdit.scene, billboard);
+                    EntityRef ref = entityRefDto(activeScene(ctx.sceneEdit), billboard);
                     return PickResult{ true, ref.id, ref.name, PickKind::Billboard };
                 }
 
                 // pickEntity flips proj[1][1] to match the renderer's clip space, so it
                 // expects y-down NDC: v=0 (viewport top) maps to ndc.y=-1.
-                const Entity hit = pickEntity(ctx.sceneEdit.scene, ctx.assets, ctx.renderer, cam,
+                const Entity hit = pickEntity(activeScene(ctx.sceneEdit), ctx.assets, ctx.renderer, cam,
                                               glm::vec2{ u * 2.0f - 1.0f, v * 2.0f - 1.0f });
                 setSelection(ctx.sceneEdit, hit);
                 if (hit.handle == entt::null)
                 {
                     return PickResult{ false, std::nullopt, std::nullopt, std::nullopt };
                 }
-                EntityRef ref = entityRefDto(ctx.sceneEdit.scene, hit);
+                EntityRef ref = entityRefDto(activeScene(ctx.sceneEdit), hit);
                 return PickResult{ true, ref.id, ref.name, PickKind::Mesh };
             });
 
@@ -561,12 +652,12 @@ namespace se
                 json components = json::object();
                 for (const ComponentTraits& row : ctx.sceneEdit.registry.rows)
                 {
-                    if (row.has(ctx.sceneEdit.scene, *entity))
+                    if (row.has(activeScene(ctx.sceneEdit), *entity))
                     {
-                        components[row.name] = row.serialize(ctx.sceneEdit.scene, *entity);
+                        components[row.name] = row.serialize(activeScene(ctx.sceneEdit), *entity);
                     }
                 }
-                EntityRef ref = entityRefDto(ctx.sceneEdit.scene, *entity);
+                EntityRef ref = entityRefDto(activeScene(ctx.sceneEdit), *entity);
                 return InspectResult{ ref.id, ref.name, std::move(components) };
             });
 
@@ -579,19 +670,19 @@ namespace se
                 {
                     return Err(entity.error());
                 }
-                if (!hasComponent<TransformComponent>(ctx.sceneEdit.scene, *entity))
+                if (!hasComponent<TransformComponent>(activeScene(ctx.sceneEdit), *entity))
                 {
                     return Err(std::string{ "entity has no Transform" });
                 }
-                const glm::vec3 target = worldTranslation(ctx.sceneEdit.scene, *entity);
+                const glm::vec3 target = worldTranslation(activeScene(ctx.sceneEdit), *entity);
                 ctx.sceneEdit.camera.position = target - sceneEditCameraForward(ctx.sceneEdit.camera) * 5.0f;
-                return entityRefDto(ctx.sceneEdit.scene, *entity);
+                return entityRefDto(activeScene(ctx.sceneEdit), *entity);
             });
 
         registerCommand<EmptyParams, EnvironmentDto>(
             reg, "get-environment", "get-environment — dump the scene sky/environment settings",
             [](EngineContext& ctx, const EmptyParams&) -> Result<EnvironmentDto>
-            { return environmentDto(ctx.sceneEdit.scene); });
+            { return environmentDto(activeScene(ctx.sceneEdit)); });
 
         // Merges the provided fields over the current environment (same wire shape as the
         // scene file's "environment" block) so unspecified fields are preserved. Pass a typed
@@ -603,7 +694,7 @@ namespace se
             "ambientColor?:{x,y,z}, ambientIntensity?}",
             [](EngineContext& ctx, const SetEnvironmentParams& params) -> Result<EnvironmentDto>
             {
-                json body = environmentToJson(ctx.sceneEdit.scene.environment);
+                json body = environmentToJson(activeScene(ctx.sceneEdit).environment);
                 if (params.json && params.json->is_object())
                 {
                     for (auto it = params.json->begin(); it != params.json->end(); ++it)
@@ -651,9 +742,9 @@ namespace se
                 {
                     body["ambientIntensity"] = *params.ambientIntensity;
                 }
-                ctx.sceneEdit.scene.environment = environmentFromJson(body);
+                activeScene(ctx.sceneEdit).environment = environmentFromJson(body);
                 ctx.sceneEdit.sceneVersion += 1;
-                return environmentDto(ctx.sceneEdit.scene);
+                return environmentDto(activeScene(ctx.sceneEdit));
             });
 
         // Merges atmosphere fields over the current environment's "atmosphere" block (same wire
@@ -666,7 +757,7 @@ namespace se
             "mieAnisotropy?, ozoneAbsorption?:{x,y,z}, sunDiskAngularRadius?, sunDiskIntensity?}",
             [](EngineContext& ctx, const SetAtmosphereParams& params) -> Result<EnvironmentDto>
             {
-                json body = environmentToJson(ctx.sceneEdit.scene.environment);
+                json body = environmentToJson(activeScene(ctx.sceneEdit).environment);
                 json atmos = body["atmosphere"];
                 if (params.json && params.json->is_object())
                 {
@@ -720,9 +811,9 @@ namespace se
                     atmos["sunDiskIntensity"] = *params.sunDiskIntensity;
                 }
                 body["atmosphere"] = atmos;
-                ctx.sceneEdit.scene.environment = environmentFromJson(body);
+                activeScene(ctx.sceneEdit).environment = environmentFromJson(body);
                 ctx.sceneEdit.sceneVersion += 1;
-                return environmentDto(ctx.sceneEdit.scene);
+                return environmentDto(activeScene(ctx.sceneEdit));
             });
 
         registerCommand<EmptyParams, SelectionResult>(
@@ -730,11 +821,13 @@ namespace se
             [](EngineContext& ctx, const EmptyParams&) -> Result<SelectionResult>
             {
                 SelectionResult out{ static_cast<i32>(ctx.sceneEdit.selectionVersion),
-                                     static_cast<i32>(ctx.sceneEdit.sceneVersion), std::nullopt };
+                                     static_cast<i32>(ctx.sceneEdit.sceneVersion), std::nullopt,
+                                     playStateName(ctx.sceneEdit.playState),
+                                     static_cast<i32>(ctx.sceneEdit.playVersion) };
                 const Entity sel = ctx.sceneEdit.selected;
-                if (sel.handle != entt::null && valid(ctx.sceneEdit.scene, sel))
+                if (sel.handle != entt::null && valid(activeScene(ctx.sceneEdit), sel))
                 {
-                    out.entity = entityRefDto(ctx.sceneEdit.scene, sel);
+                    out.entity = entityRefDto(activeScene(ctx.sceneEdit), sel);
                 }
                 return out;
             });
@@ -747,12 +840,76 @@ namespace se
                 return DeselectResult{ static_cast<i32>(ctx.sceneEdit.selectionVersion) };
             });
 
+        registerCommand<EmptyParams, PlayStateResult>(
+            reg, "play", "play — enter play mode (Edit) or resume (Paused)",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
+            {
+                if (ctx.sceneEdit.playState == PlayState::Paused)
+                {
+                    auto resumed = resumePlay(ctx.sceneEdit);
+                    if (!resumed)
+                    {
+                        return Err(resumed.error());
+                    }
+                }
+                else
+                {
+                    auto entered = enterPlay(ctx.sceneEdit);
+                    if (!entered)
+                    {
+                        return Err(entered.error());
+                    }
+                }
+                return playStateResultDto(ctx.sceneEdit);
+            });
+
+        registerCommand<EmptyParams, PlayStateResult>(
+            reg, "pause", "pause — freeze the running scene (Playing only)",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
+            {
+                auto paused = pausePlay(ctx.sceneEdit);
+                if (!paused)
+                {
+                    return Err(paused.error());
+                }
+                return playStateResultDto(ctx.sceneEdit);
+            });
+
+        registerCommand<StepParams, PlayStateResult>(
+            reg, "step", "step {frames=1} — advance fixed ticks (Paused only)",
+            [](EngineContext& ctx, const StepParams& params) -> Result<PlayStateResult>
+            {
+                auto stepped = stepPlay(ctx.sceneEdit, params.frames.value_or(1));
+                if (!stepped)
+                {
+                    return Err(stepped.error());
+                }
+                return playStateResultDto(ctx.sceneEdit);
+            });
+
+        registerCommand<EmptyParams, PlayStateResult>(
+            reg, "stop", "stop — discard the play scene and restore the authored one",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
+            {
+                auto stopped = stopPlay(ctx.sceneEdit);
+                if (!stopped)
+                {
+                    return Err(stopped.error());
+                }
+                return playStateResultDto(ctx.sceneEdit);
+            });
+
+        registerCommand<EmptyParams, PlayStateResult>(
+            reg, "get-play-state", "get-play-state — the current play state + version",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
+            { return playStateResultDto(ctx.sceneEdit); });
+
         registerCommand<AddEntityParams, EntityRef>(
             reg, "add-entity",
             "add-entity {preset=empty|cube|model|point-light|spot-light|directional-light|camera|reflection-probe}",
             [](EngineContext& ctx, const AddEntityParams& params) -> Result<EntityRef>
             {
-                Scene& scene = ctx.sceneEdit.scene;
+                Scene& scene = activeScene(ctx.sceneEdit);
                 Entity e{ entt::null };
                 const AddEntityPreset preset = params.preset.value_or(AddEntityPreset::Empty);
                 if (preset == AddEntityPreset::Empty)
@@ -814,7 +971,7 @@ namespace se
                 {
                     return Err(src.error());
                 }
-                Scene& scene = ctx.sceneEdit.scene;
+                Scene& scene = activeScene(ctx.sceneEdit);
                 const std::string copyName = getComponent<NameComponent>(scene, *src).name + " (copy)";
                 Entity fresh = createEntity(scene, copyName);
                 // deserialize add-defaults each missing component and applies fromJson, so we
@@ -851,9 +1008,9 @@ namespace se
                 {
                     return Err(std::string{ "usage: rename-entity {entity, name}" });
                 }
-                getComponent<NameComponent>(ctx.sceneEdit.scene, *entity).name = params.name;
+                getComponent<NameComponent>(activeScene(ctx.sceneEdit), *entity).name = params.name;
                 ctx.sceneEdit.sceneVersion += 1;
-                return entityRefDto(ctx.sceneEdit.scene, *entity);
+                return entityRefDto(activeScene(ctx.sceneEdit), *entity);
             });
 
         registerCommand<SetComponentFieldParams, SetComponentFieldResult>(
@@ -876,11 +1033,11 @@ namespace se
                 {
                     return Err(std::format("unknown component '{}'", params.component));
                 }
-                if (!row->has(ctx.sceneEdit.scene, *entity))
+                if (!row->has(activeScene(ctx.sceneEdit), *entity))
                 {
-                    row->addDefault(ctx.sceneEdit.scene, *entity);
+                    row->addDefault(activeScene(ctx.sceneEdit), *entity);
                 }
-                json body = row->serialize(ctx.sceneEdit.scene, *entity);
+                json body = row->serialize(activeScene(ctx.sceneEdit), *entity);
                 json value = params.value;
                 // The CLI passes every value as a string; a fully-numeric one becomes a u64 so
                 // numeric/id fields land as numbers, while non-numeric strings pass through.
@@ -895,7 +1052,7 @@ namespace se
                     }
                 }
                 body[params.field] = value;
-                auto result = row->deserialize(ctx.sceneEdit.scene, *entity, body);
+                auto result = row->deserialize(activeScene(ctx.sceneEdit), *entity, body);
                 if (!result)
                 {
                     return Err(result.error());
@@ -904,7 +1061,7 @@ namespace se
                 // caches follow (a cyclic parent is cut back to root with a warning).
                 if (row->name == "Relationship")
                 {
-                    relinkHierarchy(ctx.sceneEdit.scene);
+                    relinkHierarchy(activeScene(ctx.sceneEdit));
                 }
                 ctx.sceneEdit.sceneVersion += 1;
                 return SetComponentFieldResult{ row->name, params.field };
@@ -959,9 +1116,13 @@ namespace se
                                                  { return gizmoStateDto(ctx.sceneEdit); });
 
         registerCommand<SetGizmoParams, GizmoState>(
-            reg, "set-gizmo", "set-gizmo {op?:translate|rotate|scale, space?:world|local}",
+            reg, "set-gizmo", "set-gizmo {op?:translate|rotate|scale, space?:world|local, preserveChildren?:0|1}",
             [](EngineContext& ctx, const SetGizmoParams& params) -> Result<GizmoState>
             {
+                if (ctx.sceneEdit.playState != PlayState::Edit)
+                {
+                    return Err("gizmo is hidden during play");
+                }
                 if (params.op)
                 {
                     ctx.sceneEdit.gizmoOp = *params.op == GizmoOpDto::Rotate  ? GizmoOp::Rotate
@@ -973,6 +1134,10 @@ namespace se
                     ctx.sceneEdit.gizmoSpace =
                         *params.space == GizmoSpaceDto::Local ? GizmoSpace::Local : GizmoSpace::World;
                 }
+                if (params.preserveChildren)
+                {
+                    ctx.sceneEdit.preserveChildren = *params.preserveChildren;
+                }
                 return gizmoStateDto(ctx.sceneEdit);
             });
 
@@ -981,6 +1146,10 @@ namespace se
             "gizmo-pointer {phase:hover|begin|drag|end, x, y} — drive the overlay gizmo (x,y are NDC [-1,1])",
             [](EngineContext& ctx, const GizmoPointerParams& params) -> Result<GizmoPointerResult>
             {
+                if (ctx.sceneEdit.playState != PlayState::Edit)
+                {
+                    return Err("gizmo is hidden during play");
+                }
                 // Keep mode/space in sync with the backend-neutral gizmo state (the single source).
                 syncNativeGizmo(ctx.sceneEdit);
                 const CameraView cam = sceneEditCameraView(ctx.sceneEdit.camera);
@@ -1002,7 +1171,7 @@ namespace se
                 {
                     gizmo.hovered = hitNativeGizmo(ctx.sceneEdit, cam, width, height, mouse);
                     if (gizmo.hovered != NativeGizmoHandle::None && ctx.sceneEdit.selected.handle != entt::null &&
-                        hasComponent<TransformComponent>(ctx.sceneEdit.scene, ctx.sceneEdit.selected))
+                        hasComponent<TransformComponent>(activeScene(ctx.sceneEdit), ctx.sceneEdit.selected))
                     {
                         gizmo.active = gizmo.hovered;
                         gizmo.dragging = true;
@@ -1082,7 +1251,7 @@ namespace se
             [](EngineContext& ctx, const EmptyParams&) -> Result<RecaptureProbesResult>
             {
                 u32 count = 0;
-                forEach<ReflectionProbeComponent>(ctx.sceneEdit.scene,
+                forEach<ReflectionProbeComponent>(activeScene(ctx.sceneEdit),
                                                   [&](Entity, ReflectionProbeComponent& probe)
                                                   {
                                                       probe.dirty = true;
