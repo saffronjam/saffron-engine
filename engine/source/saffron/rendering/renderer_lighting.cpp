@@ -165,8 +165,11 @@ namespace se
         params.view = view;
         params.inverseProjection = glm::inverse(proj);
         params.gridSize = glm::uvec4(ClusterGridX, ClusterGridY, ClusterGridZ, renderer.lighting.frameLightCount);
-        params.screenSize =
-            glm::uvec4(viewportWidth(renderer), viewportHeight(renderer), renderer.lighting.useClustered ? 1u : 0u, 0u);
+        // The clustered flag means "the froxel lists are valid this frame": with zero lights
+        // the cull dispatch is skipped, so the buffers hold stale lists from the last dispatch
+        // and the fragment must take the flat loop (which counts.x bounds to nothing) instead.
+        const bool clusteredValid = renderer.lighting.useClustered && renderer.lighting.frameLightCount > 0;
+        params.screenSize = glm::uvec4(viewportWidth(renderer), viewportHeight(renderer), clusteredValid ? 1u : 0u, 0u);
         params.zPlanes = glm::vec4(nearPlane, farPlane, 0.0f, 0.0f);
         std::memcpy(renderer.lighting.clusterParamMapped[frame], &params, sizeof(params));
         vmaFlushAllocation(renderer.context.allocator, renderer.lighting.clusterParamAllocs[frame], 0, sizeof(params));
