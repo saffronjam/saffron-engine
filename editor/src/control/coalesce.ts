@@ -1,6 +1,7 @@
 /// Write-coalescer for high-frequency mutations (gizmo echo, scrub fields, sliders).
-/// Buffers the latest pushed value, throttles sends to >= throttleMs apart, and
-/// tracks sent/completed/in-flight counters around the async send. Ported and
+/// Buffers the latest pushed value, keeps at most ONE send in flight (completion
+/// flushes whatever was buffered meanwhile), spaces send starts >= throttleMs apart,
+/// and tracks sent/completed/in-flight counters around the async send. Ported and
 /// generalized from the worktree `queueTransform`.
 
 export interface CoalescerStats {
@@ -10,15 +11,15 @@ export interface CoalescerStats {
 }
 
 export interface Coalescer<T> {
-  /// Record the latest value; sends it now if the throttle window has elapsed,
-  /// otherwise it is buffered and overwrites any prior pending value.
+  /// Record the latest value; sends it once the in-flight send (if any) completes
+  /// and the throttle window has elapsed. Overwrites any prior pending value.
   push(value: T): void;
   /// Counters for diagnostics (sent/completed since process start, current in-flight).
   stats(): CoalescerStats;
 }
 
 export interface CoalescerOptions<T> {
-  /// Minimum milliseconds between two sends (default 4).
+  /// Minimum milliseconds between two send starts (default 16, the pointer sample rate).
   throttleMs?: number;
   /// The async sink for the latest buffered value.
   send: (latest: T) => Promise<unknown>;
@@ -30,14 +31,14 @@ export interface CoalescerOptions<T> {
 const ERROR_LOG_THROTTLE_MS = 2000;
 
 export function makeCoalescer<T>(options: CoalescerOptions<T>): Coalescer<T> {
-  const throttleMs = options.throttleMs ?? 4;
+  const throttleMs = options.throttleMs ?? 16;
   const { send } = options;
 
   let pending: { value: T } | null = null;
   let lastSentAt = 0;
   let sent = 0;
   let completed = 0;
-  let inFlight = 0;
+  let inFlight = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastErrorLoggedAt = 0;
 
@@ -54,47 +55,50 @@ export function makeCoalescer<T>(options: CoalescerOptions<T>): Coalescer<T> {
     console.error("coalesced write rejected:", err);
   }
 
-  function flush(): void {
-    const buffered = pending;
-    pending = null;
-    if (!buffered) {
+  // Single-in-flight pump: at most one send is ever outstanding, the throttle is a
+  // floor between send starts, and completion re-drives so the latest pushed value
+  // is never dropped. The gate is what keeps per-key sends ordered now that the
+  // Tauri `control` command is async (concurrent invokes have no ordering guarantee).
+  function maybeSend(): void {
+    if (pending === null || inFlight) {
       return;
     }
-    lastSentAt = performance.now();
+    const now = performance.now();
+    const elapsed = now - lastSentAt;
+    if (elapsed < throttleMs) {
+      if (timer === null) {
+        timer = setTimeout(() => {
+          timer = null;
+          maybeSend();
+        }, throttleMs - elapsed);
+      }
+      return;
+    }
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    const buffered = pending;
+    pending = null;
+    lastSentAt = now;
     sent += 1;
-    inFlight += 1;
+    inFlight = true;
     void Promise.resolve(send(buffered.value))
       .catch(logRejection)
       .finally(() => {
         completed += 1;
-        inFlight = Math.max(0, inFlight - 1);
+        inFlight = false;
+        maybeSend();
       });
   }
 
   return {
     push(value: T): void {
       pending = { value };
-      const now = performance.now();
-      const elapsed = now - lastSentAt;
-      if (elapsed >= throttleMs) {
-        if (timer !== null) {
-          clearTimeout(timer);
-          timer = null;
-        }
-        flush();
-        return;
-      }
-      // Within the throttle window: schedule a trailing flush so the latest value
-      // is never dropped, coalescing any further pushes into it.
-      if (timer === null) {
-        timer = setTimeout(() => {
-          timer = null;
-          flush();
-        }, throttleMs - elapsed);
-      }
+      maybeSend();
     },
     stats(): CoalescerStats {
-      return { sent, completed, inFlight };
+      return { sent, completed, inFlight: inFlight ? 1 : 0 };
     },
   };
 }
