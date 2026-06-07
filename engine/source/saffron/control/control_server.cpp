@@ -76,7 +76,8 @@ namespace se
         {
             return Err(std::string{ "missing 'entity' (uuid or name)" });
         }
-        Scene& scene = ctx.sceneEdit.scene;
+        // Selectors must find runtime entities during play, so resolve against the active scene.
+        Scene& scene = activeScene(ctx.sceneEdit);
 
         // UUID first (stable across reloads); a numeric string counts as a UUID.
         u64 wanted = 0;
@@ -101,14 +102,7 @@ namespace se
         Entity found{ entt::null };
         if (haveUuid)
         {
-            forEach<IdComponent>(scene,
-                                 [&](Entity entity, IdComponent& id)
-                                 {
-                                     if (id.id.value == wanted)
-                                     {
-                                         found = entity;
-                                     }
-                                 });
+            found = findEntityByUuid(scene, wanted);
             if (found.handle != entt::null)
             {
                 return found;
