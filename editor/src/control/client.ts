@@ -20,6 +20,7 @@ import type {
   GizmoState,
   InspectResult,
   Material,
+  PlayStateResult,
   RenderStats,
   Selection,
   Thumbnail,
@@ -64,6 +65,12 @@ export interface AppDataInfo {
   userdataDir: string;
   envProject: boolean;
   autoEmptyProject: boolean;
+}
+
+/// Editor-wide settings persisted in appdata/settings.json. `keyBindings` holds only
+/// the user's overrides (command id → key-string); defaults live in lib/keybindings.
+export interface EditorSettings {
+  keyBindings: Record<string, string>;
 }
 
 /// One pointer phase forwarded to the native gizmo. `hover` tracks the handle
@@ -132,13 +139,17 @@ export const client = {
   },
 
   // --- transform / components ---
-  setTransform(id: string, partial: Partial<Transform>): Promise<unknown> {
-    return call("set-transform", { entity: id, ...partial });
+  /// `smooth` makes the engine animate the fields toward the values (~25ms) instead
+  /// of snapping — sent only mid-drag; the release send omits it.
+  setTransform(id: string, partial: Partial<Transform>, smooth?: boolean): Promise<unknown> {
+    return call("set-transform", { entity: id, ...partial, ...(smooth ? { smooth: true } : {}) });
   },
   /// Material merge helper (server-side merge over the current material, like
   /// set-transform). `albedoTexture` is a string uuid the engine coerces to u64.
-  setMaterial(id: string, partial: Partial<Material>): Promise<unknown> {
-    return call("set-material", { entity: id, ...partial });
+  /// `smooth` makes the engine animate numeric fields toward the values (~25ms)
+  /// instead of snapping — sent only mid-drag; the release send omits it.
+  setMaterial(id: string, partial: Partial<Material>, smooth?: boolean): Promise<unknown> {
+    return call("set-material", { entity: id, ...partial, ...(smooth ? { smooth: true } : {}) });
   },
   addComponent(id: string, component: string): Promise<unknown> {
     return call("add-component", { entity: id, component });
@@ -161,6 +172,27 @@ export const client = {
   // --- picking ---
   pick(u: number, v: number): Promise<PickResult> {
     return call("pick", { u, v });
+  },
+
+  // --- play mode ---
+  /// Enter play mode (from edit) or resume (from paused): the engine duplicates the
+  /// scene and cuts to its primary camera. `hasPrimaryCamera:false` → fly-cam fallback.
+  play(): Promise<PlayStateResult> {
+    return call("play");
+  },
+  pause(): Promise<PlayStateResult> {
+    return call("pause");
+  },
+  /// Discard the play duplicate and restore the authored scene.
+  stop(): Promise<PlayStateResult> {
+    return call("stop");
+  },
+  /// Advance fixed ticks while paused (default 1).
+  step(frames?: number): Promise<PlayStateResult> {
+    return call("step", frames === undefined ? {} : { frames });
+  },
+  getPlayState(): Promise<PlayStateResult> {
+    return call("get-play-state");
   },
 
   // --- gizmo ---
@@ -274,6 +306,12 @@ export const client = {
   rememberRecentProject(project: RecentProject): Promise<RecentProjects> {
     return invoke<RecentProjects>("remember_recent_project", { project });
   },
+  loadEditorSettings(): Promise<EditorSettings> {
+    return invoke<EditorSettings>("load_editor_settings");
+  },
+  saveEditorSettings(settings: EditorSettings): Promise<void> {
+    return invoke<void>("save_editor_settings", { settings });
+  },
 
   // --- stats / environment ---
   renderStats(): Promise<RenderStats> {
@@ -353,6 +391,11 @@ export const client = {
   /// `project.json`). Clears the engine's selection; the caller resets the store.
   loadProject(path?: string): Promise<ProjectInfo> {
     return call("load-project", path === undefined ? {} : { path });
+  },
+  /// Close the active project and load it again from its own path (catalog + scene +
+  /// GPU assets). Clears the engine's selection; the caller resets the store.
+  reloadProject(): Promise<ProjectInfo> {
+    return call("reload-project");
   },
   /// Write the scene only to `path` (required).
   saveScene(path: string): Promise<{ path: string }> {
