@@ -391,9 +391,11 @@ export namespace se
         }
     }
 
-    // Saves the whole project (asset catalog + scene entities + render settings) to one JSON file.
+    // Saves the whole project (asset catalog + scene entities + render settings + the editor
+    // camera, when the caller passes one) to one JSON file.
     auto saveProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
-                     const ProjectInfo& project, const std::string& path) -> Result<void>
+                     const ProjectInfo& project, const std::string& path, const nlohmann::json& editorCamera = {})
+        -> Result<void>
     {
         const std::string target = path.empty() ? project.path : path;
         if (target.empty())
@@ -408,6 +410,10 @@ export namespace se
         doc["assetFolders"] = catalogFoldersToJson(assets.catalog);
         doc["scene"] = sceneToJson(reg, scene);
         doc["renderSettings"] = renderSettingsToJson(renderer);
+        if (editorCamera.is_object())
+        {
+            doc["editorCamera"] = editorCamera;
+        }
 
         const std::filesystem::path parent = std::filesystem::path(target).parent_path();
         if (!parent.empty())
@@ -431,8 +437,11 @@ export namespace se
 
     // Loads a project file: replaces the catalog + scene. Clears the GPU caches (after a
     // device idle) so stale Refs are dropped and assets re-resolve from the new catalog.
+    // The saved editor-camera block (if any) lands in `editorCamera` for the caller —
+    // assets cannot apply it, SceneEdit owns the camera.
     auto loadProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
-                     ProjectInfo& project, const std::string& selection) -> Result<void>
+                     ProjectInfo& project, const std::string& selection, nlohmann::json* editorCamera = nullptr)
+        -> Result<void>
     {
         const std::filesystem::path path = projectJsonPath(selection);
         std::ifstream in(path);
@@ -463,6 +472,10 @@ export namespace se
         if (doc.contains("renderSettings"))
         {
             applyRenderSettings(renderer, doc["renderSettings"]);
+        }
+        if (editorCamera != nullptr)
+        {
+            *editorCamera = doc.value("editorCamera", nlohmann::json{});
         }
         return sceneFromJson(reg, scene, doc.value("scene", nlohmann::json::object()));
     }
