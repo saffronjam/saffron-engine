@@ -266,8 +266,7 @@ namespace se
             [](EngineContext& ctx, const SetViewportSizeParams& params) -> Result<SetViewportSizeResult>
             {
                 const i32 width = std::max(1, params.width.value_or(static_cast<i32>(viewportWidth(ctx.renderer))));
-                const i32 height =
-                    std::max(1, params.height.value_or(static_cast<i32>(viewportHeight(ctx.renderer))));
+                const i32 height = std::max(1, params.height.value_or(static_cast<i32>(viewportHeight(ctx.renderer))));
                 setViewportDesiredSize(ctx.renderer, static_cast<u32>(width), static_cast<u32>(height));
                 return SetViewportSizeResult{ width, height };
             });

@@ -1868,17 +1868,15 @@ namespace se
             return;
         }
 
-        transitionImage(
-            cmd, src.image, src.layout, vk::ImageLayout::eTransferSrcOptimal,
-            vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eColorAttachmentWrite,
-            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+        transitionImage(cmd, src.image, src.layout, vk::ImageLayout::eTransferSrcOptimal,
+                        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                        vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eColorAttachmentWrite,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
         src.layout = vk::ImageLayout::eTransferSrcOptimal;
 
-        transitionImage(
-            cmd, slot.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-            vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
-            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+        transitionImage(cmd, slot.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
 
         vk::ImageBlit blit{};
         blit.srcSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
@@ -1887,13 +1885,12 @@ namespace se
         blit.dstSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
         blit.dstOffsets[0] = vk::Offset3D{ 0, 0, 0 };
         blit.dstOffsets[1] = vk::Offset3D{ static_cast<i32>(width), static_cast<i32>(height), 1 };
-        cmd.blitImage(src.image, vk::ImageLayout::eTransferSrcOptimal, slot.image,
-                      vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eNearest);
+        cmd.blitImage(src.image, vk::ImageLayout::eTransferSrcOptimal, slot.image, vk::ImageLayout::eTransferDstOptimal,
+                      blit, vk::Filter::eNearest);
 
-        transitionImage(
-            cmd, slot.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
-            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
-            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead);
+        transitionImage(cmd, slot.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+                        vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead);
 
         vk::BufferImageCopy region{};
         region.imageSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
