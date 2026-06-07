@@ -654,6 +654,96 @@
       }
     },
     {
+      "name": "play",
+      "summary": "enter or resume play mode",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
+        }
+      }
+    },
+    {
+      "name": "pause",
+      "summary": "pause the running scene",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
+        }
+      }
+    },
+    {
+      "name": "step",
+      "summary": "step {frames=1} while paused",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/StepParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
+        }
+      }
+    },
+    {
+      "name": "stop",
+      "summary": "stop play and restore the authored scene",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
+        }
+      }
+    },
+    {
+      "name": "get-play-state",
+      "summary": "current play state",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
+        }
+      }
+    },
+    {
       "name": "add-entity",
       "summary": "add-entity {preset}",
       "params": [
@@ -1237,6 +1327,24 @@
           "name": "params",
           "schema": {
             "$ref": "#/components/schemas/OptionalPathParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ProjectInfoDto"
+        }
+      }
+    },
+    {
+      "name": "reload-project",
+      "summary": "reload the active project",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
           }
         }
       ],
@@ -1993,11 +2101,15 @@
               "world",
               "local"
             ]
+          },
+          "preserveChildren": {
+            "type": "boolean"
           }
         },
         "required": [
           "op",
-          "space"
+          "space",
+          "preserveChildren"
         ]
       },
       "ImportModelResult": {
@@ -2217,6 +2329,30 @@
           "engine",
           "version",
           "pid"
+        ]
+      },
+      "PlayStateResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "playVersion": {
+            "type": "integer"
+          },
+          "sceneVersion": {
+            "type": "integer"
+          },
+          "hasPrimaryCamera": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state",
+          "playVersion",
+          "sceneVersion",
+          "hasPrimaryCamera"
         ]
       },
       "ProbeRef": {
@@ -2551,11 +2687,19 @@
                 "type": "null"
               }
             ]
+          },
+          "playState": {
+            "type": "string"
+          },
+          "playVersion": {
+            "type": "integer"
           }
         },
         "required": [
           "selectionVersion",
-          "sceneVersion"
+          "sceneVersion",
+          "playState",
+          "playVersion"
         ]
       },
       "SetAaParams": {
@@ -2896,6 +3040,9 @@
               "world",
               "local"
             ]
+          },
+          "preserveChildren": {
+            "type": "boolean"
           }
         },
         "required": []
@@ -2974,6 +3121,9 @@
             "type": "number"
           },
           "unlit": {
+            "type": "boolean"
+          },
+          "smooth": {
             "type": "boolean"
           }
         },
@@ -3126,6 +3276,9 @@
           },
           "scale": {
             "$ref": "#/components/schemas/Vec3"
+          },
+          "smooth": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -3160,6 +3313,16 @@
           "width",
           "height"
         ]
+      },
+      "StepParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "frames": {
+            "type": "integer"
+          }
+        },
+        "required": []
       },
       "ThumbnailParams": {
         "type": "object",

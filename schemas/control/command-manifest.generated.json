@@ -254,6 +254,41 @@
       "fixture": "empty"
     },
     {
+      "name": "play",
+      "params": "EmptyParams",
+      "result": "PlayStateResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "pause",
+      "params": "EmptyParams",
+      "result": "PlayStateResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "step",
+      "params": "StepParams",
+      "result": "PlayStateResult",
+      "status": "typed",
+      "fixture": "step-one"
+    },
+    {
+      "name": "stop",
+      "params": "EmptyParams",
+      "result": "PlayStateResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "get-play-state",
+      "params": "EmptyParams",
+      "result": "PlayStateResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
       "name": "add-entity",
       "params": "AddEntityParams",
       "result": "EntityRef",
@@ -483,6 +518,13 @@
       "result": "ProjectInfoDto",
       "status": "typed",
       "fixture": "project-name"
+    },
+    {
+      "name": "reload-project",
+      "params": "EmptyParams",
+      "result": "ProjectInfoDto",
+      "status": "typed",
+      "skip": "reloads and replaces the active project's scene and catalog"
     },
     {
       "name": "screenshot",

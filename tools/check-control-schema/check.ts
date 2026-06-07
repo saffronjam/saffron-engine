@@ -303,6 +303,8 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
       const entity = await entityId(`Contract Mesh Assign ${process.pid}`);
       return { entity, slot: "mesh", asset: await meshAssetId() };
     }
+    case "step-one":
+      return { frames: 1 };
     default:
       throw new Error(`unknown manifest fixture '${fixture}'`);
   }
