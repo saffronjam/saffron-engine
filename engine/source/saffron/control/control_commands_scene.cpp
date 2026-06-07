@@ -536,8 +536,10 @@ namespace se
                     return PickResult{ true, ref.id, ref.name, PickKind::Billboard };
                 }
 
+                // pickEntity flips proj[1][1] to match the renderer's clip space, so it
+                // expects y-down NDC: v=0 (viewport top) maps to ndc.y=-1.
                 const Entity hit = pickEntity(ctx.sceneEdit.scene, ctx.assets, ctx.renderer, cam,
-                                              glm::vec2{ u * 2.0f - 1.0f, 1.0f - v * 2.0f });
+                                              glm::vec2{ u * 2.0f - 1.0f, v * 2.0f - 1.0f });
                 setSelection(ctx.sceneEdit, hit);
                 if (hit.handle == entt::null)
                 {

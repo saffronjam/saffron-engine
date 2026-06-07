@@ -16,7 +16,9 @@ needs the GPU mesh bounds the asset server caches.
 ## From click to ray
 
 The click arrives as a point in normalized device coordinates, `[-1, 1]`, already matching the
-rendered image. `pickEntity` rebuilds the same view-projection the renderer used — including the
+rendered image — y-down, like the flipped clip space the renderer draws with, so the top of the
+viewport is `y = -1`. The `pick` command produces it from viewport UV (origin top-left) as
+`(u*2-1, v*2-1)`. `pickEntity` rebuilds the same view-projection the renderer used — including the
 Vulkan Y-flip that `cameraProjection` leaves out — and inverts it to unproject the click:
 
 ```cpp
