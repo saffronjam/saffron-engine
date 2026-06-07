@@ -4,12 +4,13 @@
 /// The dock arrangement (Hierarchy + tabbed Inspector/Environment/Stats on the
 /// left, Assets bottom, Viewport center) lives in `Layout`; the embedded viewport's
 /// LoadingOverlay is a sibling inside ViewportPanel, never a panel the native window
-/// paints over.
+/// paints over. The dock stays mounted while an asset tab is active (display:none),
+/// so split ratios, scroll positions, and the viewport survive tab navigation.
 import { useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { client } from "../control/client";
-import { startReconcile, useEditorStore } from "../state/store";
+import { loadEditorSettings, startReconcile, useEditorStore } from "../state/store";
 import type { AssetEntry } from "../protocol";
 import { Topbar } from "../panels/Topbar";
 import { Layout } from "./Layout";
@@ -17,10 +18,12 @@ import { WindowTitlebar } from "./WindowTitlebar";
 import { useGizmoShortcuts } from "./useGizmoShortcuts";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ProjectStartupModal } from "./ProjectStartupModal";
+import { SettingsModal } from "./SettingsModal";
 import type { ProjectInfo } from "../control/client";
 import { AssetPreview } from "../components/AssetViewer";
 import { emitLayoutSettled } from "./layoutBus";
 import { Toaster } from "@/components/ui/sonner";
+import { cn } from "@/lib/utils";
 
 type EnginePhaseEvent = "starting" | "attaching";
 
@@ -45,6 +48,7 @@ export function App() {
   const phase = useEditorStore((s) => s.engineStatus.phase);
   const uiFrameRateHz = useEditorStore((s) => s.uiFrameRateHz);
   const activeViewTabId = useEditorStore((s) => s.activeViewTabId);
+  const projectPath = useEditorStore((s) => s.project?.path);
   const activeAsset = useEditorStore((s) => {
     const tab = s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId);
     return tab?.kind === "asset"
@@ -108,6 +112,12 @@ export function App() {
   useEffect(() => {
     const stop = startReconcile(client);
     return stop;
+  }, []);
+
+  // Hydrate the keybinding overrides from appdata/settings.json once at startup
+  // (editor-wide state, independent of the engine phase).
+  useEffect(() => {
+    void loadEditorSettings();
   }, []);
 
   useEffect(() => {
@@ -178,7 +188,7 @@ export function App() {
 
   // The single bridge to the presenter's park state: whatever sets the store flag
   // (the asset View modal, the asset workspace tab), the subsurface follows — even
-  // while the ViewportPanel itself is unmounted.
+  // while the dock is display:none and the ViewportPanel's host rect is 0x0.
   const viewportHidden = useEditorStore((s) => s.viewportHidden);
   useEffect(() => {
     void client.setViewportHidden(viewportHidden).catch(() => {});
@@ -191,15 +201,18 @@ export function App() {
         style={{ opacity: revealed ? 1 : 0 }}
       >
         <WindowTitlebar />
-        {sceneTabActive ? (
-          <>
-            <Topbar />
-            <Layout />
-          </>
-        ) : (
-          <AssetWorkspace asset={activeAsset} />
-        )}
+        {/* The dock is hidden, never unmounted, while an asset tab is active: its
+            in-memory layout state survives, and the ViewportPanel's host rect goes
+            0x0 (computeBounds skips degenerate rects) while viewportHidden parks
+            the subsurface. The key remounts the dock once per project so the
+            persisted per-project layout applies. */}
+        <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !sceneTabActive && "hidden")}>
+          <Topbar />
+          <Layout key={projectPath ?? ""} />
+        </div>
+        {!sceneTabActive && <AssetWorkspace asset={activeAsset} />}
         <ProjectStartupModal open={projectModalOpen} onProjectLoaded={handleProjectLoaded} />
+        <SettingsModal />
         <Toaster />
         <footer className="flex h-[22px] flex-none items-center justify-end border-t border-border bg-card px-3">
           <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">

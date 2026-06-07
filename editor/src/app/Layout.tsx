@@ -16,8 +16,11 @@
 ///
 /// `onLayoutChanged` (the stable, internally-debounced callback) pings the layout
 /// bus so the ViewportPanel commits an exact resize-end bounds for the native window
-/// once a split-drag settles.
+/// once a split-drag settles, and persists the split ratios (useDefaultLayout) +
+/// sidebar width to localStorage keyed by project path. App remounts this component
+/// per project (key), so the persisted layout loads on mount.
 import { useEffect, useRef, useState } from "react";
+import { useDefaultLayout, type Layout as PanelLayout } from "react-resizable-panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HierarchyPanel } from "../panels/HierarchyPanel";
@@ -27,7 +30,12 @@ import { RenderStatsPanel } from "../panels/RenderStatsPanel";
 import { AssetsPanel } from "../panels/AssetsPanel";
 import { ViewportPanel } from "../panels/ViewportPanel";
 import { emitLayoutSettled } from "./layoutBus";
-import { useEditorStore, type BottomTab } from "../state/store";
+import {
+  loadSidebarWidth,
+  persistSidebarWidth,
+  useEditorStore,
+  type BottomTab,
+} from "../state/store";
 
 const SIDEBAR_DEFAULT_WIDTH = 280;
 const SIDEBAR_MIN_WIDTH = 240;
@@ -35,9 +43,27 @@ const SIDEBAR_MAX_WIDTH = 520;
 const VIEWPORT_MIN_WIDTH = 520;
 
 export function Layout() {
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const projectPath = useEditorStore((s) => s.project?.path);
+  const playState = useEditorStore((s) => s.playState);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    clampSidebarWidth(loadSidebarWidth(projectPath) ?? SIDEBAR_DEFAULT_WIDTH),
+  );
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const syncViewportAfterLayout = (): void => emitLayoutSettled();
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const projectPathRef = useRef(projectPath);
+  projectPathRef.current = projectPath;
+
+  const leftLayout = useDefaultLayout({ id: `saffron.layout.left:${projectPath ?? ""}` });
+  const rightLayout = useDefaultLayout({ id: `saffron.layout.right:${projectPath ?? ""}` });
+  const onLeftLayoutChanged = (layout: PanelLayout): void => {
+    leftLayout.onLayoutChanged(layout);
+    emitLayoutSettled();
+  };
+  const onRightLayoutChanged = (layout: PanelLayout): void => {
+    rightLayout.onLayoutChanged(layout);
+    emitLayoutSettled();
+  };
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent): void => {
@@ -54,6 +80,7 @@ export function Layout() {
       dragRef.current = null;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      persistSidebarWidth(projectPathRef.current, sidebarWidthRef.current);
       emitLayoutSettled();
     };
 
@@ -74,15 +101,34 @@ export function Layout() {
     document.body.style.userSelect = "none";
   };
 
+  // Play-mode tint: an amber inset ring around the whole dock marks the editor as live
+  // (Unity's playmode-tint lesson — the single defense against "edited in play, lost it
+  // on stop"). The viewport interior stays untinted; it is the game view.
+  const playRing = playState === "edit" ? "" : "ring-2 ring-inset ring-amber-500/60 rounded-sm";
+
   return (
-    <div className="flex min-h-0 min-w-0 flex-1">
+    <div className={`flex min-h-0 min-w-0 flex-1 ${playRing}`}>
       <aside className="min-h-0 flex-none bg-background" style={{ width: `${sidebarWidth}px` }}>
-        <ResizablePanelGroup orientation="vertical" onLayoutChanged={syncViewportAfterLayout}>
-          <ResizablePanel defaultSize={45} minSize={15} className="min-h-0 bg-background">
+        <ResizablePanelGroup
+          orientation="vertical"
+          defaultLayout={leftLayout.defaultLayout}
+          onLayoutChanged={onLeftLayoutChanged}
+        >
+          <ResizablePanel
+            id="hierarchy"
+            defaultSize={45}
+            minSize={15}
+            className="min-h-0 bg-background"
+          >
             <HierarchyPanel />
           </ResizablePanel>
           <ResizableHandle />
-          <ResizablePanel defaultSize={55} minSize={15} className="min-h-0 bg-background">
+          <ResizablePanel
+            id="left-tabs"
+            defaultSize={55}
+            minSize={15}
+            className="min-h-0 bg-background"
+          >
             <LeftBottomTabs />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -97,15 +143,16 @@ export function Layout() {
       <ResizablePanelGroup
         orientation="vertical"
         className="min-h-0 min-w-0 flex-1"
-        onLayoutChanged={syncViewportAfterLayout}
+        defaultLayout={rightLayout.defaultLayout}
+        onLayoutChanged={onRightLayoutChanged}
       >
-        <ResizablePanel defaultSize={72} minSize={30} className="min-h-0">
+        <ResizablePanel id="viewport" defaultSize={72} minSize={30} className="min-h-0">
           <main className="h-full min-w-0 overflow-hidden">
             <ViewportPanel />
           </main>
         </ResizablePanel>
         <ResizableHandle />
-        <ResizablePanel defaultSize={28} minSize={12} className="min-h-0 bg-background">
+        <ResizablePanel id="assets" defaultSize={28} minSize={12} className="min-h-0 bg-background">
           <AssetsPanel />
         </ResizablePanel>
       </ResizablePanelGroup>
