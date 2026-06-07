@@ -11,7 +11,11 @@ its own cost and quality.
 
 Saffron offers three approaches and treats them as mutually exclusive: at most one is active at a
 time. A single configuration call selects the active mode, and a CLI command fronts it for scripting
-and inspection.
+and inspection. The host starts at MSAA 4× (clamped to what the device supports); a loaded
+project's saved [render settings](../../geometry-and-assets/project-serialization/) override it.
+
+The editor gizmo overlay is unaffected by the active mode — it draws after the resolve and
+[anti-aliases itself analytically](../../ui-and-editor/gizmo/).
 
 ## The modes
 
@@ -58,7 +62,7 @@ depth-prepass pipeline, because the mesh and prepass PSOs bake the sample count.
 
 | What | File | Symbols |
 |---|---|---|
-| Configure + clamp + rebuild | `renderer_aa.cpp` | `setAa`, `aaMode` |
+| Configure + clamp + rebuild | `renderer_aa.cpp` | `setAa`, `setAaMode`, `aaMode` |
 | CLI front | `control_commands_render.cpp` | `set-aa`, `render-stats` · `aa` |
 | Mode flags | `renderer_types.cppm` | `sampleCount`, `maxSampleCount`, `fxaaEnabled`, `taaEnabled` |
 

@@ -415,6 +415,9 @@ export namespace se
                 se::enableViewportShmPublish(app.renderer, shm);
                 state->shmPublish = true;
             }
+            // Default AA: MSAA 4x, clamped to device support. A loaded project's
+            // renderSettings block overrides it below.
+            se::setAa(app.renderer, 4, false, false);
 
             // The registry exists for its JSON serde (scene save/load + control plane); the
             // present-only host renders no inspector, so no draw lambdas / thumbnails.
