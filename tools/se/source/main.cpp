@@ -176,6 +176,13 @@ namespace
                         result.value("clustered", false) ? "on" : "off");
             return;
         }
+        if (cmd == "play" || cmd == "pause" || cmd == "stop" || cmd == "step" || cmd == "get-play-state")
+        {
+            std::printf("state=%s  playVersion=%d  sceneVersion=%d  camera=%s\n", result.value("state", "").c_str(),
+                        result.value("playVersion", 0), result.value("sceneVersion", 0),
+                        result.value("hasPrimaryCamera", false) ? "ok" : "missing");
+            return;
+        }
         if (cmd == "viewport-native-info")
         {
             std::printf("%s  %s  %ux%u  sock=%s\n", result.value("status", "").c_str(),
