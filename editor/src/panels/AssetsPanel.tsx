@@ -489,11 +489,38 @@ export function AssetsPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-asset-panel="true">
-      <div className="flex h-10 flex-none items-center justify-between border-b border-border px-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex h-10 flex-none items-center gap-1 border-b border-border px-3">
+        <span className="mr-1 flex-none text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Assets
         </span>
-        <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className="flex-none"
+          disabled={!canGoBack}
+          onClick={goBack}
+          title="Back"
+        >
+          <ArrowLeft />
+        </Button>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className="flex-none"
+          disabled={!canGoForward}
+          onClick={goForward}
+          title="Forward"
+        >
+          <ArrowRight />
+        </Button>
+        <Breadcrumbs
+          currentFolder={currentFolder}
+          onNavigate={navigateTo}
+          onMoveAssets={(assetIds, folder) => void moveAssetsToFolder(assetIds, folder)}
+        />
+        <div className="ml-auto flex flex-none items-center gap-2">
           <Button
             type="button"
             size="sm"
@@ -518,33 +545,6 @@ export function AssetsPanel() {
             Import
           </Button>
         </div>
-      </div>
-      <div className="flex h-8 flex-none items-center gap-1 border-b border-border px-2">
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          disabled={!canGoBack}
-          onClick={goBack}
-          title="Back"
-        >
-          <ArrowLeft />
-        </Button>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          disabled={!canGoForward}
-          onClick={goForward}
-          title="Forward"
-        >
-          <ArrowRight />
-        </Button>
-        <Breadcrumbs
-          currentFolder={currentFolder}
-          onNavigate={navigateTo}
-          onMoveAssets={(assetIds, folder) => void moveAssetsToFolder(assetIds, folder)}
-        />
       </div>
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel
