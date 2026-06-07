@@ -1139,7 +1139,7 @@ namespace se
                         glm::mat4 invProjection;
                         glm::vec4 lightDirView;
                         glm::vec4 params;
-                    } push{ proj, invProj, glm::vec4(sunView, 0.0f), glm::vec4(0.6f, 12.0f, 0.6f, 0.0f) };
+                    } push{ proj, invProj, glm::vec4(sunView, 0.0f), glm::vec4(0.2f, 12.0f, 0.1f, 0.0f) };
                     cmd.pushConstants(renderer.pipelines.contact->layout, vk::ShaderStageFlagBits::eCompute, 0,
                                       sizeof(push), &push);
                     cmd.dispatch(ssGroups(ssExtent.width), ssGroups(ssExtent.height), 1);

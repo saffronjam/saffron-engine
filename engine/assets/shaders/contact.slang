@@ -17,6 +17,13 @@ struct Push
 };
 [[vk::push_constant]] Push pc;
 
+// Interleaved gradient noise: per-pixel jitter for the march start, so the fixed step
+// count dithers into noise (resolved by TAA) instead of banding at occluder silhouettes.
+float ign(uint2 px)
+{
+    return frac(52.9829189 * frac(0.06711056 * float(px.x) + 0.00583715 * float(px.y)));
+}
+
 float3 viewPosFromUv(float2 uv, float viewZ)
 {
     float2 ndc = uv * 2.0 - 1.0;
@@ -55,10 +62,11 @@ void computeMain(uint3 tid : SV_DispatchThreadID)
     // Offset off the surface along the normal to avoid self-occlusion.
     float3 origin = p + n * 0.02;
 
+    float jitter = ign(tid.xy);
     float occluded = 0.0;
     for (uint i = 1; i <= steps; i = i + 1)
     {
-        float3 s = origin + l * rayLen * (float(i) / float(steps));
+        float3 s = origin + l * rayLen * ((float(i) - jitter) / float(steps));
         float4 clip = mul(pc.projection, float4(s, 1.0));
         if (clip.w <= 0.0)
         {
