@@ -1435,7 +1435,8 @@ export namespace se
     // and taa toggle their post-process passes. The three modes are mutually exclusive.
     // Recreates the MSAA/TAA targets + rebuilds scene PSOs.
     void setAa(Renderer& renderer, u32 msaaSamples, bool fxaa, bool taa);
-    auto aaMode(const Renderer& renderer) -> std::string;  // "off" | "fxaa" | "taa" | "msaa2|4|8"
+    void setAaMode(Renderer& renderer, const std::string& mode);  // inverse of aaMode
+    auto aaMode(const Renderer& renderer) -> std::string;         // "off" | "fxaa" | "taa" | "msaa2|4|8"
     // Records the motion-vector prepass (camera reprojection) for the TAA pass body.
     void recordMotion(Renderer& renderer, vk::CommandBuffer cmd);
 

@@ -114,6 +114,34 @@ namespace se
         }
     }
 
+    void setAaMode(Renderer& renderer, const std::string& mode)
+    {
+        u32 samples = 1;
+        bool fxaa = false;
+        bool taa = false;
+        if (mode == "fxaa")
+        {
+            fxaa = true;
+        }
+        else if (mode == "taa")
+        {
+            taa = true;
+        }
+        else if (mode == "msaa2")
+        {
+            samples = 2;
+        }
+        else if (mode == "msaa4")
+        {
+            samples = 4;
+        }
+        else if (mode == "msaa8")
+        {
+            samples = 8;
+        }
+        setAa(renderer, samples, fxaa, taa);
+    }
+
     auto aaMode(const Renderer& renderer) -> std::string
     {
         if (renderer.targets.fxaaEnabled)

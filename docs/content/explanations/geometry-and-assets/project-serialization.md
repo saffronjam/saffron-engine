@@ -27,12 +27,12 @@ project file and is what the editor shows to users.
 
 ## How it works
 
-A project save serializes five things into one JSON document: a version, the project name,
-the display name, the asset catalog, and the scene. The catalog lists every asset by id, name,
-type, and path. The scene half is the registry-driven scene serializer. A load reverses this,
-after first making the GPU idle so the previous project's resources can be released safely.
+A project save serializes one JSON document: a version, the project name, the display name,
+the asset catalog, the scene, and the renderer settings. The catalog lists every asset by id,
+name, type, and path. The scene half is the registry-driven scene serializer. A load reverses
+this, after first making the GPU idle so the previous project's resources can be released safely.
 
-## One document, two halves
+## One document, three parts
 
 ```json
 {
@@ -50,6 +50,12 @@ after first making the GPU idle so the previous project's resources can be relea
   "scene": {
     "version": 2,
     "entities": []
+  },
+  "renderSettings": {
+    "aa": "msaa4",
+    "exposureEv": 0.0,
+    "clustered": true,
+    "shadows": true
   }
 }
 ```
@@ -62,6 +68,16 @@ on load; an unrecognized version is an `Err` rather than a best-effort parse.
 Two things are deliberately not saved: the GPU caches and the absolute `AssetServer::root`.
 The catalog stores paths relative to `<project-root>/assets`, and the root is set when the
 project opens.
+
+## Render settings ride along
+
+`renderSettings` captures the renderer state the editor's render panel drives — the
+[AA mode](../../anti-aliasing/aa-modes/), tonemap exposure, and the feature toggles
+(clustered, depth prepass, shadows, IBL, SSAO, contact shadows, SSGI, DDGI, RT shadows,
+ReSTIR) — so a project reopens looking the way it was saved. The block is applied through
+the same setters the control commands use; missing fields keep their current value, so a
+project saved before the block existed loads unchanged, and the RT toggles only apply on
+a device that reports ray-tracing support.
 
 ## Loading replaces both, after a device idle
 
@@ -129,6 +145,7 @@ paths working. New imports and new saves use `models/`.
 | Save the project | `assets.cppm` | `saveProject`, `ProjectVersion` |
 | Load the project | `assets.cppm` | `loadProject` |
 | Catalog ↔ JSON | `assets.cppm` | `catalogToJson`, `catalogFromJson`, `assetTypeName` |
+| Render settings ↔ JSON | `assets.cppm` | `renderSettingsToJson`, `applyRenderSettings` |
 | Legacy migration | `assets.cppm` | `newAssetServer` |
 | Project commands | `control_commands_asset.cpp` | `get-project`, `new-project`, `open-project`, `save-project` |
 | Scene half | `scene.cppm` | `sceneToJson`, `sceneFromJson` |

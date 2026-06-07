@@ -642,15 +642,15 @@ namespace se
                 }
 
                 return AssetMetadataDto{ WireUuid{ entry.id.value },
-                                        entry.name,
-                                        assetTypeDto(entry.type),
-                                        entry.path,
-                                        entry.folder.empty() ? std::optional<std::string>{}
-                                                             : std::optional<std::string>{ entry.folder },
-                                        sizeBytes,
-                                        vertexCount,
-                                        triangleCount,
-                                        createdAt };
+                                         entry.name,
+                                         assetTypeDto(entry.type),
+                                         entry.path,
+                                         entry.folder.empty() ? std::optional<std::string>{}
+                                                              : std::optional<std::string>{ entry.folder },
+                                         sizeBytes,
+                                         vertexCount,
+                                         triangleCount,
+                                         createdAt };
             });
 
         registerCommand<DeleteAssetParams, DeleteAssetResult>(
@@ -790,7 +790,8 @@ namespace se
                                        : "project";
                     project.displayName = defaultDisplayName(project.name);
                 }
-                auto result = saveProject(ctx.assets, ctx.sceneEdit.registry, ctx.sceneEdit.scene, project, path);
+                auto result =
+                    saveProject(ctx.assets, ctx.renderer, ctx.sceneEdit.registry, ctx.sceneEdit.scene, project, path);
                 if (!result)
                 {
                     return Err(result.error());

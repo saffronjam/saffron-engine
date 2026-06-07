@@ -336,9 +336,64 @@ export namespace se
     // Constant version for the unified project document.
     inline constexpr int ProjectVersion = 1;
 
-    // Saves the whole project (asset catalog + scene entities) to one JSON file.
-    auto saveProject(AssetServer& assets, ComponentRegistry& reg, Scene& scene, const ProjectInfo& project,
-                     const std::string& path) -> Result<void>
+    // The renderer settings the editor's render panel drives, as a project-file block.
+    auto renderSettingsToJson(Renderer& renderer) -> nlohmann::json
+    {
+        return nlohmann::json{ { "aa", aaMode(renderer) },
+                               { "exposureEv", exposureEv(renderer) },
+                               { "clustered", clusteredEnabled(renderer) },
+                               { "depthPrepass", depthPrepassEnabled(renderer) },
+                               { "shadows", shadowsEnabled(renderer) },
+                               { "ibl", iblEnabled(renderer) },
+                               { "ssao", ssaoEnabled(renderer) },
+                               { "contactShadows", contactShadowsEnabled(renderer) },
+                               { "ssgi", ssgiEnabled(renderer) },
+                               { "ddgi", ddgiEnabled(renderer) },
+                               { "rtShadows", rtShadowsEnabled(renderer) },
+                               { "restir", restirEnabled(renderer) } };
+    }
+
+    // Applies a saved renderSettings block; missing fields keep the current value, and the
+    // RT toggles only apply where the device supports ray tracing.
+    void applyRenderSettings(Renderer& renderer, const nlohmann::json& settings)
+    {
+        if (!settings.is_object())
+        {
+            return;
+        }
+        if (settings.contains("aa") && settings["aa"].is_string())
+        {
+            setAaMode(renderer, settings["aa"].get<std::string>());
+        }
+        if (settings.contains("exposureEv") && settings["exposureEv"].is_number())
+        {
+            setExposure(renderer, settings["exposureEv"].get<f32>());
+        }
+        auto applyBool = [&settings](const char* key, auto&& setter)
+        {
+            if (settings.contains(key) && settings[key].is_boolean())
+            {
+                setter(settings[key].get<bool>());
+            }
+        };
+        applyBool("clustered", [&renderer](bool v) { setClustered(renderer, v); });
+        applyBool("depthPrepass", [&renderer](bool v) { setDepthPrepass(renderer, v); });
+        applyBool("shadows", [&renderer](bool v) { setShadows(renderer, v); });
+        applyBool("ibl", [&renderer](bool v) { setIbl(renderer, v); });
+        applyBool("ssao", [&renderer](bool v) { setSsao(renderer, v); });
+        applyBool("contactShadows", [&renderer](bool v) { setContactShadows(renderer, v); });
+        applyBool("ssgi", [&renderer](bool v) { setSsgi(renderer, v); });
+        applyBool("ddgi", [&renderer](bool v) { setDdgi(renderer, v); });
+        if (rtSupported(renderer))
+        {
+            applyBool("rtShadows", [&renderer](bool v) { setRtShadows(renderer, v); });
+            applyBool("restir", [&renderer](bool v) { setRestir(renderer, v); });
+        }
+    }
+
+    // Saves the whole project (asset catalog + scene entities + render settings) to one JSON file.
+    auto saveProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
+                     const ProjectInfo& project, const std::string& path) -> Result<void>
     {
         const std::string target = path.empty() ? project.path : path;
         if (target.empty())
@@ -352,6 +407,7 @@ export namespace se
         doc["assets"] = catalogToJson(assets.catalog);
         doc["assetFolders"] = catalogFoldersToJson(assets.catalog);
         doc["scene"] = sceneToJson(reg, scene);
+        doc["renderSettings"] = renderSettingsToJson(renderer);
 
         const std::filesystem::path parent = std::filesystem::path(target).parent_path();
         if (!parent.empty())
@@ -403,6 +459,11 @@ export namespace se
         setAssetRoot(assets, (std::filesystem::path(project.root) / "assets").string());
         catalogFromJson(assets.catalog, doc.value("assets", nlohmann::json::array()));
         catalogFoldersFromJson(assets.catalog, doc.value("assetFolders", nlohmann::json::array()));
+        // Older projects have no renderSettings block; the current settings stay.
+        if (doc.contains("renderSettings"))
+        {
+            applyRenderSettings(renderer, doc["renderSettings"]);
+        }
         return sceneFromJson(reg, scene, doc.value("scene", nlohmann::json::object()));
     }
 
@@ -431,7 +492,7 @@ export namespace se
         clearAssetCaches(assets);
         setAssetRoot(assets, (root / "assets").string());
         project = std::move(next);
-        return saveProject(assets, reg, scene, project, project.path);
+        return saveProject(assets, renderer, reg, scene, project, project.path);
     }
 
     auto createAutoEmptyProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
