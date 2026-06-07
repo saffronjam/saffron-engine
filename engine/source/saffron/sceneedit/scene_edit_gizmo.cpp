@@ -10,6 +10,7 @@ module;
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <type_traits>
 #include <utility>
 
 module Saffron.SceneEdit;
@@ -288,6 +289,29 @@ namespace se
             const glm::mat3 rotation{ glm::vec3(m[0]) / scale.x, glm::vec3(m[1]) / scale.y, glm::vec3(m[2]) / scale.z };
             return glm::quat_cast(rotation);
         }
+
+        // With preserve-children, hold each direct child at its drag-begin world pose by
+        // rebasing its local against the target's freshly written transform.
+        void rebasePreservedChildren(SceneEditContext& editor)
+        {
+            NativeGizmoState& gizmo = editor.nativeGizmo;
+            if (gizmo.startChildWorlds.empty())
+            {
+                return;
+            }
+            const glm::mat4 targetWorld =
+                gizmo.startParentWorld * transformMatrix(getComponent<TransformComponent>(editor.scene, gizmo.target));
+            const glm::mat4 invTargetWorld = glm::inverse(targetWorld);
+            for (const auto& [child, world] : gizmo.startChildWorlds)
+            {
+                const Entity entity{ child };
+                if (!valid(editor.scene, entity) || !hasComponent<TransformComponent>(editor.scene, entity))
+                {
+                    continue;
+                }
+                setLocalFromMatrix(editor.scene, entity, invTargetWorld * world);
+            }
+        }
     }
 
     void snapshotNativeGizmoStart(SceneEditContext& editor, Entity target)
@@ -296,6 +320,17 @@ namespace se
         const TransformComponent& transform = getComponent<TransformComponent>(editor.scene, target);
         gizmo.startScale = transform.scale;  // scale never rebases (TRS-only model)
         gizmo.startParentWorld = glm::mat4{ 1.0f };
+        gizmo.startChildWorlds.clear();
+        if (editor.preserveChildren && hasComponent<RelationshipComponent>(editor.scene, target))
+        {
+            for (entt::entity child : getComponent<RelationshipComponent>(editor.scene, target).children)
+            {
+                if (hasComponent<TransformComponent>(editor.scene, Entity{ child }))
+                {
+                    gizmo.startChildWorlds.emplace_back(child, composeWorldMatrix(editor.scene, Entity{ child }));
+                }
+            }
+        }
         const entt::entity parent = parentOf(editor.scene, target);
         if (parent == entt::null)
         {
@@ -373,6 +408,7 @@ namespace se
             // before writing the local transform (identity parent for a root).
             transform.translation =
                 glm::vec3(glm::inverse(gizmo.startParentWorld) * glm::vec4(gizmo.startTranslation + move, 1.0f));
+            rebasePreservedChildren(editor);
             return;
         }
 
@@ -398,6 +434,7 @@ namespace se
                 // Root: the world Euler IS the local Euler; writing it raw keeps the stored
                 // angles continuous instead of wrapping through a matrix extraction.
                 transform.rotation = worldEuler;
+                rebasePreservedChildren(editor);
                 return;
             }
             // Peel the frozen parent rotation off the world result, then extract a stable
@@ -406,6 +443,7 @@ namespace se
             glm::vec3 euler;
             glm::extractEulerAngleZYX(glm::mat4_cast(localRot), euler.z, euler.y, euler.x);
             transform.rotation = euler;
+            rebasePreservedChildren(editor);
             return;
         }
 
@@ -428,6 +466,7 @@ namespace se
         {
             transform.scale = gizmo.startScale * glm::vec3{ 1.0f, 1.0f, factor };
         }
+        rebasePreservedChildren(editor);
     }
 
     void stepNativeGizmoDrag(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, f32 dt)
@@ -443,5 +482,158 @@ namespace se
         const f32 alpha = 1.0f - std::exp(-std::max(0.0f, dt) / tau);
         gizmo.dragSmoothed += (gizmo.dragTarget - gizmo.dragSmoothed) * alpha;
         applyNativeGizmoDrag(editor, cam, width, height, gizmo.dragSmoothed);
+    }
+
+    auto materialSmoothEntryFor(SceneEditContext& editor, Entity entity) -> MaterialSmoothTarget&
+    {
+        for (MaterialSmoothTarget& entry : editor.materialSmoothing)
+        {
+            if (entry.entity.handle == entity.handle)
+            {
+                return entry;
+            }
+        }
+        return editor.materialSmoothing.emplace_back(MaterialSmoothTarget{ .entity = entity });
+    }
+
+    auto transformSmoothEntryFor(SceneEditContext& editor, Entity entity) -> TransformSmoothTarget&
+    {
+        for (TransformSmoothTarget& entry : editor.transformSmoothing)
+        {
+            if (entry.entity.handle == entity.handle)
+            {
+                return entry;
+            }
+        }
+        return editor.transformSmoothing.emplace_back(TransformSmoothTarget{ .entity = entity });
+    }
+
+    void cancelMaterialSmoothing(SceneEditContext& editor, Entity entity)
+    {
+        std::erase_if(editor.materialSmoothing,
+                      [&](const MaterialSmoothTarget& entry) { return entry.entity.handle == entity.handle; });
+    }
+
+    void cancelTransformSmoothing(SceneEditContext& editor, Entity entity)
+    {
+        std::erase_if(editor.transformSmoothing,
+                      [&](const TransformSmoothTarget& entry) { return entry.entity.handle == entity.handle; });
+    }
+
+    // Exponential step toward target; true once within epsilon (current then snaps exact).
+    template <typename T>
+    static auto blendToward(T& current, const T& target, f32 alpha, f32 epsilon) -> bool
+    {
+        current += (target - current) * alpha;
+        bool close;
+        if constexpr (std::is_same_v<T, f32>)
+        {
+            close = std::abs(target - current) <= epsilon;
+        }
+        else
+        {
+            close = glm::all(glm::lessThanEqual(glm::abs(target - current), T{ epsilon }));
+        }
+        if (!close)
+        {
+            return false;
+        }
+        current = target;
+        return true;
+    }
+
+    void stepEditSmoothing(SceneEditContext& editor, f32 dt)
+    {
+        if (editor.materialSmoothing.empty() && editor.transformSmoothing.empty())
+        {
+            return;
+        }
+        // A smooth edit issued during play converges in (and is discarded with) the play
+        // scene; in Edit this is the authored scene.
+        Scene& scene = activeScene(editor);
+        // Same time constant as the gizmo pointer smoothing: ~60Hz control samples
+        // render as continuous change at the engine's frame rate.
+        constexpr f32 tau = 0.025f;
+        constexpr f32 epsilon = 1e-4f;
+        const f32 alpha = 1.0f - std::exp(-std::max(0.0f, dt) / tau);
+        bool applied = false;
+        std::erase_if(editor.materialSmoothing,
+                      [&](const MaterialSmoothTarget& entry)
+                      {
+                          if (!valid(scene, entry.entity) || !hasComponent<MaterialComponent>(scene, entry.entity))
+                          {
+                              return true;
+                          }
+                          MaterialComponent& material = getComponent<MaterialComponent>(scene, entry.entity);
+                          bool converged = true;
+                          auto field = [&](auto& current, const auto& target)
+                          {
+                              const bool done = blendToward(current, target, alpha, epsilon);
+                              converged = converged && done;
+                          };
+                          if (entry.baseColor)
+                          {
+                              field(material.baseColor, *entry.baseColor);
+                          }
+                          if (entry.metallic)
+                          {
+                              field(material.metallic, *entry.metallic);
+                          }
+                          if (entry.roughness)
+                          {
+                              field(material.roughness, *entry.roughness);
+                          }
+                          if (entry.emissive)
+                          {
+                              field(material.emissive, *entry.emissive);
+                          }
+                          if (entry.emissiveStrength)
+                          {
+                              field(material.emissiveStrength, *entry.emissiveStrength);
+                          }
+                          applied = true;
+                          return converged;
+                      });
+        std::erase_if(editor.transformSmoothing,
+                      [&](const TransformSmoothTarget& entry)
+                      {
+                          if (!valid(scene, entry.entity) || !hasComponent<TransformComponent>(scene, entry.entity))
+                          {
+                              return true;
+                          }
+                          // A live gizmo drag owns this entity's transform; the drag's
+                          // own smoothing wins and the stale targets are dropped.
+                          if (editor.nativeGizmo.dragging && editor.nativeGizmo.target.handle == entry.entity.handle)
+                          {
+                              return true;
+                          }
+                          TransformComponent& transform = getComponent<TransformComponent>(scene, entry.entity);
+                          bool converged = true;
+                          auto field = [&](auto& current, const auto& target)
+                          {
+                              const bool done = blendToward(current, target, alpha, epsilon);
+                              converged = converged && done;
+                          };
+                          if (entry.translation)
+                          {
+                              field(transform.translation, *entry.translation);
+                          }
+                          if (entry.rotation)
+                          {
+                              field(transform.rotation, *entry.rotation);
+                          }
+                          if (entry.scale)
+                          {
+                              field(transform.scale, *entry.scale);
+                          }
+                          applied = true;
+                          return converged;
+                      });
+        if (applied)
+        {
+            // The poll re-inspects on the stamp, so the editor tracks the animation live
+            // (same as a gizmo drag bumping it per applied frame).
+            editor.sceneVersion += 1;
+        }
     }
 }
