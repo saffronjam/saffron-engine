@@ -12,6 +12,7 @@ import type { GizmoState } from "../protocol";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProjectMenu } from "../app/ProjectMenu";
+import { AlarmBadge } from "../components/AlarmBadge";
 
 type GizmoOp = GizmoState["op"];
 type GizmoSpace = GizmoState["space"];
@@ -255,7 +256,9 @@ export function Topbar() {
           </Tooltip>
         </div>
       </div>
-      <div className="w-32" aria-hidden="true" />
+      <div className="flex w-32 items-center justify-end">
+        <AlarmBadge />
+      </div>
     </header>
   );
 }
