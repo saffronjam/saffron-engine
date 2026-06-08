@@ -86,11 +86,56 @@ const enumWireNames = new Map<string, Record<string, string>>([
   ["AssetSlotDto", { Mesh: "mesh", Albedo: "albedo", MetallicRoughness: "metallic-roughness" }],
   ["ScreenshotTargetDto", { Viewport: "viewport", Window: "window" }],
   ["AssetTypeDto", { Mesh: "mesh", Texture: "texture", Other: "other" }],
+  ["ProfilerModeDto", { Off: "off", Timestamps: "timestamps", PipelineStats: "pipeline-stats" }],
+  ["AlarmSeverityDto", { Info: "info", Warning: "warning", Critical: "critical" }],
+  ["AlarmStateDto", { Firing: "firing", Resolved: "resolved" }],
 ]);
 
 const commands: CommandDef[] = [
   { name: "ping", params: "PingParams", result: "PingResult", summary: "liveness + engine info" },
   { name: "render-stats", params: "EmptyParams", result: "RenderStatsDto", summary: "last frame draw counters" },
+  {
+    name: "profiler.set-mode",
+    params: "ProfilerSetModeParams",
+    result: "ProfilerModeResult",
+    summary: "set the GPU profiler mode",
+  },
+  {
+    name: "pass-timings",
+    params: "EmptyParams",
+    result: "RenderPassTimingsDto",
+    summary: "last frame per-pass GPU timings",
+  },
+  {
+    name: "frame-history",
+    params: "FrameHistoryParams",
+    result: "FrameHistoryDto",
+    summary: "frame-time percentiles + stutter count",
+  },
+  {
+    name: "get-perf-config",
+    params: "EmptyParams",
+    result: "PerfConfigDto",
+    summary: "shared frame-budget / threshold config",
+  },
+  {
+    name: "set-perf-config",
+    params: "SetPerfConfigParams",
+    result: "PerfConfigDto",
+    summary: "set the frame budget + thresholds",
+  },
+  {
+    name: "drain-alarms",
+    params: "DrainAlarmsParams",
+    result: "DrainAlarmsResult",
+    summary: "drain perf-alarm events (seq cursor)",
+  },
+  {
+    name: "list-active-alarms",
+    params: "EmptyParams",
+    result: "ActiveAlarmsDto",
+    summary: "currently firing perf alarms",
+  },
   { name: "set-aa", params: "SetAaParams", result: "SetAaResult", summary: "set anti-aliasing mode" },
   { name: "set-clustered", params: "ToggleParams", result: "SetClusteredResult", summary: "toggle clustered lighting" },
   { name: "set-ibl", params: "ToggleParams", result: "SetIblResult", summary: "toggle image-based lighting" },
@@ -353,6 +398,13 @@ const commands: CommandDef[] = [
 const commandFixtures = new Map<string, string>([
   ["ping", "empty"],
   ["render-stats", "empty"],
+  ["profiler.set-mode", "profiler-timestamps"],
+  ["pass-timings", "empty"],
+  ["frame-history", "frame-history-samples"],
+  ["get-perf-config", "empty"],
+  ["set-perf-config", "perf-config-30"],
+  ["drain-alarms", "alarms-since-0"],
+  ["list-active-alarms", "empty"],
   ["set-aa", "aa"],
   ["set-clustered", "toggle-on"],
   ["set-ibl", "toggle-on"],
@@ -555,6 +607,10 @@ function cppParseValue(type: string, valueExpr: string, keyExpr: string): string
       return `readI32(${valueExpr}, ${keyExpr})`;
     case "u32":
       return `readU32(${valueExpr}, ${keyExpr})`;
+    case "i64":
+      return `readI64(${valueExpr}, ${keyExpr})`;
+    case "u64":
+      return `readU64(${valueExpr}, ${keyExpr})`;
     case "bool":
       return `readBool(${valueExpr}, ${keyExpr})`;
     case "WireUuid":
@@ -859,6 +915,32 @@ namespace se
             return Err(std::format("key '{}' is not a u32", key));
         }
 
+        auto readI64(const Json& value, std::string_view key) -> Result<i64>
+        {
+            if (!value.is_number_integer())
+            {
+                return Err(std::format("key '{}' is not an integer", key));
+            }
+            return value.get<i64>();
+        }
+
+        auto readU64(const Json& value, std::string_view key) -> Result<u64>
+        {
+            if (value.is_number_unsigned())
+            {
+                return value.get<u64>();
+            }
+            if (value.is_number_integer())
+            {
+                const i64 parsed = value.get<i64>();
+                if (parsed >= 0)
+                {
+                    return static_cast<u64>(parsed);
+                }
+            }
+            return Err(std::format("key '{}' is not a u64", key));
+        }
+
         auto readWireUuid(const Json& value, std::string_view key) -> Result<WireUuid>
         {
             if (value.is_number_unsigned())
@@ -1024,6 +1106,12 @@ function tsType(type: string): string {
       return '"viewport" | "window"';
     case "AssetTypeDto":
       return '"mesh" | "texture" | "other"';
+    case "ProfilerModeDto":
+      return '"off" | "timestamps" | "pipeline-stats"';
+    case "AlarmSeverityDto":
+      return '"info" | "warning" | "critical"';
+    case "AlarmStateDto":
+      return '"firing" | "resolved"';
     default:
       return type;
   }
