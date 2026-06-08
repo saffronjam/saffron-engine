@@ -120,9 +120,36 @@ export namespace se
 
     void addPass(RenderGraph& graph, RgPass pass);
 
+    /// Optional per-pass GPU timestamp capture for executeRenderGraph. When `pool` is set,
+    /// the graph writes a begin/end timestamp pair around each pass body (slots 2i, 2i+1)
+    /// and appends the pass name to `names`, until `capacity` slots are used. Owned by the
+    /// renderer's profiler; the graph only records into it (the "no pass writes a query by
+    /// hand" analogue of barrier derivation).
+    struct RgTimestamps
+    {
+        vk::QueryPool pool;                         ///< null => timestamp capture disabled
+        u32 capacity = 0;                           ///< total timestamp slots in the pool (2 per pass)
+        std::vector<std::string>* names = nullptr;  ///< receives one name per timed pass, in order
+    };
+
+    /// VK_EXT_debug_utils command-buffer label entry points, resolved by the renderer and
+    /// handed to executeRenderGraph so every pass body is bracketed by a named, coloured
+    /// marker region in external capture tools (RenderDoc/Nsight). Emitted independent of
+    /// any profiler mode — labels carry no in-engine number and are free. Null pointers
+    /// (extension absent) make emission a silent no-op.
+    struct RgDebugLabels
+    {
+        PFN_vkCmdBeginDebugUtilsLabelEXT begin = nullptr;  ///< null => labels disabled
+        PFN_vkCmdEndDebugUtilsLabelEXT end = nullptr;
+    };
+
     /// Derive and emit each pass's barriers from its declared usage, then record the
-    /// pass body inside its rendering scope. Resolves cross-frame layouts on exit.
-    void executeRenderGraph(RenderGraph& graph, vk::CommandBuffer cmd);
+    /// pass body inside its rendering scope. Resolves cross-frame layouts on exit. When
+    /// `timestamps` is non-null and armed, brackets each pass body with GPU timestamps;
+    /// when `labels` carries resolved entry points, also brackets it with a debug-utils
+    /// marker region.
+    void executeRenderGraph(RenderGraph& graph, vk::CommandBuffer cmd, const RgTimestamps* timestamps = nullptr,
+                            const RgDebugLabels* labels = nullptr);
 }
 
 namespace se
@@ -281,10 +308,49 @@ namespace se
         graph.passes.push_back(std::move(pass));
     }
 
-    void executeRenderGraph(RenderGraph& graph, vk::CommandBuffer cmd)
+    // Bright-ish, stable RGBA from a pass name (FNV-1a) so a pass group reads as one colour
+    // across captures. Cosmetic — RenderDoc/Nsight honour VkDebugUtilsLabelEXT::color.
+    void beginPassLabel(const RgDebugLabels& labels, vk::CommandBuffer cmd, const std::string& name)
     {
+        VkDebugUtilsLabelEXT label{};
+        label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+        label.pLabelName = name.c_str();
+        u32 h = 2166136261u;
+        for (char c : name)
+        {
+            h = (h ^ static_cast<u8>(c)) * 16777619u;
+        }
+        label.color[0] = 0.45f + (0.55f * static_cast<f32>(h & 0xFFu) / 255.0f);
+        label.color[1] = 0.45f + (0.55f * static_cast<f32>((h >> 8) & 0xFFu) / 255.0f);
+        label.color[2] = 0.45f + (0.55f * static_cast<f32>((h >> 16) & 0xFFu) / 255.0f);
+        label.color[3] = 1.0f;
+        labels.begin(static_cast<VkCommandBuffer>(cmd), &label);
+    }
+
+    void executeRenderGraph(RenderGraph& graph, vk::CommandBuffer cmd, const RgTimestamps* timestamps,
+                            const RgDebugLabels* labels)
+    {
+        const bool timing = timestamps != nullptr && static_cast<bool>(timestamps->pool);
+        const bool labelling = labels != nullptr && labels->begin != nullptr;
+        u32 timed = 0;  // index of the next pass to time (begin slot = 2*timed)
+
         for (RgPass& pass : graph.passes)
         {
+            // Name the whole pass region (barriers + body + its timestamps) for capture
+            // tools, regardless of whether timing is on.
+            if (labelling)
+            {
+                beginPassLabel(*labels, cmd, pass.name);
+            }
+
+            // Time this pass only while a begin/end slot pair is still free. The begin
+            // timestamp brackets the pass's barriers + body; the end follows its scope.
+            const bool timeThisPass = timing && (2 * timed + 1) < timestamps->capacity;
+            if (timeThisPass)
+            {
+                cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eTopOfPipe, timestamps->pool, 2 * timed);
+            }
+
             std::vector<vk::ImageMemoryBarrier2> imageBarriers;
             std::vector<vk::MemoryBarrier2> memoryBarriers;
 
@@ -375,6 +441,18 @@ namespace se
             else if (pass.execute)
             {
                 pass.execute(cmd);
+            }
+
+            if (timeThisPass)
+            {
+                cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eBottomOfPipe, timestamps->pool, 2 * timed + 1);
+                timestamps->names->push_back(pass.name);
+                timed = timed + 1;
+            }
+
+            if (labelling)
+            {
+                labels->end(static_cast<VkCommandBuffer>(cmd));
             }
         }
 
