@@ -129,6 +129,26 @@ export namespace se
         Other,
     };
 
+    enum class ProfilerModeDto
+    {
+        Off,
+        Timestamps,
+        PipelineStats,
+    };
+
+    enum class AlarmSeverityDto
+    {
+        Info,
+        Warning,
+        Critical,
+    };
+
+    enum class AlarmStateDto
+    {
+        Firing,
+        Resolved,
+    };
+
     struct PingParams
     {
     };
@@ -153,6 +173,18 @@ export namespace se
         f32 frameMs;
         f32 fps;
         f32 gpuMs;
+        f32 cpuFrameMs;
+        f32 gpuFrameMs;
+        f32 cpuWaitMs;
+        i32 triangles;
+        i32 descriptorBinds;
+        i32 commandBuffers;
+        i32 queueSubmits;
+        i32 pipelinesCreated;
+        u64 vramUsageBytes;
+        u64 vramBudgetBytes;
+        bool softwareGpu;
+        ProfilerModeDto profilerMode;
         bool clustered;
         bool depthPrepass;
         bool shadows;
@@ -169,6 +201,129 @@ export namespace se
         bool hdr;
         f32 exposureEv;
         AaModeDto aa;
+    };
+
+    struct RenderPassTimingDto
+    {
+        std::string name;
+        f32 gpuMs;
+    };
+
+    struct RenderPassTimingsDto
+    {
+        std::vector<RenderPassTimingDto> passes;
+        f32 gpuTotalMs;
+        bool softwareGpu;
+        ProfilerModeDto profilerMode;
+    };
+
+    struct ProfilerSetModeParams
+    {
+        std::optional<ProfilerModeDto> mode;
+    };
+
+    struct ProfilerModeResult
+    {
+        ProfilerModeDto mode;
+        bool timestampsSupported;
+        bool pipelineStatsSupported;
+        bool softwareGpu;
+    };
+
+    struct FrameSampleDto
+    {
+        i64 frameIndex;
+        f32 cpuMs;
+        f32 gpuMs;
+        f32 cpuWaitMs;
+    };
+
+    struct FrameHistoryParams
+    {
+        std::optional<i32> samples;
+    };
+
+    struct FrameHistoryDto
+    {
+        f32 p50Ms;
+        f32 p95Ms;
+        f32 p99Ms;
+        f32 p999Ms;
+        f32 maxMs;
+        f32 meanMs;
+        f32 stddevMs;
+        i64 stutterCount;
+        i32 sampleCount;
+        f32 budgetMs;
+        std::vector<FrameSampleDto> samples;
+    };
+
+    struct PerfConfigDto
+    {
+        f32 targetFps;
+        f32 budgetMs;
+        f32 greenBudgetFrac;
+        f32 greenMedianMul;
+        f32 amberMedianMul;
+        f32 frozenMs;
+        f32 vramWarnFrac;
+        f32 vramCritFrac;
+    };
+
+    struct SetPerfConfigParams
+    {
+        std::optional<f32> targetFps;
+        std::optional<f32> greenBudgetFrac;
+        std::optional<f32> greenMedianMul;
+        std::optional<f32> amberMedianMul;
+        std::optional<f32> frozenMs;
+        std::optional<f32> vramWarnFrac;
+        std::optional<f32> vramCritFrac;
+    };
+
+    struct AlarmEventDto
+    {
+        i64 seq;
+        std::string fingerprint;
+        std::string metric;
+        std::string pass;
+        AlarmSeverityDto severity;
+        AlarmStateDto state;
+        f32 value;
+        f32 threshold;
+        i64 sinceFrame;
+        i32 count;
+        f32 durationMs;
+    };
+
+    struct DrainAlarmsParams
+    {
+        std::optional<i64> since;
+    };
+
+    struct DrainAlarmsResult
+    {
+        std::vector<AlarmEventDto> events;
+        i64 highWaterSeq;
+        i64 oldestSeq;
+        bool overflowed;
+    };
+
+    struct ActiveAlarmDto
+    {
+        std::string fingerprint;
+        std::string metric;
+        std::string pass;
+        AlarmSeverityDto severity;
+        f32 value;
+        f32 threshold;
+        i64 sinceFrame;
+        i32 count;
+    };
+
+    struct ActiveAlarmsDto
+    {
+        std::vector<ActiveAlarmDto> alarms;
     };
 
     struct SetAaParams
@@ -797,11 +952,24 @@ export namespace se
     auto dtoToJson(AssetSlotDto value) -> Json;
     auto dtoToJson(ScreenshotTargetDto value) -> Json;
     auto dtoToJson(AssetTypeDto value) -> Json;
+    auto dtoToJson(ProfilerModeDto value) -> Json;
+    auto dtoToJson(AlarmSeverityDto value) -> Json;
+    auto dtoToJson(AlarmStateDto value) -> Json;
     auto dtoToJson(const Vec3& value) -> Json;
     auto dtoToJson(const Vec4& value) -> Json;
     auto dtoToJson(const EntityRef& value) -> Json;
     auto dtoToJson(const PingResult& value) -> Json;
     auto dtoToJson(const RenderStatsDto& value) -> Json;
+    auto dtoToJson(const RenderPassTimingDto& value) -> Json;
+    auto dtoToJson(const RenderPassTimingsDto& value) -> Json;
+    auto dtoToJson(const ProfilerModeResult& value) -> Json;
+    auto dtoToJson(const FrameSampleDto& value) -> Json;
+    auto dtoToJson(const FrameHistoryDto& value) -> Json;
+    auto dtoToJson(const PerfConfigDto& value) -> Json;
+    auto dtoToJson(const AlarmEventDto& value) -> Json;
+    auto dtoToJson(const DrainAlarmsResult& value) -> Json;
+    auto dtoToJson(const ActiveAlarmDto& value) -> Json;
+    auto dtoToJson(const ActiveAlarmsDto& value) -> Json;
     auto dtoToJson(const SetAaResult& value) -> Json;
     auto dtoToJson(const SetClusteredResult& value) -> Json;
     auto dtoToJson(const SetIblResult& value) -> Json;
@@ -860,6 +1028,10 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<Vec3>) -> Result<Vec3>;
     auto parseDto(const Json& params, DtoTag<Vec4>) -> Result<Vec4>;
     auto parseDto(const Json& params, DtoTag<SetAaParams>) -> Result<SetAaParams>;
+    auto parseDto(const Json& params, DtoTag<ProfilerSetModeParams>) -> Result<ProfilerSetModeParams>;
+    auto parseDto(const Json& params, DtoTag<FrameHistoryParams>) -> Result<FrameHistoryParams>;
+    auto parseDto(const Json& params, DtoTag<SetPerfConfigParams>) -> Result<SetPerfConfigParams>;
+    auto parseDto(const Json& params, DtoTag<DrainAlarmsParams>) -> Result<DrainAlarmsParams>;
     auto parseDto(const Json& params, DtoTag<ToggleParams>) -> Result<ToggleParams>;
     auto parseDto(const Json& params, DtoTag<SetViewportSizeParams>) -> Result<SetViewportSizeParams>;
     auto parseDto(const Json& params, DtoTag<SetGiParams>) -> Result<SetGiParams>;
