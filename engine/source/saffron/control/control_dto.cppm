@@ -113,6 +113,7 @@ export namespace se
     {
         Mesh,
         Albedo,
+        MetallicRoughness,
     };
 
     enum class ScreenshotTargetDto
@@ -540,11 +541,15 @@ export namespace se
         EntitySelector entity;
         std::optional<Vec4> baseColor;
         std::optional<WireUuid> albedoTexture;
+        std::optional<WireUuid> metallicRoughnessTexture;
         std::optional<f32> metallic;
         std::optional<f32> roughness;
         std::optional<Vec3> emissive;
         std::optional<f32> emissiveStrength;
         std::optional<bool> unlit;
+        /// Target a slot of the entity's MaterialSetComponent instead of its
+        /// MaterialComponent. Out of range is an error; ignored without a MaterialSet.
+        std::optional<u32> slot;
         /// Animate numeric fields toward the given values over ~25ms instead of
         /// snapping; texture/unlit still apply immediately.
         std::optional<bool> smooth;

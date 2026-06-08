@@ -335,6 +335,7 @@ namespace se
             if (!text) { return Err(std::move(text.error())); }
             if (text == "mesh") { return AssetSlotDto::Mesh; }
             if (text == "albedo") { return AssetSlotDto::Albedo; }
+            if (text == "metallic-roughness") { return AssetSlotDto::MetallicRoughness; }
             return Err(std::format("key '{}' has unknown value '{}'", key, *text));
         }
 
@@ -344,6 +345,7 @@ namespace se
             {
             case AssetSlotDto::Mesh: return "mesh";
             case AssetSlotDto::Albedo: return "albedo";
+            case AssetSlotDto::MetallicRoughness: return "metallic-roughness";
             }
             return "";
         }
@@ -809,7 +811,17 @@ namespace se
         }
 
         {
-            auto value = optionalField(params, "metallic", 3, true);
+            auto value = optionalField(params, "metallicRoughnessTexture", 3, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readWireUuid(*value, "metallicRoughnessTexture");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.metallicRoughnessTexture = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "metallic", 4, true);
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "metallic");
@@ -819,7 +831,7 @@ namespace se
         }
 
         {
-            auto value = optionalField(params, "roughness", 4, true);
+            auto value = optionalField(params, "roughness", 5, true);
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "roughness");
@@ -829,7 +841,7 @@ namespace se
         }
 
         {
-            auto value = optionalField(params, "emissive", 5, true);
+            auto value = optionalField(params, "emissive", 6, true);
             if (value && !value->is_null())
             {
                 auto parsed = parseDto(*value, DtoTag<Vec3>{});
@@ -839,7 +851,7 @@ namespace se
         }
 
         {
-            auto value = optionalField(params, "emissiveStrength", 6, true);
+            auto value = optionalField(params, "emissiveStrength", 7, true);
             if (value && !value->is_null())
             {
                 auto parsed = readF32(*value, "emissiveStrength");
@@ -849,7 +861,7 @@ namespace se
         }
 
         {
-            auto value = optionalField(params, "unlit", 7, true);
+            auto value = optionalField(params, "unlit", 8, true);
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "unlit");
@@ -859,7 +871,17 @@ namespace se
         }
 
         {
-            auto value = optionalField(params, "smooth", 8, true);
+            auto value = optionalField(params, "slot", 9, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readU32(*value, "slot");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.slot = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "smooth", 10, true);
             if (value && !value->is_null())
             {
                 auto parsed = readBool(*value, "smooth");

@@ -72,7 +72,16 @@ namespace se
 
         auto assetSlotName(AssetSlotDto slot) -> const char*
         {
-            return slot == AssetSlotDto::Albedo ? "albedo" : "mesh";
+            switch (slot)
+            {
+            case AssetSlotDto::Albedo:
+                return "albedo";
+            case AssetSlotDto::MetallicRoughness:
+                return "metallic-roughness";
+            case AssetSlotDto::Mesh:
+                return "mesh";
+            }
+            return "mesh";
         }
 
         auto screenshotTargetName(ScreenshotTargetDto target) -> const char*
@@ -263,6 +272,11 @@ namespace se
                     {
                         usages.push_back(AssetUsageDto{ entityId(scene, entity), entityName(scene, entity), "albedo" });
                     }
+                    if (material.metallicRoughnessTexture.value == asset.value)
+                    {
+                        usages.push_back(
+                            AssetUsageDto{ entityId(scene, entity), entityName(scene, entity), "metallic-roughness" });
+                    }
                 });
             if (scene.environment.skyTexture.value == asset.value)
             {
@@ -292,6 +306,13 @@ namespace se
                                                cleared.push_back(AssetUsageDto{ entityId(scene, entity),
                                                                                 entityName(scene, entity), "albedo" });
                                                material.albedoTexture = Uuid{};
+                                           }
+                                           if (material.metallicRoughnessTexture.value == asset.value)
+                                           {
+                                               cleared.push_back(AssetUsageDto{ entityId(scene, entity),
+                                                                                entityName(scene, entity),
+                                                                                "metallic-roughness" });
+                                               material.metallicRoughnessTexture = Uuid{};
                                            }
                                        });
             if (scene.environment.skyTexture.value == asset.value)
@@ -698,7 +719,7 @@ namespace se
             });
 
         registerCommand<AssignAssetParams, AssignAssetResult>(
-            reg, "assign-asset", "assign-asset {entity, slot:mesh|albedo, id|name}",
+            reg, "assign-asset", "assign-asset {entity, slot:mesh|albedo|metallic-roughness, id|name}",
             [](EngineContext& ctx, const AssignAssetParams& params) -> Result<AssignAssetResult>
             {
                 auto entity = resolveEntity(ctx, json{ { "entity", params.entity.value } });
@@ -741,6 +762,14 @@ namespace se
                         addComponent<MaterialComponent>(scene, *entity);
                     }
                     getComponent<MaterialComponent>(scene, *entity).albedoTexture = assignId;
+                }
+                else if (params.slot == AssetSlotDto::MetallicRoughness)
+                {
+                    if (!hasComponent<MaterialComponent>(scene, *entity))
+                    {
+                        addComponent<MaterialComponent>(scene, *entity);
+                    }
+                    getComponent<MaterialComponent>(scene, *entity).metallicRoughnessTexture = assignId;
                 }
                 ctx.sceneEdit.sceneVersion += 1;
                 return AssignAssetResult{ WireUuid{ assignId.value }, assignName, params.slot };

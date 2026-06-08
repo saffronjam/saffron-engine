@@ -441,14 +441,73 @@ namespace se
         // current value (baseColor as {x,y,z,w}).
         registerCommand<SetMaterialParams, EntityRef>(
             reg, "set-material",
-            "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid, metallic?, roughness?, "
-            "emissive?:{x,y,z}, emissiveStrength?, unlit?:0|1, smooth?:0|1}",
+            "set-material {entity, baseColor?:{x,y,z,w}, albedoTexture?:uuid, metallicRoughnessTexture?:uuid, "
+            "metallic?, roughness?, emissive?:{x,y,z}, emissiveStrength?, unlit?:0|1, slot?, smooth?:0|1}",
             [](EngineContext& ctx, const SetMaterialParams& params) -> Result<EntityRef>
             {
                 auto entity = resolveEntity(ctx, params.entity);
                 if (!entity)
                 {
                     return Err(entity.error());
+                }
+                // Slot path: merge the given fields into one slot of the MaterialSet (direct
+                // writes; per-slot smoothing is not animated).
+                if (params.slot)
+                {
+                    const ComponentTraits* setRow = findByName(ctx.sceneEdit.registry, "MaterialSet");
+                    if (setRow == nullptr)
+                    {
+                        return Err(std::string{ "MaterialSet component is not registered" });
+                    }
+                    if (!setRow->has(activeScene(ctx.sceneEdit), *entity))
+                    {
+                        return Err(std::string{ "entity has no MaterialSet component" });
+                    }
+                    json setBody = setRow->serialize(activeScene(ctx.sceneEdit), *entity);
+                    if (!setBody.contains("slots") || !setBody["slots"].is_array() ||
+                        *params.slot >= setBody["slots"].size())
+                    {
+                        return Err(std::format("material slot {} out of range", *params.slot));
+                    }
+                    json& slot = setBody["slots"][*params.slot];
+                    if (params.baseColor)
+                    {
+                        slot["baseColor"] = vec4Json(*params.baseColor);
+                    }
+                    if (params.albedoTexture)
+                    {
+                        slot["albedoTexture"] = params.albedoTexture->value;
+                    }
+                    if (params.metallicRoughnessTexture)
+                    {
+                        slot["metallicRoughnessTexture"] = params.metallicRoughnessTexture->value;
+                    }
+                    if (params.metallic)
+                    {
+                        slot["metallic"] = *params.metallic;
+                    }
+                    if (params.roughness)
+                    {
+                        slot["roughness"] = *params.roughness;
+                    }
+                    if (params.emissive)
+                    {
+                        slot["emissive"] = vec3Json(*params.emissive);
+                    }
+                    if (params.emissiveStrength)
+                    {
+                        slot["emissiveStrength"] = *params.emissiveStrength;
+                    }
+                    if (params.unlit)
+                    {
+                        slot["unlit"] = *params.unlit;
+                    }
+                    if (auto applied = setRow->deserialize(activeScene(ctx.sceneEdit), *entity, setBody); !applied)
+                    {
+                        return Err(applied.error());
+                    }
+                    ctx.sceneEdit.sceneVersion += 1;
+                    return entityRefDto(activeScene(ctx.sceneEdit), *entity);
                 }
                 const ComponentTraits* row = findByName(ctx.sceneEdit.registry, "Material");
                 if (row == nullptr)
@@ -471,6 +530,10 @@ namespace se
                 if (params.albedoTexture)
                 {
                     body["albedoTexture"] = params.albedoTexture->value;
+                }
+                if (params.metallicRoughnessTexture)
+                {
+                    body["metallicRoughnessTexture"] = params.metallicRoughnessTexture->value;
                 }
                 if (params.metallic && !smooth)
                 {

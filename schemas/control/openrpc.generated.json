@@ -457,7 +457,7 @@
     },
     {
       "name": "set-material",
-      "summary": "set-material {entity, material fields...}",
+      "summary": "set-material {entity, material fields..., slot?}",
       "params": [
         {
           "name": "params",
@@ -1680,7 +1680,8 @@
             "type": "string",
             "enum": [
               "mesh",
-              "albedo"
+              "albedo",
+              "metallic-roughness"
             ]
           },
           "asset": {
@@ -1714,7 +1715,8 @@
             "type": "string",
             "enum": [
               "mesh",
-              "albedo"
+              "albedo",
+              "metallic-roughness"
             ]
           }
         },
@@ -3108,6 +3110,9 @@
           "albedoTexture": {
             "type": "string"
           },
+          "metallicRoughnessTexture": {
+            "type": "string"
+          },
           "metallic": {
             "type": "number"
           },
@@ -3122,6 +3127,9 @@
           },
           "unlit": {
             "type": "boolean"
+          },
+          "slot": {
+            "type": "integer"
           },
           "smooth": {
             "type": "boolean"
@@ -3554,6 +3562,9 @@
           "albedoTexture": {
             "type": "string"
           },
+          "metallicRoughnessTexture": {
+            "type": "string"
+          },
           "metallic": {
             "type": "number"
           },
@@ -3573,11 +3584,27 @@
         "required": [
           "baseColor",
           "albedoTexture",
+          "metallicRoughnessTexture",
           "metallic",
           "roughness",
           "emissive",
           "emissiveStrength",
           "unlit"
+        ]
+      },
+      "MaterialSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Material"
+            }
+          }
+        },
+        "required": [
+          "slots"
         ]
       },
       "DirectionalLight": {
@@ -3803,6 +3830,9 @@
           "Material": {
             "$ref": "#/components/schemas/Material"
           },
+          "MaterialSet": {
+            "$ref": "#/components/schemas/MaterialSet"
+          },
           "DirectionalLight": {
             "$ref": "#/components/schemas/DirectionalLight"
           },
@@ -3842,6 +3872,9 @@
           },
           {
             "$ref": "#/components/schemas/Material"
+          },
+          {
+            "$ref": "#/components/schemas/MaterialSet"
           },
           {
             "$ref": "#/components/schemas/DirectionalLight"

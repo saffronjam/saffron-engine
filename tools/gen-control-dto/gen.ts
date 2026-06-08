@@ -83,7 +83,7 @@ const enumWireNames = new Map<string, Record<string, string>>([
   ["GizmoPointerPhase", { Hover: "hover", Begin: "begin", Drag: "drag", End: "end" }],
   ["AaModeDto", { Off: "off", Fxaa: "fxaa", Taa: "taa", Msaa2: "msaa2", Msaa4: "msaa4", Msaa8: "msaa8" }],
   ["GiModeDto", { Off: "off", Ddgi: "ddgi" }],
-  ["AssetSlotDto", { Mesh: "mesh", Albedo: "albedo" }],
+  ["AssetSlotDto", { Mesh: "mesh", Albedo: "albedo", MetallicRoughness: "metallic-roughness" }],
   ["ScreenshotTargetDto", { Viewport: "viewport", Window: "window" }],
   ["AssetTypeDto", { Mesh: "mesh", Texture: "texture", Other: "other" }],
 ]);
@@ -178,7 +178,7 @@ const commands: CommandDef[] = [
     name: "set-material",
     params: "SetMaterialParams",
     result: "EntityRef",
-    summary: "set-material {entity, material fields...}",
+    summary: "set-material {entity, material fields..., slot?}",
   },
   {
     name: "set-light",
@@ -1019,7 +1019,7 @@ function tsType(type: string): string {
     case "GiModeDto":
       return '"off" | "ddgi"';
     case "AssetSlotDto":
-      return '"mesh" | "albedo"';
+      return '"mesh" | "albedo" | "metallic-roughness"';
     case "ScreenshotTargetDto":
       return '"viewport" | "window"';
     case "AssetTypeDto":
@@ -1095,11 +1095,16 @@ export interface Camera {
 export interface Material {
   baseColor: Vec4;
   albedoTexture: WireUuid;
+  metallicRoughnessTexture: WireUuid;
   metallic: number;
   roughness: number;
   emissive: Vec3;
   emissiveStrength: number;
   unlit: boolean;
+}
+
+export interface MaterialSet {
+  slots: Material[];
 }
 
 export interface DirectionalLight {
@@ -1164,6 +1169,7 @@ export interface Components {
   Mesh?: Mesh;
   Camera?: Camera;
   Material?: Material;
+  MaterialSet?: MaterialSet;
   DirectionalLight?: DirectionalLight;
   PointLight?: PointLight;
   SpotLight?: SpotLight;
@@ -1179,6 +1185,7 @@ export type ComponentBody =
   | Mesh
   | Camera
   | Material
+  | MaterialSet
   | DirectionalLight
   | PointLight
   | SpotLight
@@ -1284,6 +1291,7 @@ function componentSchemas(): Record<string, unknown> {
     "Mesh",
     "Camera",
     "Material",
+    "MaterialSet",
     "DirectionalLight",
     "PointLight",
     "SpotLight",
@@ -1323,13 +1331,20 @@ function componentSchemas(): Record<string, unknown> {
       properties: {
         baseColor: vec4,
         albedoTexture: uuid,
+        metallicRoughnessTexture: uuid,
         metallic: { type: "number" },
         roughness: { type: "number" },
         emissive: vec3,
         emissiveStrength: { type: "number" },
         unlit: { type: "boolean" },
       },
-      required: ["baseColor", "albedoTexture", "metallic", "roughness", "emissive", "emissiveStrength", "unlit"],
+      required: ["baseColor", "albedoTexture", "metallicRoughnessTexture", "metallic", "roughness", "emissive", "emissiveStrength", "unlit"],
+    },
+    MaterialSet: {
+      type: "object",
+      additionalProperties: false,
+      properties: { slots: { type: "array", items: { $ref: "#/components/schemas/Material" } } },
+      required: ["slots"],
     },
     DirectionalLight: {
       type: "object",
@@ -1675,6 +1690,7 @@ namespace se
     {
         return nlohmann::json{ { "baseColor", vec4ToJson(c.baseColor) },
                                { "albedoTexture", uuidToJson(c.albedoTexture.value) },
+                               { "metallicRoughnessTexture", uuidToJson(c.metallicRoughnessTexture.value) },
                                { "metallic", c.metallic },
                                { "roughness", c.roughness },
                                { "emissive", vec3ToJson(c.emissive) },
@@ -1686,11 +1702,51 @@ namespace se
     {
         c.baseColor = vec4FromJson(j.value("baseColor", nlohmann::json::object()));
         c.albedoTexture = Uuid{ jsonU64Or(j, "albedoTexture", 0) };
+        c.metallicRoughnessTexture = Uuid{ jsonU64Or(j, "metallicRoughnessTexture", 0) };
         c.metallic = jsonF32Or(j, "metallic", 0.0f);
         c.roughness = jsonF32Or(j, "roughness", 1.0f);
         c.emissive = vec3FromJson(j.value("emissive", nlohmann::json::object()));
         c.emissiveStrength = jsonF32Or(j, "emissiveStrength", 1.0f);
         c.unlit = jsonBoolOr(j, "unlit", false);
+        return {};
+    }
+
+    auto materialSetComponentToJson(const MaterialSetComponent& c) -> nlohmann::json
+    {
+        nlohmann::json slots = nlohmann::json::array();
+        for (const MaterialSlot& s : c.slots)
+        {
+            slots.push_back(nlohmann::json{ { "baseColor", vec4ToJson(s.baseColor) },
+                                            { "albedoTexture", uuidToJson(s.albedoTexture.value) },
+                                            { "metallicRoughnessTexture", uuidToJson(s.metallicRoughnessTexture.value) },
+                                            { "metallic", s.metallic },
+                                            { "roughness", s.roughness },
+                                            { "emissive", vec3ToJson(s.emissive) },
+                                            { "emissiveStrength", s.emissiveStrength },
+                                            { "unlit", s.unlit } });
+        }
+        return nlohmann::json{ { "slots", std::move(slots) } };
+    }
+
+    auto materialSetComponentFromJson(MaterialSetComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        c.slots.clear();
+        if (auto it = j.find("slots"); it != j.end() && it->is_array())
+        {
+            for (const nlohmann::json& sj : *it)
+            {
+                MaterialSlot s;
+                s.baseColor = vec4FromJson(sj.value("baseColor", nlohmann::json::object()));
+                s.albedoTexture = Uuid{ jsonU64Or(sj, "albedoTexture", 0) };
+                s.metallicRoughnessTexture = Uuid{ jsonU64Or(sj, "metallicRoughnessTexture", 0) };
+                s.metallic = jsonF32Or(sj, "metallic", 0.0f);
+                s.roughness = jsonF32Or(sj, "roughness", 1.0f);
+                s.emissive = vec3FromJson(sj.value("emissive", nlohmann::json::object()));
+                s.emissiveStrength = jsonF32Or(sj, "emissiveStrength", 1.0f);
+                s.unlit = jsonBoolOr(sj, "unlit", false);
+                c.slots.push_back(s);
+            }
+        }
         return {};
     }
 
