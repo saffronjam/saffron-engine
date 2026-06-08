@@ -5,14 +5,31 @@ import { create } from "zustand";
 import { client, type Client } from "../control/client";
 import type { ProjectInfo } from "../control/client";
 import { COMMANDS_BY_ID, isCommandId, type CommandId } from "../lib/keybindings";
+import { routeAlarmToasts } from "../lib/alarmToasts";
+import { appendFrameSamples } from "../lib/frameSeries";
 import type {
+  ActiveAlarmDto,
+  AlarmEventDto,
   AssetEntry,
   EntityListEntry,
   Environment,
+  FrameHistoryDto,
   GizmoState,
   InspectResult,
+  PerfConfigDto,
+  RenderPassTimingsDto,
   RenderStats,
 } from "../protocol";
+
+/// Cap on the retained alarm-log entries (the dashboard shows the most recent).
+const ALARM_LOG_LIMIT = 200;
+/// Frames requested from the engine per metrics poll — its full ring, so no frames are
+/// missed between polls (the client dedups the overlap by frame index).
+const FRAME_HISTORY_SAMPLES = 1000;
+const METRICS_RANGE_STORAGE_KEY = "saffron.metricsRangeSec";
+const METRICS_BUCKET_STORAGE_KEY = "saffron.metricsBucketMs";
+const METRICS_WINDOW_LEGACY_KEY = "saffron.metricsWindowSec"; // migrated once into the range key
+const METRICS_REFRESH_STORAGE_KEY = "saffron.metricsRefreshMs";
 
 export type EnginePhase = "idle" | "starting" | "attaching" | "ready" | "error";
 /// The active left-bottom dock tab. Tree rows switch it (the Environment sentinel
@@ -55,6 +72,25 @@ export interface EditorState {
   activeViewTabId: string;
   environment: Environment | null;
   renderStats: RenderStats | null;
+  /// Performance-telemetry slices (phases 1-4), filled by the gated metrics poll only
+  /// while the Stats tab is open (history/passes) or always (alarms, for the badge).
+  perfConfig: PerfConfigDto | null;
+  frameHistory: FrameHistoryDto | null;
+  passTimings: RenderPassTimingsDto | null;
+  activeAlarms: ActiveAlarmDto[];
+  /// Append-only FIRING/RESOLVED log (bounded), newest last; drives the dashboard log.
+  alarmLog: AlarmEventDto[];
+  /// The frame-time graph's time RANGE in seconds — how far back to display (bounded by the
+  /// client history ring). A persisted view preference.
+  metricsRangeSec: number;
+  /// The graph's WINDOW (bucket / group-by) interval in ms — samples within it are averaged
+  /// into one plotted point. The smoothness knob (larger = smoother). Persisted.
+  metricsBucketMs: number;
+  /// How often the metrics lane fetches (ms); persisted, default 1000 (1/s). The badge,
+  /// graph, numbers, and per-pass all refresh at this rate.
+  metricsRefreshMs: number;
+  /// Pause the metrics lane (freeze the dashboard). Session-only; alarms catch up on resume.
+  metricsPaused: boolean;
   project: ProjectInfo | null;
   /// Client-side reconcile-poll rate (Hz), an EMA over the actual tick interval.
   /// This is the WEBVIEW poll cadence, NOT the engine frame rate (the engine's own
@@ -137,6 +173,20 @@ export interface EditorState {
   moveViewTab(id: string, index: number): void;
   setEnvironment(environment: Environment | null): void;
   setRenderStats(renderStats: RenderStats | null): void;
+  setPerfConfig(perfConfig: PerfConfigDto | null): void;
+  setFrameHistory(frameHistory: FrameHistoryDto | null): void;
+  setPassTimings(passTimings: RenderPassTimingsDto | null): void;
+  setActiveAlarms(activeAlarms: ActiveAlarmDto[]): void;
+  /// Append drained alarm events to the bounded log (newest last).
+  appendAlarmEvents(events: AlarmEventDto[]): void;
+  /// Set + persist the frame-time graph's time range (seconds).
+  setMetricsRangeSec(metricsRangeSec: number): void;
+  /// Set + persist the graph's bucket (group-by) interval (ms).
+  setMetricsBucketMs(metricsBucketMs: number): void;
+  /// Set + persist the metrics fetch interval (ms).
+  setMetricsRefreshMs(metricsRefreshMs: number): void;
+  /// Pause/resume the metrics lane.
+  setMetricsPaused(metricsPaused: boolean): void;
   setProject(project: ProjectInfo | null): void;
   setPollRateHz(pollRateHz: number): void;
   setUiFrameStats(frameRateHz: number, frameMs: number): void;
@@ -185,6 +235,15 @@ export const useEditorStore = create<EditorState>((set) => ({
   activeViewTabId: "scene",
   environment: null,
   renderStats: null,
+  perfConfig: null,
+  frameHistory: null,
+  passTimings: null,
+  activeAlarms: [],
+  alarmLog: [],
+  metricsRangeSec: loadMetricsRangeSec(),
+  metricsBucketMs: loadMetricsBucketMs(),
+  metricsRefreshMs: loadMetricsRefreshMs(),
+  metricsPaused: false,
   project: null,
   pollRateHz: 0,
   uiFrameRateHz: 0,
@@ -359,6 +418,46 @@ export const useEditorStore = create<EditorState>((set) => ({
     }),
   setEnvironment: (environment) => set({ environment }),
   setRenderStats: (renderStats) => set({ renderStats }),
+  setPerfConfig: (perfConfig) => set({ perfConfig }),
+  setFrameHistory: (frameHistory) => set({ frameHistory }),
+  setPassTimings: (passTimings) => set({ passTimings }),
+  setActiveAlarms: (activeAlarms) => set({ activeAlarms }),
+  appendAlarmEvents: (events) =>
+    set((s) => {
+      if (events.length === 0) {
+        return {};
+      }
+      const alarmLog = [...s.alarmLog, ...events];
+      return { alarmLog: alarmLog.slice(Math.max(0, alarmLog.length - ALARM_LOG_LIMIT)) };
+    }),
+  setMetricsRangeSec: (metricsRangeSec) =>
+    set(() => {
+      try {
+        localStorage.setItem(METRICS_RANGE_STORAGE_KEY, String(metricsRangeSec));
+      } catch {
+        // Storage unavailable; the preference is then session-only.
+      }
+      return { metricsRangeSec };
+    }),
+  setMetricsBucketMs: (metricsBucketMs) =>
+    set(() => {
+      try {
+        localStorage.setItem(METRICS_BUCKET_STORAGE_KEY, String(metricsBucketMs));
+      } catch {
+        // Storage unavailable; the preference is then session-only.
+      }
+      return { metricsBucketMs };
+    }),
+  setMetricsRefreshMs: (metricsRefreshMs) =>
+    set(() => {
+      try {
+        localStorage.setItem(METRICS_REFRESH_STORAGE_KEY, String(metricsRefreshMs));
+      } catch {
+        // Storage unavailable; the preference is then session-only.
+      }
+      return { metricsRefreshMs };
+    }),
+  setMetricsPaused: (metricsPaused) => set({ metricsPaused }),
   // Rehydrate the persisted expand-state when a project (path) becomes current.
   setProject: (project) =>
     set({
@@ -618,14 +717,70 @@ function loadHideBones(): boolean {
 }
 
 /// Developer mode persists app-wide (one key, not per-project), default off.
+/// `VITE_SAFFRON_DEV_MODE=1` (set by `make run-debug`) forces it on for the session
+/// without touching the persisted flag.
 const DEV_MODE_STORAGE_KEY = "saffron.devMode";
 
 function loadDevMode(): boolean {
+  if (import.meta.env.VITE_SAFFRON_DEV_MODE === "1") {
+    return true;
+  }
   try {
     return localStorage.getItem(DEV_MODE_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
+}
+
+/// The frame-time graph time range (seconds); default 30 s. Migrates once from the legacy
+/// "window" key (which was really the range) so an existing preference carries over.
+function loadMetricsRangeSec(): number {
+  try {
+    const raw =
+      localStorage.getItem(METRICS_RANGE_STORAGE_KEY) ??
+      localStorage.getItem(METRICS_WINDOW_LEGACY_KEY);
+    if (raw !== null) {
+      const value = Number(raw);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+  } catch {
+    // Fall through to the default.
+  }
+  return 30;
+}
+
+/// The graph bucket (group-by) interval (ms); default 250. Clamped to a sane [10, 5000].
+function loadMetricsBucketMs(): number {
+  try {
+    const raw = localStorage.getItem(METRICS_BUCKET_STORAGE_KEY);
+    if (raw !== null) {
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 10 && value <= 5000) {
+        return value;
+      }
+    }
+  } catch {
+    // Fall through to the default.
+  }
+  return 250;
+}
+
+/// The metrics fetch interval (ms); default 1000 (1/s).
+function loadMetricsRefreshMs(): number {
+  try {
+    const raw = localStorage.getItem(METRICS_REFRESH_STORAGE_KEY);
+    if (raw !== null) {
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 100) {
+        return value;
+      }
+    }
+  } catch {
+    // Fall through to the default.
+  }
+  return 1000;
 }
 
 /// The outliner's bone filter: drop rows flagged `bone` and re-anchor every surviving
@@ -647,6 +802,10 @@ export function reanchorPastBones(entities: EntityListEntry[]): EntityListEntry[
 
 const FAST_RECONCILE_INTERVAL_MS = 50; // cheap state lane, target ~20 Hz
 const WATCHDOG_INTERVAL_MS = 1000;
+// The metrics lane wakes on this base tick and fetches when `metricsRefreshMs` has elapsed
+// (and not paused), so a rate or pause change applies within one tick instead of waiting
+// out a long interval.
+const METRICS_BASE_TICK_MS = 100;
 
 /// Start the focus-gated reconcile loops. Cheap interactive state runs frequently;
 /// heavier scene/entity/inspect refreshes only run when versions change and never
@@ -655,9 +814,14 @@ export function startReconcile(client: Client): () => void {
   let stopped = false;
   let fastTimer: ReturnType<typeof setTimeout> | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let metricsTimer: ReturnType<typeof setTimeout> | null = null;
   let fastInFlight = false;
   let refreshInFlight = false;
   let watchdogInFlight = false;
+  let metricsInFlight = false;
+  let lastMetricsFetchAt = 0;
+  // Alarm cursor (Last-Event-ID): only advances, so a missed poll just catches up.
+  let alarmSince = 0;
   let pendingRefresh: {
     selectedId: string | null;
     sceneChanged: boolean;
@@ -764,6 +928,63 @@ export function startReconcile(client: Client): () => void {
     })();
   };
 
+  /// The perf-telemetry lane (decoupled from the cheap state tick). Alarms are drained
+  /// every tick so the badge stays live with the panel closed; the heavier frame-history
+  /// and per-pass reads only run while the Stats dashboard is open.
+  const pollMetrics = async (): Promise<void> => {
+    if (stopped || metricsInFlight || !readyForSync()) {
+      return;
+    }
+    metricsInFlight = true;
+    try {
+      const drained = await client.drainAlarms(alarmSince);
+      if (stopped) {
+        return;
+      }
+      if (drained.events.length > 0) {
+        useEditorStore.getState().appendAlarmEvents(drained.events);
+        routeAlarmToasts(drained.events, performance.now());
+      }
+      alarmSince = Math.max(alarmSince, drained.highWaterSeq);
+
+      const active = await client.listActiveAlarms();
+      if (stopped) {
+        return;
+      }
+      useEditorStore.getState().setActiveAlarms(active.alarms);
+
+      // Fetch the shared config once; the target-FPS dropdown refreshes it on write.
+      if (useEditorStore.getState().perfConfig === null) {
+        const config = await client.getPerfConfig();
+        if (stopped) {
+          return;
+        }
+        useEditorStore.getState().setPerfConfig(config);
+      }
+
+      if (useEditorStore.getState().bottomTab === "stats") {
+        const history = await client.frameHistory(FRAME_HISTORY_SAMPLES);
+        if (stopped) {
+          return;
+        }
+        appendFrameSamples(history.samples);
+        useEditorStore.getState().setFrameHistory(history);
+        const stats = useEditorStore.getState().renderStats;
+        if (stats && stats.profilerMode !== "off") {
+          const passes = await client.passTimings();
+          if (stopped) {
+            return;
+          }
+          useEditorStore.getState().setPassTimings(passes);
+        }
+      }
+    } catch {
+      // Engine briefly busy; the next tick recovers.
+    } finally {
+      metricsInFlight = false;
+    }
+  };
+
   const watchdog = (): void => {
     if (stopped || watchdogInFlight || !engineMayBeAlive()) {
       return;
@@ -868,8 +1089,30 @@ export function startReconcile(client: Client): () => void {
     }
   }
 
+  // The metrics lane: a base tick that fetches only when the configured interval has
+  // elapsed and the lane is not paused — so the refresh-rate and pause controls take
+  // effect within one base tick.
+  const metricsTick = (): void => {
+    if (stopped) {
+      return;
+    }
+    const state = useEditorStore.getState();
+    const now = performance.now();
+    if (!state.metricsPaused && now - lastMetricsFetchAt >= state.metricsRefreshMs) {
+      lastMetricsFetchAt = now;
+      void pollMetrics().finally(() => {
+        if (!stopped) {
+          metricsTimer = setTimeout(metricsTick, METRICS_BASE_TICK_MS);
+        }
+      });
+      return;
+    }
+    metricsTimer = setTimeout(metricsTick, METRICS_BASE_TICK_MS);
+  };
+
   schedule();
   watchdogTimer = setInterval(watchdog, WATCHDOG_INTERVAL_MS);
+  metricsTimer = setTimeout(metricsTick, METRICS_BASE_TICK_MS);
 
   return () => {
     stopped = true;
@@ -880,6 +1123,10 @@ export function startReconcile(client: Client): () => void {
     if (watchdogTimer !== null) {
       clearInterval(watchdogTimer);
       watchdogTimer = null;
+    }
+    if (metricsTimer !== null) {
+      clearTimeout(metricsTimer);
+      metricsTimer = null;
     }
   };
 }
