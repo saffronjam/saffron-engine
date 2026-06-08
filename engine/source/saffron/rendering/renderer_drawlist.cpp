@@ -13,6 +13,7 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +38,20 @@ import :Detail;
 
 namespace se
 {
+    // Issues one instanced drawIndexed per submesh of a batch. The frame's instance
+    // buffer is laid out submesh-major (see submitDrawList), so submesh s reads its rows
+    // by offsetting baseInstance by s * instanceCount.
+    void recordBatchSubmeshes(vk::CommandBuffer cmd, const DrawBatch& batch)
+    {
+        const auto& submeshes = batch.mesh->submeshes;
+        for (u32 s = 0; s < submeshes.size(); s = s + 1)
+        {
+            const Submesh& submesh = submeshes[s];
+            cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex, submesh.vertexOffset,
+                            batch.baseInstance + s * batch.instanceCount);
+        }
+    }
+
     auto uploadMesh(Renderer& renderer, const Mesh& mesh) -> Result<Ref<GpuMesh>>
     {
         return uploadMesh(renderer, mesh, std::vector<VertexSkin>{});
@@ -292,10 +307,12 @@ namespace se
             Ref<Pipeline> pipeline;
             Ref<GpuMesh> mesh;
             bool skinned = false;
-            std::vector<InstanceData> instances;
+            // Per logical instance: one InstanceData row per mesh submesh, in submesh order.
+            std::vector<std::vector<InstanceData>> instances;
         };
         std::vector<Bucket> buckets;
         std::vector<Ref<GpuTexture>> liveTextures;
+        const u32 defaultTextureIndex = renderer.defaultWhiteTexture ? renderer.defaultWhiteTexture->bindlessIndex : 0u;
         for (const DrawItem& item : items)
         {
             if (!item.mesh)
@@ -311,17 +328,6 @@ namespace se
             {
                 continue;
             }
-            // Resolve the albedo to a bindless slot (default white when the item has none).
-            u32 textureIndex = 0;
-            if (renderer.defaultWhiteTexture)
-            {
-                textureIndex = renderer.defaultWhiteTexture->bindlessIndex;
-            }
-            if (item.texture && item.texture->image)
-            {
-                textureIndex = item.texture->bindlessIndex;
-                liveTextures.push_back(item.texture);
-            }
             Bucket* bucket = nullptr;
             for (Bucket& candidate : buckets)
             {
@@ -336,30 +342,71 @@ namespace se
                 buckets.push_back(Bucket{ pipeline, item.mesh, item.skinned, {} });
                 bucket = &buckets.back();
             }
-            InstanceData instance;
-            instance.model = item.model;
-            instance.normalMatrix = item.normalMatrix;
-            instance.baseColor = item.baseColor;
-            // texture.y carries the joint-palette offset for skinned instances.
-            instance.texture = glm::uvec4{ textureIndex, item.jointOffset, 0, 0 };
-            instance.pbr = glm::vec4{ item.metallic, item.roughness, 0.0f, 0.0f };
-            instance.emissive = glm::vec4{ item.emissive * item.emissiveStrength, 0.0f };
-            bucket->instances.push_back(instance);
+            // One row per submesh; a single material entry covers every submesh (clamped).
+            const std::size_t submeshCount = std::max<std::size_t>(item.mesh->submeshes.size(), 1);
+            std::vector<InstanceData> rows;
+            rows.reserve(submeshCount);
+            for (std::size_t s = 0; s < submeshCount; s = s + 1)
+            {
+                u32 albedoIndex = defaultTextureIndex;
+                u32 mrIndex = defaultTextureIndex;  // white default → metallic*1, roughness*1
+                glm::vec4 baseColor{ 1.0f };
+                glm::vec2 metallicRoughness{ 0.0f, 1.0f };
+                glm::vec3 emissive{ 0.0f };
+                if (!item.submeshMaterials.empty())
+                {
+                    const SubmeshMaterial& mat = item.submeshMaterials[std::min(s, item.submeshMaterials.size() - 1)];
+                    baseColor = mat.baseColor;
+                    metallicRoughness = glm::vec2{ mat.metallic, mat.roughness };
+                    emissive = mat.emissive * mat.emissiveStrength;
+                    if (mat.albedoTexture && mat.albedoTexture->image)
+                    {
+                        albedoIndex = mat.albedoTexture->bindlessIndex;
+                        liveTextures.push_back(mat.albedoTexture);
+                    }
+                    if (mat.metallicRoughnessTexture && mat.metallicRoughnessTexture->image)
+                    {
+                        mrIndex = mat.metallicRoughnessTexture->bindlessIndex;
+                        liveTextures.push_back(mat.metallicRoughnessTexture);
+                    }
+                }
+                InstanceData instance;
+                instance.model = item.model;
+                instance.normalMatrix = item.normalMatrix;
+                instance.baseColor = baseColor;
+                // .x = albedo bindless index, .y = joint-palette offset (skinned), .z = metallic-roughness.
+                instance.texture = glm::uvec4{ albedoIndex, item.jointOffset, mrIndex, 0 };
+                instance.pbr = glm::vec4{ metallicRoughness.x, metallicRoughness.y, 0.0f, 0.0f };
+                instance.emissive = glm::vec4{ emissive, 0.0f };
+                rows.push_back(instance);
+            }
+            bucket->instances.push_back(std::move(rows));
         }
 
-        // Flatten buckets into one contiguous instance array + per-batch ranges.
+        // Flatten submesh-major: lay every instance's submesh-s row contiguously, so a
+        // submesh draws all instances at once by offsetting baseInstance by s * instanceCount.
         std::vector<InstanceData> instances;
-        instances.reserve(items.size());
         std::vector<DrawBatch> batches;
         for (Bucket& bucket : buckets)
         {
+            if (bucket.instances.empty())
+            {
+                continue;
+            }
+            const u32 submeshCount = static_cast<u32>(bucket.instances.front().size());
             DrawBatch batch;
             batch.pipeline = bucket.pipeline;
             batch.mesh = bucket.mesh;
             batch.skinned = bucket.skinned;
             batch.baseInstance = static_cast<u32>(instances.size());
             batch.instanceCount = static_cast<u32>(bucket.instances.size());
-            instances.insert(instances.end(), bucket.instances.begin(), bucket.instances.end());
+            for (u32 s = 0; s < submeshCount; s = s + 1)
+            {
+                for (const std::vector<InstanceData>& rows : bucket.instances)
+                {
+                    instances.push_back(rows[s]);
+                }
+            }
             batches.push_back(std::move(batch));
         }
 
@@ -458,11 +505,7 @@ namespace se
                 cmd.bindVertexBuffers(1, batch.mesh->skinBuffer, offset);
             }
             cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
-            for (const Submesh& submesh : batch.mesh->submeshes)
-            {
-                cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex, submesh.vertexOffset,
-                                batch.baseInstance);
-            }
+            recordBatchSubmeshes(cmd, batch);
         }
     }
 
@@ -514,11 +557,7 @@ namespace se
             vk::DeviceSize offset = 0;
             cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
             cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
-            for (const Submesh& submesh : batch.mesh->submeshes)
-            {
-                cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex, submesh.vertexOffset,
-                                batch.baseInstance);
-            }
+            recordBatchSubmeshes(cmd, batch);
         }
     }
 
@@ -545,11 +584,7 @@ namespace se
             vk::DeviceSize offset = 0;
             cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
             cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
-            for (const Submesh& submesh : batch.mesh->submeshes)
-            {
-                cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex, submesh.vertexOffset,
-                                batch.baseInstance);
-            }
+            recordBatchSubmeshes(cmd, batch);
         }
     }
 
@@ -580,11 +615,7 @@ namespace se
             vk::DeviceSize offset = 0;
             cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
             cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
-            for (const Submesh& submesh : batch.mesh->submeshes)
-            {
-                cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex, submesh.vertexOffset,
-                                batch.baseInstance);
-            }
+            recordBatchSubmeshes(cmd, batch);
         }
     }
 
@@ -616,11 +647,7 @@ namespace se
             vk::DeviceSize offset = 0;
             cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
             cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
-            for (const Submesh& submesh : batch.mesh->submeshes)
-            {
-                cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex, submesh.vertexOffset,
-                                batch.baseInstance);
-            }
+            recordBatchSubmeshes(cmd, batch);
         }
     }
 
@@ -724,11 +751,7 @@ namespace se
                 vk::DeviceSize offset = 0;
                 cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
                 cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
-                for (const Submesh& submesh : batch.mesh->submeshes)
-                {
-                    cmd.drawIndexed(submesh.indexCount, batch.instanceCount, submesh.firstIndex, submesh.vertexOffset,
-                                    batch.baseInstance);
-                }
+                recordBatchSubmeshes(cmd, batch);
             }
             cmd.endRendering();
         }

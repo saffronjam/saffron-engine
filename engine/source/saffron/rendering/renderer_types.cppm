@@ -489,22 +489,31 @@ export namespace se
         bool unlit = false;  // selects the unlit übershader permutation (a distinct PSO)
     };
 
-    /// One renderable for the scene draw list: a mesh + its albedo texture (null =>
-    /// default white) + transform + base color + material. submitDrawList resolves each
-    /// material to a cached PSO and batches by (pipeline, mesh, texture) into instanced
-    /// draws that the scene + depth passes both consume.
-    struct DrawItem
+    /// One submesh's material: albedo (null => default white) + the PBR factors. A
+    /// DrawItem carries one per mesh submesh, indexed by Submesh.materialSlot order.
+    struct SubmeshMaterial
     {
-        Ref<GpuMesh> mesh;
-        Ref<GpuTexture> texture;
-        glm::mat4 model{ 1.0f };
-        glm::mat4 normalMatrix{ 1.0f };
+        Ref<GpuTexture> albedoTexture;
+        Ref<GpuTexture> metallicRoughnessTexture;  // null => default white (factors unchanged)
         glm::vec4 baseColor{ 1.0f };
         f32 metallic = 0.0f;
         f32 roughness = 1.0f;
         glm::vec3 emissive{ 0.0f };
         f32 emissiveStrength = 1.0f;
-        Material material;
+    };
+
+    /// One renderable for the scene draw list: a mesh + its per-submesh materials +
+    /// transform + the PSO-selecting material. submitDrawList resolves the material to a
+    /// cached PSO and batches by (pipeline, mesh) into instanced draws (submesh-major
+    /// instance rows) that the scene + depth passes both consume.
+    struct DrawItem
+    {
+        Ref<GpuMesh> mesh;
+        glm::mat4 model{ 1.0f };
+        glm::mat4 normalMatrix{ 1.0f };
+        // One entry per mesh submesh; a single entry applies to all submeshes (clamped).
+        std::vector<SubmeshMaterial> submeshMaterials;
+        Material material;  // selects the PSO (unlit), shared by all submeshes
         // GPU skinning: the item blends the frame's joint palette starting at
         // jointOffset; model stays identity (joints place the vertices entirely).
         bool skinned = false;
@@ -1247,7 +1256,7 @@ export namespace se
         glm::mat4 model;
         glm::mat4 normalMatrix;  // transpose(inverse(mat3(model))), correct under non-uniform scale
         glm::vec4 baseColor;
-        glm::uvec4 texture{ 0 };                  // .x = bindless albedo index; rest pads to std430 16 bytes
+        glm::uvec4 texture{ 0 };                  // .x = albedo index, .y = joint offset, .z = metallic-roughness index
         glm::vec4 pbr{ 0.0f, 1.0f, 0.0f, 0.0f };  // x = metallic, y = roughness
         glm::vec4 emissive{ 0.0f };               // rgb = emissive radiance (strength baked in)
     };

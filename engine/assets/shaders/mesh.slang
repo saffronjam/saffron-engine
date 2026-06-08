@@ -37,8 +37,9 @@ struct VertexOutput
     float2 uv0 : TEXCOORD0;
     float4 baseColor : COLOR0;
     nointerpolation uint textureIndex : TEXCOORD1;
-    nointerpolation float2 mr : TEXCOORD2;        // x = metallic, y = roughness
+    nointerpolation float2 mr : TEXCOORD2;        // x = metallic, y = roughness (factors)
     nointerpolation float3 emissive : TEXCOORD3;  // emissive radiance (strength baked in)
+    nointerpolation uint mrTextureIndex : TEXCOORD4;  // metallic-roughness map (rough=G, metal=B)
 };
 
 struct Camera
@@ -315,6 +316,7 @@ VertexOutput vertexMain(VertexInput input, uint instanceIndex : SV_VulkanInstanc
     output.uv0 = input.uv0;
     output.baseColor = inst.baseColor;
     output.textureIndex = inst.texture.x;
+    output.mrTextureIndex = inst.texture.z;
     output.mr = inst.pbr.xy;
     output.emissive = inst.emissive.rgb;
     return output;
@@ -343,6 +345,7 @@ VertexOutput vertexMainSkinned(SkinnedVertexInput input, uint instanceIndex : SV
     output.uv0 = input.uv0;
     output.baseColor = inst.baseColor;
     output.textureIndex = inst.texture.x;
+    output.mrTextureIndex = inst.texture.z;
     output.mr = inst.pbr.xy;
     output.emissive = inst.emissive.rgb;
     return output;
@@ -470,8 +473,11 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         return float4(albedo + input.emissive, tex.a * input.baseColor.a);
     }
 
-    float metallic = saturate(input.mr.x);
-    float roughness = clamp(input.mr.y, 0.045, 1.0);  // clamp away from 0 (specular singularity)
+    // glTF metallic-roughness map: roughness in G, metalness in B; modulates the factors.
+    // The default white texture (when a material has none) leaves the factors unchanged.
+    float4 mrSample = albedoTextures[NonUniformResourceIndex(input.mrTextureIndex)].Sample(input.uv0);
+    float metallic = saturate(input.mr.x * mrSample.b);
+    float roughness = clamp(input.mr.y * mrSample.g, 0.045, 1.0);  // clamp away from 0 (specular singularity)
     float3 v = normalize(globals.eyePosition.xyz - input.worldPos);
 
     // Screen UV for sampling the screen-space effect maps.
