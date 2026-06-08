@@ -21,3 +21,5 @@ layers add their own passes to the cull → scene → UI frame.
 | [Cross-frame layouts](cross-frame-layouts/) | `externalLayout` write-back, imported images, seeded source scope | `render_graph.cppm` |
 | [Adding passes](who-can-add-passes/) | engine passes in `beginFrameGraph` vs. layer `onRenderGraph` | `renderer.cppm` |
 | [Limits](limits-and-seams/) | single queue, no transient aliasing, no async compute, the seams left | `render_graph.cppm` |
+| [Performance telemetry](performance-telemetry/) | CPU/GPU split, per-pass GPU timestamps, throughput counters, VRAM budget, the profiler mode gate | `renderer.cppm`, `render_graph.cppm` |
+| [Performance alarms](performance-alarms/) | EMA + hysteresis + debounce, MAD-spike / burn-rate detectors, severity, the non-blocking `drain-alarms` seq cursor | `renderer.cppm`, `renderer_types.cppm` |
