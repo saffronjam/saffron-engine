@@ -8,26 +8,36 @@
 /// `Number()` an id.
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ActiveAlarmsDto,
   AssetList,
   AssetUsagesResult,
   ComponentBody,
   CommandParamsMap,
   CommandResultMap,
+  DrainAlarmsResult,
   EditorCamera,
   EntityList,
   EntityRef,
   Environment,
+  FrameHistoryDto,
   GizmoState,
   InspectResult,
   Material,
+  PerfConfigDto,
   PlayStateResult,
+  ProfilerModeResult,
+  RenderPassTimingsDto,
   RenderStats,
   Selection,
+  SetPerfConfigParams,
   Thumbnail,
   Transform,
   Vec3,
   ProjectInfo,
 } from "../protocol";
+
+/// The GPU profiler depth (off keeps the present-only host at baseline cost).
+export type ProfilerMode = ProfilerModeResult["mode"];
 
 /// The viewport panel's logical CSS rect plus the window scale factor. Rust positions
 /// the wayland subsurface in logical coordinates and tells the engine to render at
@@ -332,6 +342,37 @@ export const client = {
   // --- stats / environment ---
   renderStats(): Promise<RenderStats> {
     return call("render-stats");
+  },
+
+  // --- performance telemetry (phases 1-3) ---
+  /// Set the GPU profiler depth. `timestamps` enables per-pass GPU timing + the VMA
+  /// budget read; `off` returns to baseline cost. Reports device capability.
+  setProfilerMode(mode: ProfilerMode): Promise<ProfilerModeResult> {
+    return call("profiler.set-mode", { mode });
+  },
+  /// Last frame's per-pass GPU times (needs the profiler in timestamps mode).
+  passTimings(): Promise<RenderPassTimingsDto> {
+    return call("pass-timings");
+  },
+  /// Frame-time percentiles + stutter count, optionally with the recent raw samples
+  /// (the live-graph source). Always recorded, independent of the profiler.
+  frameHistory(samples?: number): Promise<FrameHistoryDto> {
+    return call("frame-history", samples === undefined ? {} : { samples });
+  },
+  /// The shared budget / green-amber-red threshold config.
+  getPerfConfig(): Promise<PerfConfigDto> {
+    return call("get-perf-config");
+  },
+  setPerfConfig(params: SetPerfConfigParams): Promise<PerfConfigDto> {
+    return call("set-perf-config", params);
+  },
+  /// Drain perf-alarm events with seq > since (non-blocking) plus the cursor metadata.
+  drainAlarms(since: number): Promise<DrainAlarmsResult> {
+    return call("drain-alarms", { since });
+  },
+  /// The currently firing perf alarms (the badge + per-pass highlight source).
+  listActiveAlarms(): Promise<ActiveAlarmsDto> {
+    return call("list-active-alarms");
   },
   getEnvironment(): Promise<Environment> {
     return call("get-environment");
