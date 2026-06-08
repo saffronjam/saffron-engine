@@ -8,6 +8,7 @@ module;
 #include <glm/gtx/euler_angles.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cctype>
 #include <expected>
@@ -49,6 +50,9 @@ export namespace se
         Uuid mesh;
         glm::vec4 baseColor{ 1.0f };
         Uuid albedoTexture;  // 0 == none
+        // The imported material table (textures already registered). slot 0 mirrors
+        // baseColor/albedoTexture above. >1 entry spawns a MaterialSetComponent.
+        std::vector<MaterialSlot> materials;
         bool hasSkin = false;
         std::vector<ImportedNode> nodes;
         ImportedSkin skinDesc;
@@ -205,7 +209,8 @@ export namespace se
                                              { "type", assetTypeName(entry.type) },
                                              { "path", entry.path },
                                              { "folder", entry.folder },
-                                             { "hdr", entry.hdr } });
+                                             { "hdr", entry.hdr },
+                                             { "linear", entry.linear } });
         }
         return assets;
     }
@@ -257,6 +262,7 @@ export namespace se
             parsed.path = jsonStringOr(entry, "path", std::string{});
             parsed.folder = jsonStringOr(entry, "folder", std::string{});
             parsed.hdr = jsonBoolOr(entry, "hdr", false);
+            parsed.linear = jsonBoolOr(entry, "linear", false);
             if (parsed.id.value != 0)
             {
                 putAsset(catalog, std::move(parsed));
@@ -522,14 +528,14 @@ export namespace se
     // Writes encoded image bytes into assets/textures/<uuid>.<ext>, decodes + uploads
     // them, and adds a Texture entry to the catalog (named, deduped). Returns the id.
     auto registerTextureBytes(AssetServer& assets, Renderer& renderer, const std::vector<u8>& encoded,
-                              const std::string& ext, const std::string& name) -> Result<Uuid>
+                              const std::string& ext, const std::string& name, bool srgb = true) -> Result<Uuid>
     {
         auto decoded = decodeImageFromMemory(encoded);
         if (!decoded)
         {
             return Err(decoded.error());
         }
-        auto texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
+        auto texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, srgb);
         if (!texture)
         {
             return Err(texture.error());
@@ -552,8 +558,9 @@ export namespace se
         {
             return Err(std::format("write failed for texture '{}'", relativePath));
         }
-        putAsset(assets.catalog,
-                 AssetEntry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath, std::string{} });
+        AssetEntry entry{ id, uniqueName(assets.catalog, name), AssetType::Texture, relativePath, std::string{} };
+        entry.linear = !srgb;
+        putAsset(assets.catalog, std::move(entry));
         assets.textureRefByUuid[id.value] = *texture;
         return id;
     }
@@ -668,7 +675,8 @@ export namespace se
         auto decoded = decodeImage(fullPath);
         if (decoded)
         {
-            auto texture = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, true);
+            auto texture =
+                uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, !entry->linear);
             if (texture)
             {
                 assets.textureRefByUuid[id.value] = *texture;
@@ -717,25 +725,57 @@ export namespace se
 
         ImportResult result;
         result.mesh = meshId;
-        result.baseColor = model->material.baseColor;
         if (model->hasSkin)
         {
             result.hasSkin = true;
             result.nodes = std::move(model->nodes);
             result.skinDesc = std::move(model->skinDesc);
         }
-        if (model->material.hasAlbedo)
+        // Register each material's albedo and lower the factors into a MaterialSlot.
+        result.materials.reserve(model->materials.size());
+        for (std::size_t i = 0; i < model->materials.size(); i = i + 1)
         {
-            auto texture = registerTextureBytes(assets, renderer, model->material.albedoBytes,
-                                                model->material.albedoExt, baseName + " albedo");
-            if (texture)
+            const ImportedMaterial& src = model->materials[i];
+            MaterialSlot slot;
+            slot.baseColor = src.baseColor;
+            slot.metallic = src.metallic;
+            slot.roughness = src.roughness;
+            slot.emissive = src.emissive;
+            slot.emissiveStrength = src.emissiveStrength;
+            if (src.hasAlbedo)
             {
-                result.albedoTexture = *texture;
+                const std::string label = std::format("{} albedo {}", baseName, i);
+                auto texture = registerTextureBytes(assets, renderer, src.albedoBytes, src.albedoExt, label);
+                if (texture)
+                {
+                    slot.albedoTexture = *texture;
+                }
+                else
+                {
+                    logWarn(std::format("model '{}': albedo texture failed: {}", path, texture.error()));
+                }
             }
-            else
+            if (src.hasMetallicRoughness)
             {
-                logWarn(std::format("model '{}': albedo texture failed: {}", path, texture.error()));
+                // Metallic-roughness maps are linear data, not sRGB color.
+                const std::string label = std::format("{} metallic-roughness {}", baseName, i);
+                auto texture = registerTextureBytes(assets, renderer, src.metallicRoughnessBytes,
+                                                    src.metallicRoughnessExt, label, /*srgb=*/false);
+                if (texture)
+                {
+                    slot.metallicRoughnessTexture = *texture;
+                }
+                else
+                {
+                    logWarn(std::format("model '{}': metallic-roughness texture failed: {}", path, texture.error()));
+                }
             }
+            result.materials.push_back(slot);
+        }
+        if (!result.materials.empty())
+        {
+            result.baseColor = result.materials.front().baseColor;
+            result.albedoTexture = result.materials.front().albedoTexture;
         }
         return result;
     }
@@ -792,6 +832,31 @@ export namespace se
         Entity entity = createEntity(scene, std::move(name));
         addComponent<MeshComponent>(scene, entity).mesh = mesh;
         return entity;
+    }
+
+    // Attaches an import's material(s) to an entity: a single MaterialComponent when the
+    // model has zero or one material, or a MaterialSetComponent (the slot table) when it
+    // has more than one. Submesh.materialSlot indexes the set at render time.
+    void applyImportedMaterials(Scene& scene, Entity entity, const ImportResult& result)
+    {
+        if (result.materials.size() > 1)
+        {
+            addComponent<MaterialSetComponent>(scene, entity).slots = result.materials;
+            return;
+        }
+        MaterialComponent& material = addComponent<MaterialComponent>(scene, entity);
+        if (!result.materials.empty())
+        {
+            const MaterialSlot& slot = result.materials.front();
+            material.baseColor = slot.baseColor;
+            material.albedoTexture = slot.albedoTexture;
+            material.metallicRoughnessTexture = slot.metallicRoughnessTexture;
+            material.metallic = slot.metallic;
+            material.roughness = slot.roughness;
+            material.emissive = slot.emissive;
+            material.emissiveStrength = slot.emissiveStrength;
+            material.unlit = slot.unlit;
+        }
     }
 
     // Creates an entity from an import: a mesh + a material (base color + albedo).
@@ -858,9 +923,7 @@ export namespace se
                             : (bones.empty() ? Uuid{ 0 } : bones.front());
         skin.bones = std::move(bones);
         skin.inverseBind = result.skinDesc.inverseBind;
-        MaterialComponent& material = addComponent<MaterialComponent>(scene, meshEntity);
-        material.baseColor = result.baseColor;
-        material.albedoTexture = result.albedoTexture;
+        applyImportedMaterials(scene, meshEntity, result);
 
         relinkHierarchy(scene);  // resolve the parent uuids + the joint handles
         return meshEntity;
@@ -874,10 +937,75 @@ export namespace se
         }
         Entity entity = createEntity(scene, std::move(name));
         addComponent<MeshComponent>(scene, entity).mesh = result.mesh;
-        MaterialComponent& material = addComponent<MaterialComponent>(scene, entity);
-        material.baseColor = result.baseColor;
-        material.albedoTexture = result.albedoTexture;
+        applyImportedMaterials(scene, entity, result);
         return entity;
+    }
+
+    // The per-submesh materials for one renderable, plus the entity-level unlit flag
+    // (selects the PSO) and a proxy albedo for the DDGI voxel box. Reads a
+    // MaterialSetComponent (indexed by each submesh's materialSlot) when present, else a
+    // single MaterialComponent applied to every submesh, else engine defaults.
+    struct ResolvedMaterials
+    {
+        std::vector<SubmeshMaterial> submeshes;
+        bool unlit = false;
+        glm::vec3 proxyAlbedo{ 1.0f };
+    };
+
+    auto resolveEntityMaterials(Scene& scene, AssetServer& assets, Renderer& renderer, Entity entity,
+                                const Ref<GpuMesh>& meshRef) -> ResolvedMaterials
+    {
+        ResolvedMaterials out;
+        const auto lower = [&](const MaterialSlot& slot) -> SubmeshMaterial
+        {
+            SubmeshMaterial sm;
+            sm.baseColor = slot.baseColor;
+            sm.metallic = slot.metallic;
+            sm.roughness = slot.roughness;
+            sm.emissive = slot.emissive;
+            sm.emissiveStrength = slot.emissiveStrength;
+            if (slot.albedoTexture.value != 0)
+            {
+                sm.albedoTexture = loadTextureAsset(assets, renderer, slot.albedoTexture);
+            }
+            if (slot.metallicRoughnessTexture.value != 0)
+            {
+                sm.metallicRoughnessTexture = loadTextureAsset(assets, renderer, slot.metallicRoughnessTexture);
+            }
+            return sm;
+        };
+        if (hasComponent<MaterialSetComponent>(scene, entity))
+        {
+            const std::vector<MaterialSlot>& slots = getComponent<MaterialSetComponent>(scene, entity).slots;
+            if (!slots.empty())
+            {
+                out.unlit = slots.front().unlit;
+                out.proxyAlbedo = glm::vec3(slots.front().baseColor);
+                out.submeshes.reserve(meshRef->submeshes.size());
+                for (const Submesh& submesh : meshRef->submeshes)
+                {
+                    const std::size_t slot = std::min<std::size_t>(submesh.materialSlot, slots.size() - 1);
+                    out.submeshes.push_back(lower(slots[slot]));
+                }
+                return out;
+            }
+        }
+        if (hasComponent<MaterialComponent>(scene, entity))
+        {
+            const MaterialComponent& material = getComponent<MaterialComponent>(scene, entity);
+            out.unlit = material.unlit;
+            out.proxyAlbedo = glm::vec3(material.baseColor);
+            MaterialSlot slot;
+            slot.baseColor = material.baseColor;
+            slot.albedoTexture = material.albedoTexture;
+            slot.metallicRoughnessTexture = material.metallicRoughnessTexture;
+            slot.metallic = material.metallic;
+            slot.roughness = material.roughness;
+            slot.emissive = material.emissive;
+            slot.emissiveStrength = material.emissiveStrength;
+            out.submeshes.push_back(lower(slot));
+        }
+        return out;
     }
 
     // Draws every entity with a Transform + Mesh through the given camera (the editor
@@ -1015,27 +1143,7 @@ export namespace se
                 {
                     return;
                 }
-                glm::vec4 baseColor{ 1.0f };
-                Ref<GpuTexture> textureRef;
-                bool unlit = false;
-                f32 metallic = 0.0f;
-                f32 roughness = 1.0f;
-                glm::vec3 emissive{ 0.0f };
-                f32 emissiveStrength = 1.0f;
-                if (hasComponent<MaterialComponent>(scene, entity))
-                {
-                    const MaterialComponent& material = getComponent<MaterialComponent>(scene, entity);
-                    baseColor = material.baseColor;
-                    unlit = material.unlit;
-                    metallic = material.metallic;
-                    roughness = material.roughness;
-                    emissive = material.emissive;
-                    emissiveStrength = material.emissiveStrength;
-                    if (material.albedoTexture.value != 0)
-                    {
-                        textureRef = loadTextureAsset(assets, renderer, material.albedoTexture);
-                    }
-                }
+                ResolvedMaterials materials = resolveEntityMaterials(scene, assets, renderer, entity, meshRef);
                 const glm::mat4 model = worldMatrix(scene, entity);
                 // Accumulate the scene + this draw's world AABB from the 8 transformed corners.
                 glm::vec3 boxMin{ std::numeric_limits<f32>::max() };
@@ -1063,18 +1171,13 @@ export namespace se
                 }
                 boxMins.push_back(glm::vec4(boxMin, 0.0f));
                 boxMaxs.push_back(glm::vec4(boxMax, 0.0f));
-                boxAlbedos.push_back(glm::vec4(glm::vec3(baseColor), 0.0f));
+                boxAlbedos.push_back(glm::vec4(materials.proxyAlbedo, 0.0f));
                 DrawItem item;
                 item.mesh = meshRef;
-                item.texture = textureRef;
                 item.model = model;
                 item.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(model))));
-                item.baseColor = baseColor;
-                item.metallic = metallic;
-                item.roughness = roughness;
-                item.emissive = emissive;
-                item.emissiveStrength = emissiveStrength;
-                item.material.unlit = unlit;
+                item.submeshMaterials = std::move(materials.submeshes);
+                item.material.unlit = materials.unlit;
                 items.push_back(std::move(item));
             });
 
@@ -1100,27 +1203,7 @@ export namespace se
                     {
                         return;
                     }
-                    glm::vec4 baseColor{ 1.0f };
-                    Ref<GpuTexture> textureRef;
-                    bool unlit = false;
-                    f32 metallic = 0.0f;
-                    f32 roughness = 1.0f;
-                    glm::vec3 emissive{ 0.0f };
-                    f32 emissiveStrength = 1.0f;
-                    if (hasComponent<MaterialComponent>(scene, entity))
-                    {
-                        const MaterialComponent& material = getComponent<MaterialComponent>(scene, entity);
-                        baseColor = material.baseColor;
-                        unlit = material.unlit;
-                        metallic = material.metallic;
-                        roughness = material.roughness;
-                        emissive = material.emissive;
-                        emissiveStrength = material.emissiveStrength;
-                        if (material.albedoTexture.value != 0)
-                        {
-                            textureRef = loadTextureAsset(assets, renderer, material.albedoTexture);
-                        }
-                    }
+                    ResolvedMaterials materials = resolveEntityMaterials(scene, assets, renderer, entity, meshRef);
                     // Conservative bounds: union the bind-space AABB corners through every
                     // joint matrix, feeding the scene AABB (shadow/DDGI fit) like any draw.
                     for (const glm::mat4& joint : palette)
@@ -1147,15 +1230,10 @@ export namespace se
                     }
                     DrawItem item;
                     item.mesh = meshRef;
-                    item.texture = textureRef;
                     item.skinned = true;
                     item.jointOffset = static_cast<u32>(frameJoints.size());
-                    item.baseColor = baseColor;
-                    item.metallic = metallic;
-                    item.roughness = roughness;
-                    item.emissive = emissive;
-                    item.emissiveStrength = emissiveStrength;
-                    item.material.unlit = unlit;
+                    item.submeshMaterials = std::move(materials.submeshes);
+                    item.material.unlit = materials.unlit;
                     frameJoints.insert(frameJoints.end(), palette.begin(), palette.end());
                     items.push_back(std::move(item));
                 });
