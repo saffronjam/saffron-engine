@@ -172,6 +172,15 @@ plans/                  phased, dependency-ordered plans for future expansions
 
 ## Keep current (part of "done")
 
+- **Milestone gate:** after each feature — and at each phase boundary of a larger task, not only at
+  the very end — run `make engine` then `make prepare-for-commit` (format + lint) and fix every
+  warning your change raises. The point is a clean testing ground at intervals (a green `build/debug`
+  a plain `make run` picks up), not one big reconciliation at the end. This composes with the
+  concurrent rules above: if the build or lint fails *only* because of another agent's in-flight
+  changes (see **Concurrent edits** / **Concurrent builds**), assume it will land soon — leave it,
+  note it, and move on. **Never** fix another agent's parallel work to make the gate pass. When unsure
+  whether a failure is yours, gate your own changes in isolation via a private `build/<name>` dir, and
+  it is fine to defer the shared-`build/debug` build until the tree settles.
 - **`se` CLI:** a feature that adds engine state worth driving/inspecting gets a matching control
   command (one `registerCommand` in `Saffron.Control`), so the running editor stays scriptable and
   visually debuggable from a shell.
