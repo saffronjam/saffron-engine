@@ -15,7 +15,9 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -48,6 +50,9 @@ namespace se
 {
     // Host-mapped vertex buffer for the editor overlay (grown per frame by the overlay pass).
     auto makeMappedVertexBuffer(Renderer& renderer, vk::DeviceSize bytes) -> Result<Ref<Buffer>>;
+
+    // GPU-profiler timestamp pools, freed in destroyRenderer (defined below beginFrame).
+    void destroyProfilerPools(Renderer& renderer);
 
     namespace
     {
@@ -183,6 +188,15 @@ namespace se
             physicalResult.value().enable_extension_if_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
         const bool hasRqExt = physicalResult.value().enable_extension_if_present(VK_KHR_RAY_QUERY_EXTENSION_NAME);
         physicalResult.value().enable_extension_if_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+        // VK_EXT_memory_budget feeds vmaGetHeapBudgets (the per-frame VRAM telemetry); opt-in,
+        // off-by-default. pipelineStatisticsQuery is the deepest profiler level's input — both
+        // are optional, never gating device selection.
+        const bool hasMemoryBudget =
+            physicalResult.value().enable_extension_if_present(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        VkPhysicalDeviceFeatures pipelineStatsFeat{};
+        pipelineStatsFeat.pipelineStatisticsQuery = VK_TRUE;
+        const bool hasPipelineStats = physicalResult.value().enable_features_if_present(pipelineStatsFeat);
         bool rtSupported = false;
         if (hasAsExt && hasRqExt)
         {
@@ -228,6 +242,30 @@ namespace se
         renderer.context.graphicsQueueFamily =
             renderer.context.vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
+        // Profiler capabilities, read once. Timestamps need a non-zero validBits on the
+        // graphics queue; the period converts ticks→ns. A software rasterizer (llvmpipe/
+        // lavapipe) reports GPU timings that are really CPU rasterization time — flag it so
+        // downstream never draws hardware conclusions.
+        {
+            const vk::PhysicalDeviceProperties props = renderer.context.physicalDevice.getProperties();
+            const std::vector<vk::QueueFamilyProperties> families =
+                renderer.context.physicalDevice.getQueueFamilyProperties();
+            const u32 validBits = families[renderer.context.graphicsQueueFamily].timestampValidBits;
+            renderer.profiler.timestampPeriod = props.limits.timestampPeriod;
+            renderer.profiler.timestampMask = validBits >= 64 ? ~0ULL : ((1ULL << validBits) - 1ULL);
+            renderer.profiler.timestampsSupported = validBits != 0;
+            renderer.profiler.pipelineStatsSupported = hasPipelineStats;
+
+            std::string name = renderer.context.vkbDevice.physical_device.name;
+            for (char& c : name)
+            {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            renderer.softwareGpu = name.find("llvmpipe") != std::string::npos ||
+                                   name.find("lavapipe") != std::string::npos ||
+                                   name.find("software") != std::string::npos;
+        }
+
         // Resolve the KHR acceleration-structure / ray-query device entry points (not
         // statically exported by the loader; the engine otherwise uses static dispatch).
         renderer.context.rtSupported = rtSupported;
@@ -255,6 +293,22 @@ namespace se
             else
             {
                 logInfo("ray tracing available (KHR acceleration_structure + ray_query)");
+            }
+        }
+
+        // VK_EXT_debug_utils command-buffer labels name every render-graph pass region in
+        // external capture tools. The extension is enabled with the validation/debug-messenger
+        // path above; its cmd-label functions are device-level commands of an instance
+        // extension, so resolve them via the instance loader. Absent => both null => no markers.
+        {
+            VkInstance inst = renderer.context.vkbInstance.instance;
+            renderer.context.debugLabels.begin = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+                vkGetInstanceProcAddr(inst, "vkCmdBeginDebugUtilsLabelEXT"));
+            renderer.context.debugLabels.end = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+                vkGetInstanceProcAddr(inst, "vkCmdEndDebugUtilsLabelEXT"));
+            if (renderer.context.debugLabels.begin == nullptr || renderer.context.debugLabels.end == nullptr)
+            {
+                renderer.context.debugLabels = {};  // both or neither
             }
         }
 
@@ -301,6 +355,11 @@ namespace se
         {
             // BDA is needed to feed vertex/index/instance buffer addresses to AS builds.
             allocatorInfo.flags = allocatorInfo.flags | VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+        }
+        if (hasMemoryBudget)
+        {
+            // Lets vmaGetHeapBudgets report driver-reported usage/budget (not just VMA's own).
+            allocatorInfo.flags = allocatorInfo.flags | VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
         }
         if (vmaCreateAllocator(&allocatorInfo, &renderer.context.allocator) != VK_SUCCESS)
         {
@@ -662,6 +721,8 @@ namespace se
             renderer.context.device.destroySampler(renderer.restir.sampler);
         }
 
+        destroyProfilerPools(renderer);
+
         for (FrameData& frame : renderer.frame.frames)
         {
             renderer.context.device.destroyFence(frame.inFlight);
@@ -684,6 +745,585 @@ namespace se
         vkb::destroy_instance(renderer.context.vkbInstance);
     }
 
+    namespace
+    {
+        auto steadyNowNs() -> u64
+        {
+            return static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count());
+        }
+    }
+
+    auto allocateProfilerPools(Renderer& renderer) -> bool
+    {
+        GpuProfiler& prof = renderer.profiler;
+        if (prof.poolsReady)
+        {
+            return true;
+        }
+        for (vk::QueryPool& pool : prof.timestampPools)
+        {
+            vk::QueryPoolCreateInfo info{};
+            info.queryType = vk::QueryType::eTimestamp;
+            info.queryCount = 2 * MaxProfiledPasses;
+            auto created = checked(renderer.context.device.createQueryPool(info), "createQueryPool(timestamp)");
+            if (!created)
+            {
+                logError(created.error());
+                return false;
+            }
+            pool = *created;
+        }
+        prof.poolsReady = true;
+        return true;
+    }
+
+    void destroyProfilerPools(Renderer& renderer)
+    {
+        GpuProfiler& prof = renderer.profiler;
+        for (vk::QueryPool& pool : prof.timestampPools)
+        {
+            if (pool)
+            {
+                renderer.context.device.destroyQueryPool(pool);
+                pool = nullptr;
+            }
+        }
+        for (std::vector<std::string>& names : prof.recordedNames)
+        {
+            names.clear();
+        }
+        prof.poolsReady = false;
+    }
+
+    // Read back slot's timestamp pool (its GPU work completed at the beginFrame fence wait,
+    // so this never blocks) into the profiler's last-timings + EMA GPU frame time. Each pass
+    // contributes two queries; eWithAvailability gives a [value, available] pair per query.
+    void readbackGpuTimings(Renderer& renderer, u32 slot)
+    {
+        GpuProfiler& prof = renderer.profiler;
+        const std::vector<std::string>& names = prof.recordedNames[slot];
+        if (names.empty() || !prof.timestampPools[slot])
+        {
+            return;  // nothing recorded into this slot yet (first frames after enabling)
+        }
+        const u32 passCount = static_cast<u32>(names.size());
+        const u32 queryCount = 2 * passCount;
+        std::vector<u64> raw(static_cast<std::size_t>(queryCount) * 2, 0);
+        const vk::Result r = renderer.context.device.getQueryPoolResults(
+            prof.timestampPools[slot], 0, queryCount, raw.size() * sizeof(u64), raw.data(), 2 * sizeof(u64),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability);
+        if (r != vk::Result::eSuccess && r != vk::Result::eNotReady)
+        {
+            return;  // keep the last good read-back
+        }
+
+        std::vector<PassTiming> timings;
+        timings.reserve(passCount);
+        u64 spanBegin = 0;
+        u64 spanEnd = 0;
+        bool spanValid = false;
+        for (u32 p = 0; p < passCount; p = p + 1)
+        {
+            const u64 beginVal = raw[4 * p];
+            const u64 beginAvail = raw[4 * p + 1];
+            const u64 endVal = raw[4 * p + 2];
+            const u64 endAvail = raw[4 * p + 3];
+            f32 ms = 0.0f;
+            if (beginAvail != 0 && endAvail != 0)
+            {
+                const u64 b = beginVal & prof.timestampMask;
+                const u64 e = endVal & prof.timestampMask;
+                const u64 ticks = e >= b ? e - b : 0;
+                ms = static_cast<f32>(static_cast<double>(ticks) * prof.timestampPeriod / 1.0e6);
+                if (!spanValid)
+                {
+                    spanBegin = b;
+                    spanValid = true;
+                }
+                spanEnd = e;
+            }
+            timings.push_back(PassTiming{ names[p], ms });
+        }
+        prof.lastTimings = std::move(timings);
+        prof.lastGpuTotalMs =
+            spanValid && spanEnd >= spanBegin
+                ? static_cast<f32>(static_cast<double>(spanEnd - spanBegin) * prof.timestampPeriod / 1.0e6)
+                : 0.0f;
+        renderer.gpuFrameMs =
+            renderer.gpuFrameMs == 0.0f ? prof.lastGpuTotalMs : renderer.gpuFrameMs * 0.9f + prof.lastGpuTotalMs * 0.1f;
+    }
+
+    // Sum the VMA budget across device-local heaps (cheap, unlike vmaCalculateStatistics).
+    void readVramBudget(Renderer& renderer)
+    {
+        const VkPhysicalDeviceMemoryProperties* memProps = nullptr;
+        vmaGetMemoryProperties(renderer.context.allocator, &memProps);
+        std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+        vmaGetHeapBudgets(renderer.context.allocator, budgets.data());
+        u64 usage = 0;
+        u64 budget = 0;
+        for (u32 h = 0; h < memProps->memoryHeapCount; h = h + 1)
+        {
+            if ((memProps->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0)
+            {
+                usage = usage + budgets[h].usage;
+                budget = budget + budgets[h].budget;
+            }
+        }
+        renderer.stats.vramUsageBytes = usage;
+        renderer.stats.vramBudgetBytes = budget;
+    }
+
+    void setProfilerMode(Renderer& renderer, ProfilerMode mode)
+    {
+        // Degrade a request the device cannot satisfy: no timestamps ⇒ off; no pipeline
+        // statistics ⇒ fall back to plain timestamps.
+        if (mode != ProfilerMode::Off && !renderer.profiler.timestampsSupported)
+        {
+            mode = ProfilerMode::Off;
+        }
+        if (mode == ProfilerMode::PipelineStats && !renderer.profiler.pipelineStatsSupported)
+        {
+            mode = ProfilerMode::Timestamps;
+        }
+        if (mode != ProfilerMode::Off && !renderer.profiler.poolsReady && !allocateProfilerPools(renderer))
+        {
+            mode = ProfilerMode::Off;
+        }
+        renderer.profiler.mode = mode;
+        if (mode == ProfilerMode::Off)
+        {
+            renderer.profiler.lastTimings.clear();
+            renderer.profiler.lastGpuTotalMs = 0.0f;
+            renderer.gpuFrameMs = 0.0f;
+        }
+    }
+
+    auto profilerMode(const Renderer& renderer) -> ProfilerMode
+    {
+        return renderer.profiler.mode;
+    }
+
+    auto profilerTimestampsSupported(const Renderer& renderer) -> bool
+    {
+        return renderer.profiler.timestampsSupported;
+    }
+
+    auto profilerPipelineStatsSupported(const Renderer& renderer) -> bool
+    {
+        return renderer.profiler.pipelineStatsSupported;
+    }
+
+    auto softwareGpu(const Renderer& renderer) -> bool
+    {
+        return renderer.softwareGpu;
+    }
+
+    auto passTimings(const Renderer& renderer) -> std::vector<PassTiming>
+    {
+        return renderer.profiler.lastTimings;
+    }
+
+    auto passTimingsTotalMs(const Renderer& renderer) -> f32
+    {
+        return renderer.profiler.lastGpuTotalMs;
+    }
+
+    auto perfBudgetMs(const PerfConfig& config) -> f32
+    {
+        return config.targetFps > 0.0f ? 1000.0f / config.targetFps : 0.0f;
+    }
+
+    auto perfConfig(const Renderer& renderer) -> PerfConfig
+    {
+        return renderer.perfConfig;
+    }
+
+    void setPerfConfig(Renderer& renderer, const PerfConfig& config)
+    {
+        PerfConfig c = config;
+        c.targetFps = std::clamp(c.targetFps, 1.0f, 10000.0f);
+        c.greenBudgetFrac = std::clamp(c.greenBudgetFrac, 0.0f, 1.0f);
+        c.greenMedianMul = std::max(1.0f, c.greenMedianMul);
+        c.amberMedianMul = std::max(c.greenMedianMul, c.amberMedianMul);
+        c.frozenMs = std::max(0.0f, c.frozenMs);
+        c.vramWarnFrac = std::clamp(c.vramWarnFrac, 0.0f, 1.0f);
+        c.vramCritFrac = std::clamp(c.vramCritFrac, c.vramWarnFrac, 1.0f);
+        renderer.perfConfig = c;
+    }
+
+    // The ring's oldest→newest physical index for logical position i in [0, count).
+    auto frameRingIndex(const Renderer& renderer, u32 i) -> u32
+    {
+        const u32 start =
+            (renderer.frameRingHead + FrameHistoryCapacity - renderer.frameRingCount) % FrameHistoryCapacity;
+        return (start + i) % FrameHistoryCapacity;
+    }
+
+    auto frameHistoryStats(const Renderer& renderer) -> FrameHistoryStats
+    {
+        FrameHistoryStats out;
+        out.sampleCount = renderer.frameRingCount;
+        out.stutterCount = renderer.stutterCount;
+        if (renderer.frameRingCount == 0)
+        {
+            return out;
+        }
+        // Frame time = cpu busy + fence wait (the render-thread wall clock).
+        std::vector<f32> times;
+        times.reserve(renderer.frameRingCount);
+        f32 sum = 0.0f;
+        for (u32 i = 0; i < renderer.frameRingCount; i = i + 1)
+        {
+            const FrameSample& s = renderer.frameRing[frameRingIndex(renderer, i)];
+            const f32 t = s.cpuMs + s.cpuWaitMs;
+            times.push_back(t);
+            sum = sum + t;
+        }
+        out.meanMs = sum / static_cast<f32>(times.size());
+        f32 variance = 0.0f;
+        for (const f32 t : times)
+        {
+            const f32 d = t - out.meanMs;
+            variance = variance + d * d;
+        }
+        out.stddevMs = std::sqrt(variance / static_cast<f32>(times.size()));
+        std::sort(times.begin(), times.end());
+        const auto percentile = [&times](f32 p) -> f32
+        {
+            const std::size_t last = times.size() - 1;
+            const std::size_t idx = static_cast<std::size_t>(p * static_cast<f32>(last) + 0.5f);
+            return times[std::min(idx, last)];
+        };
+        out.p50Ms = percentile(0.50f);
+        out.p95Ms = percentile(0.95f);
+        out.p99Ms = percentile(0.99f);
+        out.p999Ms = percentile(0.999f);
+        out.maxMs = times.back();
+        return out;
+    }
+
+    auto frameSamples(const Renderer& renderer, u32 maxSamples) -> std::vector<FrameSample>
+    {
+        const u32 take = std::min(maxSamples, renderer.frameRingCount);
+        std::vector<FrameSample> out;
+        out.reserve(take);
+        for (u32 i = renderer.frameRingCount - take; i < renderer.frameRingCount; i = i + 1)
+        {
+            out.push_back(renderer.frameRing[frameRingIndex(renderer, i)]);
+        }
+        return out;
+    }
+
+    // FNV-1a over metric + "|" + pass — the alarm fingerprint that coalesces repeats.
+    auto alarmFingerprint(std::string_view metric, std::string_view pass) -> u64
+    {
+        u64 hash = 1469598103934665603ULL;
+        const auto mix = [&hash](std::string_view text)
+        {
+            for (const char c : text)
+            {
+                hash = hash ^ static_cast<u8>(c);
+                hash = hash * 1099511628211ULL;
+            }
+        };
+        mix(metric);
+        mix("|");
+        mix(pass);
+        return hash;
+    }
+
+    auto pushAlarmEvent(AlarmState& alarms, AlarmEvent event) -> u64
+    {
+        const u64 seq = alarms.nextSeq;
+        event.seq = seq;
+        alarms.nextSeq = alarms.nextSeq + 1;
+        alarms.events[alarms.eventHead] = std::move(event);
+        alarms.eventHead = (alarms.eventHead + 1) % AlarmEventRingCapacity;
+        if (alarms.eventCount < AlarmEventRingCapacity)
+        {
+            alarms.eventCount = alarms.eventCount + 1;
+        }
+        return seq;
+    }
+
+    // Raise (or refresh) an alarm. The first breach emits one FIRING; while active the
+    // count/peak update in place and only a severity escalation emits another FIRING.
+    void raiseAlarm(AlarmState& alarms, u64 nowNs, std::string metric, std::string pass, AlarmSeverity severity,
+                    f32 value, f32 threshold)
+    {
+        const u64 fingerprint = alarmFingerprint(metric, pass);
+        for (ActiveAlarm& active : alarms.active)
+        {
+            if (active.fingerprint == fingerprint)
+            {
+                active.lastSeenNs = nowNs;
+                active.count = active.count + 1;
+                active.value = value;
+                active.threshold = threshold;
+                active.peak = std::max(active.peak, value);
+                if (static_cast<int>(severity) > static_cast<int>(active.severity))
+                {
+                    active.severity = severity;
+                    AlarmEvent escalation;
+                    escalation.fingerprint = fingerprint;
+                    escalation.metric = metric;
+                    escalation.pass = pass;
+                    escalation.severity = severity;
+                    escalation.kind = AlarmEventKind::Firing;
+                    escalation.value = value;
+                    escalation.threshold = threshold;
+                    escalation.sinceFrame = active.sinceFrame;
+                    escalation.count = active.count;
+                    pushAlarmEvent(alarms, std::move(escalation));
+                }
+                return;
+            }
+        }
+        ActiveAlarm fresh;
+        fresh.fingerprint = fingerprint;
+        fresh.metric = metric;
+        fresh.pass = pass;
+        fresh.severity = severity;
+        fresh.value = value;
+        fresh.threshold = threshold;
+        fresh.peak = value;
+        fresh.sinceFrame = alarms.frameCounter;
+        fresh.sinceNs = nowNs;
+        fresh.lastSeenNs = nowNs;
+        fresh.count = 1;
+        alarms.active.push_back(fresh);
+        AlarmEvent firing;
+        firing.fingerprint = fingerprint;
+        firing.metric = std::move(metric);
+        firing.pass = std::move(pass);
+        firing.severity = severity;
+        firing.kind = AlarmEventKind::Firing;
+        firing.value = value;
+        firing.threshold = threshold;
+        firing.sinceFrame = fresh.sinceFrame;
+        firing.count = 1;
+        pushAlarmEvent(alarms, std::move(firing));
+    }
+
+    // Clear an active alarm if present, emitting one RESOLVED (with duration + peak).
+    void clearAlarm(AlarmState& alarms, u64 nowNs, std::string_view metric, std::string_view pass)
+    {
+        const u64 fingerprint = alarmFingerprint(metric, pass);
+        for (auto it = alarms.active.begin(); it != alarms.active.end(); ++it)
+        {
+            if (it->fingerprint == fingerprint)
+            {
+                AlarmEvent resolved;
+                resolved.fingerprint = fingerprint;
+                resolved.metric = it->metric;
+                resolved.pass = it->pass;
+                resolved.severity = it->severity;
+                resolved.kind = AlarmEventKind::Resolved;
+                resolved.value = it->peak;
+                resolved.threshold = it->threshold;
+                resolved.sinceFrame = it->sinceFrame;
+                resolved.count = it->count;
+                resolved.durationMs = static_cast<f32>(nowNs - it->sinceNs) / 1.0e6f;
+                pushAlarmEvent(alarms, std::move(resolved));
+                alarms.active.erase(it);
+                return;
+            }
+        }
+    }
+
+    // The mean over a recent frame-time window — the fraction-over-budget SLI for burn-rate.
+    auto frameWindowOverBudget(const Renderer& renderer, u32 window, f32 budget) -> f32
+    {
+        const u32 w = std::min(window, renderer.frameRingCount);
+        if (w == 0)
+        {
+            return 0.0f;
+        }
+        u32 over = 0;
+        for (u32 i = renderer.frameRingCount - w; i < renderer.frameRingCount; i = i + 1)
+        {
+            const FrameSample& s = renderer.frameRing[frameRingIndex(renderer, i)];
+            if (s.cpuMs + s.cpuWaitMs > budget)
+            {
+                over = over + 1;
+            }
+        }
+        return static_cast<f32>(over) / static_cast<f32>(w);
+    }
+
+    // One per-frame alarm tick: smooth, then gate. Runs detectors on the smoothed series
+    // (never raw per-frame values) and against the shared PerfConfig thresholds.
+    void tickAlarms(Renderer& renderer, f32 frameTimeMs, f32 dtSec, u64 nowNs)
+    {
+        AlarmState& alarms = renderer.alarms;
+        alarms.frameCounter = alarms.frameCounter + 1;
+        const f32 budget = perfBudgetMs(renderer.perfConfig);
+
+        // Irregular-interval EMA (tau ≈ 300 ms): alpha = 1 − exp(−dt / tau).
+        if (dtSec > 0.0f)
+        {
+            const f32 alpha = 1.0f - std::exp(-dtSec / 0.3f);
+            alarms.emaFrameMs =
+                alarms.emaFrameMs == 0.0f ? frameTimeMs : alarms.emaFrameMs + alpha * (frameTimeMs - alarms.emaFrameMs);
+        }
+        else if (alarms.emaFrameMs == 0.0f)
+        {
+            alarms.emaFrameMs = frameTimeMs;
+        }
+
+        // frame-budget: sustained over-budget. Hysteresis (enter 1.2× / exit 1.0× budget) +
+        // a debounce so a one-frame breach never fires; escalates to critical at 2× budget.
+        if (budget > 0.0f)
+        {
+            const f32 enterTh = 1.2f * budget;
+            const f32 exitTh = 1.0f * budget;
+            const f32 criticalTh = 2.0f * budget;  // ~< 30 FPS at a 60 Hz budget
+            alarms.budgetWarnHeldSec = alarms.emaFrameMs > enterTh ? alarms.budgetWarnHeldSec + dtSec : 0.0f;
+            alarms.budgetCritHeldSec = alarms.emaFrameMs > criticalTh ? alarms.budgetCritHeldSec + dtSec : 0.0f;
+            const bool warnReady = alarms.budgetWarnHeldSec >= 0.3f;
+            const bool critReady = alarms.budgetCritHeldSec >= 0.5f;
+            if (warnReady)
+            {
+                raiseAlarm(alarms, nowNs, "frame-budget", "",
+                           critReady ? AlarmSeverity::Critical : AlarmSeverity::Warning, alarms.emaFrameMs, enterTh);
+            }
+            else if (alarms.emaFrameMs < exitTh)
+            {
+                clearAlarm(alarms, nowNs, "frame-budget", "");
+            }
+        }
+
+        // frame-hitch: a robust spike. Modified z-score over a recent window — median/MAD
+        // beat mean/stddev because the outlier inflates stddev and masks itself.
+        const u32 window = std::min<u32>(renderer.frameRingCount, 64);
+        if (window >= 8)
+        {
+            std::vector<f32> times;
+            times.reserve(window);
+            for (u32 i = renderer.frameRingCount - window; i < renderer.frameRingCount; i = i + 1)
+            {
+                const FrameSample& s = renderer.frameRing[frameRingIndex(renderer, i)];
+                times.push_back(s.cpuMs + s.cpuWaitMs);
+            }
+            std::vector<f32> sorted = times;
+            std::sort(sorted.begin(), sorted.end());
+            const f32 median = sorted[sorted.size() / 2];
+            for (f32& v : sorted)
+            {
+                v = std::fabs(v - median);
+            }
+            std::sort(sorted.begin(), sorted.end());
+            const f32 mad = std::max(sorted[sorted.size() / 2], 0.05f);  // floor guards MAD == 0
+            const f32 modZ = 0.6745f * (frameTimeMs - median) / mad;
+            // A spike is only a hitch if it also blew the frame budget in absolute terms —
+            // a statistical outlier at 2 ms (≈ 500 FPS) is not worth flagging. Modest
+            // single-frame budget misses are info (log only); a hard spike (> 2× budget,
+            // ≈ < 30 FPS for one frame) is a warning that toasts.
+            if (modZ > 3.5f && budget > 0.0f && frameTimeMs > budget)
+            {
+                alarms.hitchClearFrames = 0;
+                const AlarmSeverity severity =
+                    frameTimeMs > 2.0f * budget ? AlarmSeverity::Warning : AlarmSeverity::Info;
+                raiseAlarm(alarms, nowNs, "frame-hitch", "", severity, frameTimeMs, median + mad * 3.5f / 0.6745f);
+            }
+            else
+            {
+                alarms.hitchClearFrames = alarms.hitchClearFrames + 1;
+                if (alarms.hitchClearFrames >= 10)
+                {
+                    clearAlarm(alarms, nowNs, "frame-hitch", "");
+                }
+            }
+        }
+
+        // burn-rate: the sustained-user-pain SLI. A short and a long window must both
+        // breach (fast detect, low false-positive, clears quickly when the problem stops).
+        if (budget > 0.0f && renderer.frameRingCount >= 60)
+        {
+            const f32 sliShort = frameWindowOverBudget(renderer, 60, budget);  // ~1 s @ 60 Hz
+            const f32 sliLong = frameWindowOverBudget(renderer, 600, budget);  // ~10 s
+            if (sliShort > 0.5f && sliLong > 0.5f)
+            {
+                raiseAlarm(alarms, nowNs, "burn-rate", "", AlarmSeverity::Critical, sliShort * 100.0f, 50.0f);
+            }
+            else if (sliShort > 0.1f && sliLong > 0.1f)
+            {
+                raiseAlarm(alarms, nowNs, "burn-rate", "", AlarmSeverity::Warning, sliShort * 100.0f, 10.0f);
+            }
+            else if (sliShort < 0.05f)
+            {
+                clearAlarm(alarms, nowNs, "burn-rate", "");
+            }
+        }
+
+        // vram: usage fraction of the device-local budget (only known when profiling).
+        if (renderer.stats.vramBudgetBytes > 0)
+        {
+            const f32 frac =
+                static_cast<f32>(renderer.stats.vramUsageBytes) / static_cast<f32>(renderer.stats.vramBudgetBytes);
+            if (frac >= renderer.perfConfig.vramCritFrac)
+            {
+                raiseAlarm(alarms, nowNs, "vram", "", AlarmSeverity::Critical, frac * 100.0f,
+                           renderer.perfConfig.vramCritFrac * 100.0f);
+            }
+            else if (frac >= renderer.perfConfig.vramWarnFrac)
+            {
+                raiseAlarm(alarms, nowNs, "vram", "", AlarmSeverity::Warning, frac * 100.0f,
+                           renderer.perfConfig.vramWarnFrac * 100.0f);
+            }
+            else if (frac < renderer.perfConfig.vramWarnFrac * 0.95f)
+            {
+                clearAlarm(alarms, nowNs, "vram", "");
+            }
+        }
+
+        // pso-compile: a PSO built mid-frame is a hitch on a steady-state frame (info only).
+        if (renderer.stats.pipelinesCreated > 0)
+        {
+            raiseAlarm(alarms, nowNs, "pso-compile", "", AlarmSeverity::Info,
+                       static_cast<f32>(renderer.stats.pipelinesCreated), 0.0f);
+        }
+        else
+        {
+            clearAlarm(alarms, nowNs, "pso-compile", "");
+        }
+    }
+
+    auto drainAlarms(const Renderer& renderer, u64 since) -> AlarmDrain
+    {
+        const AlarmState& alarms = renderer.alarms;
+        AlarmDrain out;
+        out.highWaterSeq = alarms.nextSeq - 1;
+        u64 oldest = 0;
+        if (alarms.eventCount > 0)
+        {
+            const u32 oldestIdx =
+                (alarms.eventHead + AlarmEventRingCapacity - alarms.eventCount) % AlarmEventRingCapacity;
+            oldest = alarms.events[oldestIdx].seq;
+        }
+        out.oldestSeq = oldest;
+        // Events (since+1 .. oldest-1) fell off the ring: the client must resync from the active set.
+        out.overflowed = oldest > since + 1;
+        for (u32 i = 0; i < alarms.eventCount; i = i + 1)
+        {
+            const u32 idx =
+                (alarms.eventHead + AlarmEventRingCapacity - alarms.eventCount + i) % AlarmEventRingCapacity;
+            if (alarms.events[idx].seq > since)
+            {
+                out.events.push_back(alarms.events[idx]);
+            }
+        }
+        return out;
+    }
+
+    auto activeAlarms(const Renderer& renderer) -> std::vector<ActiveAlarm>
+    {
+        return renderer.alarms.active;
+    }
+
     auto beginFrame(Renderer& renderer) -> bool
     {
         const u32 winW = renderer.window->width;
@@ -698,7 +1338,23 @@ namespace se
 
         FrameData& frame = renderer.frame.frames[renderer.frame.index];
 
+        // Open the CPU-time window for this frame. Blocking waits are subtracted out so
+        // cpuFrameMs is render-thread busy time and cpuWaitMs is the GPU-bound signal.
+        renderer.frameCpuStartNs = steadyNowNs();
+        renderer.frameWaitNs = 0;
+
+        const u64 fenceWaitStart = steadyNowNs();
         static_cast<void>(renderer.context.device.waitForFences(frame.inFlight, VK_TRUE, UINT64_MAX));
+        renderer.frameWaitNs = renderer.frameWaitNs + (steadyNowNs() - fenceWaitStart);
+
+        // This slot's GPU work (from MaxFramesInFlight frames ago) is now complete, so its
+        // timestamp pool reads back without blocking. Then clear the slot's name list so
+        // executeRenderGraph can repopulate it for the frame about to be recorded.
+        if (renderer.profiler.mode != ProfilerMode::Off && renderer.profiler.poolsReady)
+        {
+            readbackGpuTimings(renderer, renderer.frame.index);
+            renderer.profiler.recordedNames[renderer.frame.index].clear();
+        }
 
         if (renderer.shmPublish.enabled)
         {
@@ -731,8 +1387,10 @@ namespace se
             // reuse the image's renderFinished semaphore.
             if (renderer.swapchain.imagesInFlight[renderer.frame.imageIndex])
             {
+                const u64 imageWaitStart = steadyNowNs();
                 static_cast<void>(renderer.context.device.waitForFences(
                     renderer.swapchain.imagesInFlight[renderer.frame.imageIndex], VK_TRUE, UINT64_MAX));
+                renderer.frameWaitNs = renderer.frameWaitNs + (steadyNowNs() - imageWaitStart);
             }
             renderer.swapchain.imagesInFlight[renderer.frame.imageIndex] = frame.inFlight;
         }
@@ -781,11 +1439,21 @@ namespace se
         renderer.frame.sceneDrawList = SceneDrawList{};  // last frame's geometry has presented
         renderer.frame.sceneSubmissions.clear();
         renderer.frame.uiSubmissions.clear();
-        renderer.overlay.vertices.clear();  // editor overlay re-submits its geometry each frame
+        renderer.overlay.vertices.clear();    // editor overlay re-submits its geometry each frame
+        renderer.stats.descriptorBinds = 0;   // re-accumulated by recordSceneDrawList this frame
+        renderer.stats.pipelinesCreated = 0;  // PSO compiles counted across this frame
 
         vk::CommandBufferBeginInfo beginInfo{};
         beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         static_cast<void>(frame.commandBuffer.begin(beginInfo));
+
+        // Timestamp queries are uninitialized until reset; reset this slot's whole pool
+        // before executeRenderGraph writes into it (reading an unreset pool risks device loss).
+        if (renderer.profiler.mode != ProfilerMode::Off && renderer.profiler.poolsReady)
+        {
+            frame.commandBuffer.resetQueryPool(renderer.profiler.timestampPools[renderer.frame.index], 0,
+                                               2 * MaxProfiledPasses);
+        }
 
         // Rendering scopes are opened in endFrame: pass 1 (scene → offscreen),
         // pass 2 (ui → swapchain).
@@ -1945,7 +2613,20 @@ namespace se
             addPass(graph, std::move(ui));
         }
 
-        executeRenderGraph(graph, frame.commandBuffer);
+        // Debug-utils pass markers are always-on (independent of the profiler); GPU
+        // timestamps ride along only when a profiler mode armed the per-frame pool.
+        const RgDebugLabels* labels =
+            renderer.context.debugLabels.begin != nullptr ? &renderer.context.debugLabels : nullptr;
+        RgTimestamps ts;
+        const RgTimestamps* tsPtr = nullptr;
+        if (renderer.profiler.mode != ProfilerMode::Off && renderer.profiler.poolsReady)
+        {
+            ts.pool = renderer.profiler.timestampPools[renderer.frame.index];
+            ts.capacity = 2 * MaxProfiledPasses;
+            ts.names = &renderer.profiler.recordedNames[renderer.frame.index];
+            tsPtr = &ts;
+        }
+        executeRenderGraph(graph, frame.commandBuffer, tsPtr, labels);
 
         // Store this frame's camera viewProj as next frame's "previous" for TAA motion
         // vectors. Only valid once a scene draw list was submitted this frame.
@@ -2074,12 +2755,66 @@ namespace se
         const u64 nowNs = static_cast<u64>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
                 .count());
+        f32 dtSec = 0.0f;
         if (renderer.lastFrameNs != 0)
         {
             const f32 deltaMs = static_cast<f32>(nowNs - renderer.lastFrameNs) / 1.0e6f;
+            dtSec = deltaMs / 1000.0f;
             renderer.frameMs = renderer.frameMs == 0.0f ? deltaMs : renderer.frameMs * 0.9f + deltaMs * 0.1f;
         }
         renderer.lastFrameNs = nowNs;
+
+        // CPU split: busy = the beginFrame→endFrame window minus the blocking waits; the
+        // waits themselves are the GPU-bound signal. Both EMA-smoothed for the headline.
+        const u64 frameSpanNs = nowNs > renderer.frameCpuStartNs ? nowNs - renderer.frameCpuStartNs : 0;
+        const u64 busyNs = frameSpanNs > renderer.frameWaitNs ? frameSpanNs - renderer.frameWaitNs : 0;
+        const f32 busyMs = static_cast<f32>(busyNs) / 1.0e6f;
+        const f32 waitMs = static_cast<f32>(renderer.frameWaitNs) / 1.0e6f;
+        renderer.cpuFrameMs = renderer.cpuFrameMs == 0.0f ? busyMs : renderer.cpuFrameMs * 0.9f + busyMs * 0.1f;
+        renderer.cpuWaitMs = renderer.cpuWaitMs == 0.0f ? waitMs : renderer.cpuWaitMs * 0.9f + waitMs * 0.1f;
+
+        // Record the raw frame into the history ring (always on; the distribution stays
+        // honest only if it sees every frame, un-smoothed). A frame is a stutter when its
+        // time exceeds both 2× the previous-3 average and an absolute floor of 2× budget —
+        // the relative rule catches hitches at any frame rate, the floor rejects noise.
+        {
+            const f32 frameTime = busyMs + waitMs;
+            if (renderer.frameRingCount >= 3)
+            {
+                f32 sum3 = 0.0f;
+                for (u32 k = 1; k <= 3; k = k + 1)
+                {
+                    const u32 idx = (renderer.frameRingHead + FrameHistoryCapacity - k) % FrameHistoryCapacity;
+                    sum3 = sum3 + renderer.frameRing[idx].cpuMs + renderer.frameRing[idx].cpuWaitMs;
+                }
+                const f32 avg3 = sum3 / 3.0f;
+                const f32 budget = perfBudgetMs(renderer.perfConfig);
+                if (frameTime > 2.0f * avg3 && frameTime > 2.0f * budget)
+                {
+                    renderer.stutterCount = renderer.stutterCount + 1;
+                    renderer.lastStutterNs = nowNs;
+                }
+            }
+            renderer.frameRing[renderer.frameRingHead] =
+                FrameSample{ renderer.frameSerial, busyMs, renderer.profiler.lastGpuTotalMs, waitMs };
+            renderer.frameSerial = renderer.frameSerial + 1;
+            renderer.frameRingHead = (renderer.frameRingHead + 1) % FrameHistoryCapacity;
+            if (renderer.frameRingCount < FrameHistoryCapacity)
+            {
+                renderer.frameRingCount = renderer.frameRingCount + 1;
+            }
+            // Run the alarm detectors on this frame (after the ring push, so MAD/burn-rate
+            // windows include it). Pure CPU bookkeeping — appends to the event ring, never blocks.
+            tickAlarms(renderer, frameTime, dtSec, nowNs);
+        }
+
+        // One primary command buffer, one submit2 per frame (both present and shm paths).
+        renderer.stats.commandBuffers = 1;
+        renderer.stats.queueSubmits = 1;
+        if (renderer.profiler.mode != ProfilerMode::Off)
+        {
+            readVramBudget(renderer);
+        }
 
         renderer.frame.index = (renderer.frame.index + 1) % MaxFramesInFlight;
     }
@@ -2106,6 +2841,11 @@ namespace se
         RenderStats stats = renderer.stats;
         stats.frameMs = renderer.frameMs;
         stats.fps = renderer.frameMs > 0.0f ? 1000.0f / renderer.frameMs : 0.0f;
+        stats.gpuMs = renderer.gpuFrameMs;
+        stats.cpuFrameMs = renderer.cpuFrameMs;
+        stats.cpuWaitMs = renderer.cpuWaitMs;
+        stats.softwareGpu = renderer.softwareGpu;
+        stats.profilerMode = renderer.profiler.mode;
         return stats;
     }
 

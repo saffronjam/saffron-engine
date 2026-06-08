@@ -44,6 +44,10 @@ export namespace se
     // array indexed per-instance; lavapipe + desktop GPUs allow far more, this is plenty.
     inline constexpr u32 MaxBindlessTextures = 1024;
 
+    // Upper bound on render-graph passes the GPU profiler times per frame. Each pass takes
+    // two timestamp slots (begin + end); passes past this cap are simply not timed.
+    inline constexpr u32 MaxProfiledPasses = 64;
+
     struct FrameData
     {
         vk::CommandPool commandPool;
@@ -547,16 +551,189 @@ export namespace se
         bool valid = false;
     };
 
-    // Per-frame scene draw counters, refreshed by submitDrawList; inspectable via the
-    // control plane so batching can be verified live.
+    // How much per-frame instrumentation the GPU profiler captures. `Off` (the default)
+    // keeps the present-only host at zero added cost; the deeper levels are opt-in over
+    // the control plane (profiler.set-mode).
+    enum class ProfilerMode
+    {
+        Off,            ///< no queries, no VMA budget read — today's baseline cost
+        Timestamps,     ///< per-pass GPU timestamps + throughput counters + VMA budget
+        PipelineStats,  ///< Timestamps plus per-pass pipeline-statistics (deepest, heaviest)
+    };
+
+    // One render-graph pass's measured GPU time for a frame. `gpuMs` is the wall-clock
+    // span between the pass's begin/end timestamps — relative, since adjacent passes can
+    // overlap on the GPU, so the per-pass numbers do not cleanly sum to the frame total.
+    struct PassTiming
+    {
+        std::string name;
+        f32 gpuMs = 0.0f;
+    };
+
+    // Per-frame scene draw counters + CPU/GPU frame breakdown, refreshed each frame and
+    // inspectable via the control plane so batching and the CPU-vs-GPU split can be
+    // verified live. The GPU/VRAM fields are only populated when the profiler is enabled.
     struct RenderStats
     {
-        u32 drawCalls = 0;   // drawIndexed calls (one per submesh per batch)
-        u32 batches = 0;     // distinct (mesh, texture) buckets
-        u32 instances = 0;   // total entities drawn
-        f32 frameMs = 0.0f;  // smoothed frame-to-frame CPU time
-        f32 fps = 0.0f;      // derived from frameMs
-        f32 gpuMs = 0.0f;    // GPU pass time; 0 until a timestamp readback exists
+        u32 drawCalls = 0;         // drawIndexed calls (one per submesh per batch)
+        u32 batches = 0;           // distinct (mesh, texture) buckets
+        u32 instances = 0;         // total entities drawn
+        u32 triangles = 0;         // triangles submitted (sum indexCount/3 over instances)
+        u32 descriptorBinds = 0;   // descriptor-set binds recorded in the scene pass
+        u32 commandBuffers = 0;    // primary command buffers submitted this frame
+        u32 queueSubmits = 0;      // vkQueueSubmit2 calls this frame
+        u32 pipelinesCreated = 0;  // PSOs compiled this frame (non-zero = a PSO-compile hitch)
+        f32 frameMs = 0.0f;        // smoothed frame-to-frame wall-clock time
+        f32 fps = 0.0f;            // derived from frameMs
+        f32 gpuMs = 0.0f;          // smoothed GPU frame time (timestamp span); 0 until profiled
+        f32 cpuFrameMs = 0.0f;     // smoothed render-thread CPU busy time (excludes blocking waits)
+        f32 cpuWaitMs = 0.0f;      // smoothed time blocked on fences (high ⇒ GPU-bound)
+        u64 vramUsageBytes = 0;    // device-local heap usage (VMA budget); 0 until profiled
+        u64 vramBudgetBytes = 0;   // device-local heap budget
+        bool softwareGpu = false;  // llvmpipe/lavapipe: GPU timings are CPU rasterization time
+        ProfilerMode profilerMode = ProfilerMode::Off;
+    };
+
+    // The GPU profiler's per-frame-in-flight timestamp pools and the last completed
+    // read-back. Each frame writes begin/end timestamps around every graph pass; the pool
+    // is read back MaxFramesInFlight frames later (after that slot's fence has signalled),
+    // so the read is always non-blocking.
+    struct GpuProfiler
+    {
+        ProfilerMode mode = ProfilerMode::Off;
+        bool poolsReady = false;
+        std::array<vk::QueryPool, MaxFramesInFlight> timestampPools{};
+        // Pass names recorded into slot i this cycle, consumed when slot i is read back.
+        std::array<std::vector<std::string>, MaxFramesInFlight> recordedNames{};
+        std::vector<PassTiming> lastTimings;  // last completed read-back
+        f32 lastGpuTotalMs = 0.0f;            // raw span of the last read-back
+        f32 timestampPeriod = 1.0f;           // ns per timestamp tick (device limit)
+        u64 timestampMask = ~0ull;            // graphics-queue timestampValidBits mask
+        bool timestampsSupported = false;     // validBits != 0 && timestampComputeAndGraphics
+        bool pipelineStatsSupported = false;  // pipelineStatisticsQuery device feature present
+    };
+
+    // Frames kept in the rolling history ring (≈8–17 s at 60–120 Hz). Percentiles and
+    // stutter live in the per-frame distribution, so the engine records every frame.
+    inline constexpr u32 FrameHistoryCapacity = 1024;
+
+    // One frame's raw (un-smoothed) timing, pushed once per frame at endFrame. The frame
+    // time used for percentiles + stutter is cpuMs + cpuWaitMs (the render-thread wall
+    // clock: work plus the fence wait, which absorbs GPU-bound stalls). gpuMs is 0 unless
+    // the profiler is enabled; the history itself is always recorded.
+    struct FrameSample
+    {
+        u64 frameIndex = 0;  // absolute, monotonic; lets the editor accumulate a long history
+        f32 cpuMs = 0.0f;
+        f32 gpuMs = 0.0f;
+        f32 cpuWaitMs = 0.0f;
+    };
+
+    // Percentile / consistency summary computed on demand over the ring. The p99 frame
+    // time is the 1%-low; average FPS is deliberately absent (it hides hitches).
+    struct FrameHistoryStats
+    {
+        f32 p50Ms = 0.0f;
+        f32 p95Ms = 0.0f;
+        f32 p99Ms = 0.0f;
+        f32 p999Ms = 0.0f;
+        f32 maxMs = 0.0f;
+        f32 meanMs = 0.0f;
+        f32 stddevMs = 0.0f;
+        u64 stutterCount = 0;
+        u32 sampleCount = 0;
+    };
+
+    // The single source of truth for green/amber/red, shared over the wire so the engine,
+    // the editor HUD, and e2e tests all agree. budget = 1000 / targetFps. A frame is over
+    // budget (a dropped frame) past 1.0× budget; the multipliers grade it against the
+    // running median; frozenMs is a hard-hitch floor that is always red.
+    struct PerfConfig
+    {
+        f32 targetFps = 60.0f;       // 30/60/90/120 + custom; budget derives from this
+        f32 greenBudgetFrac = 0.8f;  // < 0.8×budget (with the median check) = green
+        f32 greenMedianMul = 1.5f;   // < 1.5×median = consistent
+        f32 amberMedianMul = 2.0f;   // 1.5–2×median = amber; beyond = red
+        f32 frozenMs = 250.0f;       // a hard hitch → always red
+        f32 vramWarnFrac = 0.8f;     // 80% of the VRAM budget = warn
+        f32 vramCritFrac = 0.95f;    // 95% = critical (≥100% = over)
+    };
+
+    // Capacity of the alarm event ring (FIRING/RESOLVED history). At the editor's ~6 Hz
+    // drain this is ample headroom; older events fall off and the cursor reports overflow.
+    inline constexpr u32 AlarmEventRingCapacity = 256;
+
+    enum class AlarmSeverity
+    {
+        Info,      ///< log only (a single PSO-compile hitch, a TAA reset)
+        Warning,   ///< throttled toast + highlight the offending row
+        Critical,  ///< persistent log entry + active-alarms badge
+    };
+
+    enum class AlarmEventKind
+    {
+        Firing,
+        Resolved,
+    };
+
+    // A currently-firing alarm, keyed by fingerprint = hash(metric + "|" + pass) so a
+    // repeated breach coalesces into one entry (count/peak update in place) instead of
+    // spamming. Severity escalates in place (warning → critical).
+    struct ActiveAlarm
+    {
+        u64 fingerprint = 0;
+        std::string metric;  // "frame-budget", "frame-hitch", "burn-rate", "vram", "pso-compile"
+        std::string pass;    // the offending pass, empty for whole-frame alarms
+        AlarmSeverity severity = AlarmSeverity::Warning;
+        f32 value = 0.0f;      // current breached value (ms for time metrics, % for vram/burn)
+        f32 threshold = 0.0f;  // the threshold it crossed, same units
+        f32 peak = 0.0f;       // worst value seen while active
+        u64 sinceFrame = 0;
+        u64 sinceNs = 0;
+        u64 lastSeenNs = 0;
+        u32 count = 0;  // times re-observed while active
+    };
+
+    // An append-only, seq-stamped FIRING/RESOLVED event drained over a non-blocking cursor.
+    struct AlarmEvent
+    {
+        u64 seq = 0;
+        u64 fingerprint = 0;
+        std::string metric;
+        std::string pass;
+        AlarmSeverity severity = AlarmSeverity::Warning;
+        AlarmEventKind kind = AlarmEventKind::Firing;
+        f32 value = 0.0f;
+        f32 threshold = 0.0f;
+        u64 sinceFrame = 0;
+        u32 count = 0;
+        f32 durationMs = 0.0f;  // wall-clock duration (RESOLVED only)
+    };
+
+    // The snapshot drainAlarms returns: events with seq > since, the high-water seq, the
+    // oldest still-retained seq, and whether the ring dropped events past `since`.
+    struct AlarmDrain
+    {
+        std::vector<AlarmEvent> events;
+        u64 highWaterSeq = 0;
+        u64 oldestSeq = 0;
+        bool overflowed = false;
+    };
+
+    // The engine-side alarm engine: the active set, the seq-stamped event ring, and the
+    // per-detector smoothing/debounce state advanced once per frame in endFrame.
+    struct AlarmState
+    {
+        std::vector<ActiveAlarm> active;
+        std::array<AlarmEvent, AlarmEventRingCapacity> events{};
+        u32 eventHead = 0;
+        u32 eventCount = 0;
+        u64 nextSeq = 1;               // seq to assign to the next event
+        u64 frameCounter = 0;          // monotonic frame index for sinceFrame
+        f32 emaFrameMs = 0.0f;         // tau≈300 ms smoothed frame time (the sustained gate)
+        f32 budgetWarnHeldSec = 0.0f;  // debounce: time the smoothed frame time held over enter
+        f32 budgetCritHeldSec = 0.0f;  // time it held over the critical threshold
+        u32 hitchClearFrames = 0;      // clean frames since the last spike (to auto-resolve)
     };
 
     // A single screen-space overlay vertex: NDC position + flat color. The editor
@@ -609,6 +786,7 @@ export namespace se
         VmaAllocator allocator = nullptr;
         bool rtSupported = false;  // KHR acceleration_structure + ray_query present + enabled
         RtDispatch rt;
+        RgDebugLabels debugLabels;  // VK_EXT_debug_utils pass markers; null when the ext is absent
     };
 
     // The surface swapchain + its per-image sync, recreated as a unit on resize.
@@ -1203,7 +1381,22 @@ export namespace se
         RenderStats stats;                    // populated each frame by submitDrawList
         f32 frameMs = 0.0f;                   // EMA-smoothed frame-to-frame CPU time, updated in endFrame
         u64 lastFrameNs = 0;                  // steady_clock stamp of the previous endFrame; 0 until one lands
-        OverlayState overlay;                 // editor gizmo + billboard geometry for the frame
+        GpuProfiler profiler;                 // per-pass GPU timestamps + capability flags (opt-in)
+        f32 cpuFrameMs = 0.0f;                // EMA render-thread busy time (beginFrame→endFrame minus waits)
+        f32 cpuWaitMs = 0.0f;                 // EMA time blocked on fences this frame
+        f32 gpuFrameMs = 0.0f;                // EMA GPU frame time (timestamp span)
+        u64 frameCpuStartNs = 0;              // steady_clock stamp at beginFrame entry
+        u64 frameWaitNs = 0;                  // blocking-wait ns accumulated this frame
+        bool softwareGpu = false;             // llvmpipe/lavapipe detected at device creation
+        PerfConfig perfConfig;                // shared budget/threshold config (green/amber/red)
+        std::array<FrameSample, FrameHistoryCapacity> frameRing{};  // rolling per-frame history
+        u32 frameRingHead = 0;                                      // next write slot
+        u32 frameRingCount = 0;                                     // filled entries (saturates at capacity)
+        u64 frameSerial = 0;    // monotonic absolute frame index stamped into each FrameSample
+        u64 stutterCount = 0;   // per-session stutter count (relative-2× + floor rule)
+        u64 lastStutterNs = 0;  // steady_clock stamp of the last detected stutter
+        AlarmState alarms;      // perf-degradation detectors + the non-blocking event ring
+        OverlayState overlay;   // editor gizmo + billboard geometry for the frame
         // Pending window screenshot, consumed in endFrame: the swapchain image is
         // only safely owned in-frame, so the copy is deferred there.
         std::optional<std::string> captureNextSwapchainPath;
@@ -1454,6 +1647,38 @@ export namespace se
 
     // The most recent frame's scene draw counters (draw calls, batches, instances).
     auto renderStats(const Renderer& renderer) -> RenderStats;
+
+    // GPU profiler control. `off` keeps the present-only host at baseline cost; deeper
+    // modes enable per-pass timestamps + throughput counters + VMA budget. A requested
+    // mode the device cannot support degrades to the deepest it can (timestamps, or off).
+    void setProfilerMode(Renderer& renderer, ProfilerMode mode);
+    auto profilerMode(const Renderer& renderer) -> ProfilerMode;
+    auto profilerTimestampsSupported(const Renderer& renderer) -> bool;
+    auto profilerPipelineStatsSupported(const Renderer& renderer) -> bool;
+    // True on a software rasterizer (llvmpipe/lavapipe): GPU timings are CPU time, not
+    // representative of real hardware — downstream should annotate or suppress them.
+    auto softwareGpu(const Renderer& renderer) -> bool;
+    // The last frame's per-pass GPU times, keyed by graph pass name, plus their summed
+    // span. Empty until a timestamps-mode frame has been recorded and read back.
+    auto passTimings(const Renderer& renderer) -> std::vector<PassTiming>;
+    auto passTimingsTotalMs(const Renderer& renderer) -> f32;
+
+    // Frame-time history (always recorded, independent of the profiler mode). The summary
+    // is computed on demand over the ring; `frameSamples` returns up to `maxSamples` of the
+    // most recent raw samples, oldest→newest, for the editor's live graph.
+    auto frameHistoryStats(const Renderer& renderer) -> FrameHistoryStats;
+    auto frameSamples(const Renderer& renderer, u32 maxSamples) -> std::vector<FrameSample>;
+
+    // The shared budget/threshold config. budget(ms) = 1000 / targetFps.
+    auto perfConfig(const Renderer& renderer) -> PerfConfig;
+    void setPerfConfig(Renderer& renderer, const PerfConfig& config);
+    auto perfBudgetMs(const PerfConfig& config) -> f32;
+
+    // Non-blocking alarm delivery. drainAlarms returns events with seq > since plus the
+    // cursor metadata (high-water/oldest/overflow); the handler only snapshots the ring, so
+    // it never stalls the render thread. activeAlarms is the current firing set (the badge).
+    auto drainAlarms(const Renderer& renderer, u64 since) -> AlarmDrain;
+    auto activeAlarms(const Renderer& renderer) -> std::vector<ActiveAlarm>;
 
     // Blocks until the GPU has finished all submitted work. Call before dropping
     // resource Refs at shutdown so no in-flight command buffer still references them.
