@@ -305,6 +305,14 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
     }
     case "step-one":
       return { frames: 1 };
+    case "profiler-timestamps":
+      return { mode: "timestamps" };
+    case "frame-history-samples":
+      return { samples: 16 };
+    case "perf-config-30":
+      return { targetFps: 30 };
+    case "alarms-since-0":
+      return { since: 0 };
     default:
       throw new Error(`unknown manifest fixture '${fixture}'`);
   }
