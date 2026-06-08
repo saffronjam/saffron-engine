@@ -171,9 +171,84 @@ namespace
         }
         if (cmd == "render-stats")
         {
-            std::printf("draws=%-4d  batches=%-4d  instances=%-4d  clustered=%s\n", result.value("drawCalls", 0),
-                        result.value("batches", 0), result.value("instances", 0),
-                        result.value("clustered", false) ? "on" : "off");
+            std::printf("cpu=%.2fms  gpu=%.2fms  wait=%.2fms  fps=%.0f  draws=%d  tris=%d  binds=%d  pso+=%d%s\n",
+                        result.value("cpuFrameMs", 0.0), result.value("gpuFrameMs", 0.0),
+                        result.value("cpuWaitMs", 0.0), result.value("fps", 0.0), result.value("drawCalls", 0),
+                        result.value("triangles", 0), result.value("descriptorBinds", 0),
+                        result.value("pipelinesCreated", 0),
+                        result.value("softwareGpu", false) ? "  [software-gpu]" : "");
+            return;
+        }
+        if (cmd == "profiler.set-mode")
+        {
+            std::printf("mode=%s  timestamps=%s  pipeline-stats=%s%s\n", result.value("mode", "").c_str(),
+                        result.value("timestampsSupported", false) ? "yes" : "no",
+                        result.value("pipelineStatsSupported", false) ? "yes" : "no",
+                        result.value("softwareGpu", false) ? "  [software-gpu]" : "");
+            return;
+        }
+        if (cmd == "pass-timings")
+        {
+            if (result.value("softwareGpu", false))
+            {
+                std::printf("[software-gpu: timings are CPU rasterization time, not hardware]\n");
+            }
+            for (const auto& p : result.value("passes", json::array()))
+            {
+                std::printf("  %-28s  %8.3f ms\n", p.value("name", "").c_str(), p.value("gpuMs", 0.0));
+            }
+            std::printf("  %-28s  %8.3f ms\n", "total (span)", result.value("gpuTotalMs", 0.0));
+            return;
+        }
+        if (cmd == "frame-history")
+        {
+            std::printf(
+                "p50=%.2f  p95=%.2f  p99=%.2f  p99.9=%.2f  max=%.2f  stddev=%.2f  budget=%.2fms  stutters=%lld  n=%d\n",
+                result.value("p50Ms", 0.0), result.value("p95Ms", 0.0), result.value("p99Ms", 0.0),
+                result.value("p999Ms", 0.0), result.value("maxMs", 0.0), result.value("stddevMs", 0.0),
+                result.value("budgetMs", 0.0), result.value("stutterCount", 0LL), result.value("sampleCount", 0));
+            return;
+        }
+        if (cmd == "get-perf-config" || cmd == "set-perf-config")
+        {
+            std::printf("targetFps=%.0f  budget=%.2fms  green<%.2f×budget  amber<%.1f×median  frozen=%.0fms  "
+                        "vram warn/crit=%.0f%%/%.0f%%\n",
+                        result.value("targetFps", 0.0), result.value("budgetMs", 0.0),
+                        result.value("greenBudgetFrac", 0.0), result.value("amberMedianMul", 0.0),
+                        result.value("frozenMs", 0.0), result.value("vramWarnFrac", 0.0) * 100.0,
+                        result.value("vramCritFrac", 0.0) * 100.0);
+            return;
+        }
+        if (cmd == "drain-alarms")
+        {
+            const auto events = result.value("events", json::array());
+            for (const auto& e : events)
+            {
+                std::printf("  #%-5lld  %-8s %-9s %-13s  %8.2f / %-8.2f  x%d\n", e.value("seq", 0LL),
+                            e.value("state", "").c_str(), e.value("severity", "").c_str(),
+                            e.value("metric", "").c_str(), e.value("value", 0.0), e.value("threshold", 0.0),
+                            e.value("count", 0));
+            }
+            std::printf("  high=%lld  oldest=%lld  overflowed=%s  (%zu events)\n", result.value("highWaterSeq", 0LL),
+                        result.value("oldestSeq", 0LL), result.value("overflowed", false) ? "yes" : "no",
+                        events.size());
+            return;
+        }
+        if (cmd == "list-active-alarms")
+        {
+            const auto alarms = result.value("alarms", json::array());
+            if (alarms.empty())
+            {
+                std::printf("no active alarms\n");
+                return;
+            }
+            for (const auto& a : alarms)
+            {
+                const std::string pass = a.value("pass", std::string{});
+                std::printf("  %-9s %-13s  %8.2f / %-8.2f  x%d%s%s\n", a.value("severity", "").c_str(),
+                            a.value("metric", "").c_str(), a.value("value", 0.0), a.value("threshold", 0.0),
+                            a.value("count", 0), pass.empty() ? "" : "  pass=", pass.c_str());
+            }
             return;
         }
         if (cmd == "play" || cmd == "pause" || cmd == "stop" || cmd == "step" || cmd == "get-play-state")
