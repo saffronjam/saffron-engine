@@ -26,6 +26,7 @@ import {
   readFolderPayload,
 } from "../components/AssetTile";
 import { AssetFolderTree, folderAncestorPaths, folderLabel } from "./AssetFolderTree";
+import { logRender } from "../lib/renderLog";
 import { matchesBinding } from "../lib/keybindings";
 import { AssetMetadataPanel } from "../components/AssetMetadataPanel";
 import { errorText, notify } from "../lib/flash";
@@ -156,6 +157,7 @@ async function importPath(path: string, folder: string | null): Promise<void> {
 }
 
 export function AssetsPanel() {
+  logRender("AssetsPanel");
   const assets = useEditorStore((s) => s.assets);
   const folders = useEditorStore((s) => s.assetFolders);
   const refreshAssets = useEditorStore((s) => s.refreshAssets);
@@ -177,8 +179,15 @@ export function AssetsPanel() {
   const [metadata, setMetadata] = useState<AssetMetadataDto | null>(null);
   const currentFolder = history.stack[history.index] ?? null;
   const visibleAssets = assets.filter((asset) => (asset.folder ?? "") === (currentFolder ?? ""));
+  // The details overlay (and its probe-asset round trip) waits out an in-flight
+  // marquee: the box sweeping across a tile flips the selection through
+  // "exactly one" many times, and mounting/unmounting the animated overlay per
+  // crossing makes the drag stutter. It opens once, on release.
+  const [marqueeInFlight, setMarqueeInFlight] = useState(false);
   const detailAssetId =
-    selectedAssetIds.size === 1 && selectedFolderPaths.size === 0 ? [...selectedAssetIds][0] : null;
+    !marqueeInFlight && selectedAssetIds.size === 1 && selectedFolderPaths.size === 0
+      ? [...selectedAssetIds][0]
+      : null;
 
   // The grid's selection order: folder tiles (sorted) then asset tiles, matching
   // the body's render order, so a shift-range can span folders and assets.
@@ -795,6 +804,7 @@ export function AssetsPanel() {
                   onDeleteFolder={requestDeleteFolder}
                   onMoveAssets={(assetIds, folder) => void moveAssetsToFolder(assetIds, folder)}
                   onMoveFolders={(paths, parent) => void moveFoldersTo(paths, parent)}
+                  onMarqueeActiveChange={setMarqueeInFlight}
                   onSetMarqueeSelection={({ assetIds, folderPaths }) => {
                     setSelectedAssetIds(new Set(assetIds));
                     setSelectedFolderPaths(new Set(folderPaths));
@@ -990,6 +1000,7 @@ function AssetPanelBody({
   onMoveAssets,
   onMoveFolders,
   onSetMarqueeSelection,
+  onMarqueeActiveChange,
   onCommitNewFolder,
   onChangeNewFolderName,
   onCancelNewFolder,
@@ -1020,6 +1031,7 @@ function AssetPanelBody({
   onMoveAssets(assetIds: string[], folder: string | null): void;
   onMoveFolders(paths: string[], parent: string | null): void;
   onSetMarqueeSelection(sel: { assetIds: string[]; folderPaths: string[] }): void;
+  onMarqueeActiveChange(active: boolean): void;
   onCommitNewFolder(name: string): void;
   onChangeNewFolderName(name: string): void;
   onCancelNewFolder(): void;
@@ -1029,31 +1041,74 @@ function AssetPanelBody({
   onAssetDropTarget(folder: string | null): void;
   onClearFolderError(): void;
 }) {
+  logRender("AssetPanelBody");
   const folderItems = sortedFolderItems(folders, currentFolder, creatingFolder);
   const blank = !creatingFolder && folderItems.length === 0 && assets.length === 0;
   const empty = blank && !currentFolder;
   const folderEmpty = blank && currentFolder !== null;
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const marqueeRef = useRef<MarqueeDrag | null>(null);
+  const [marqueeActive, setMarqueeActive] = useState(false);
 
-  const selectMarqueeAssets = (next: MarqueeState): void => {
+  // Snapshot every tile's client rect in one pass. Taken at drag start (and again
+  // if the grid scrolls mid-drag) so the per-frame hit test never reads layout.
+  const snapshotMarqueeTiles = (drag: MarqueeDrag): void => {
     const panel = panelRef.current;
     if (!panel) {
       return;
     }
-    const rect = marqueeRect(next);
-    const hits = (el: Element | null): boolean =>
-      el instanceof HTMLElement && rectsIntersect(rect, el.getBoundingClientRect());
-    const assetIds = assets
-      .filter((asset) => hits(panel.querySelector(`[data-asset-tile-id="${cssEscape(asset.id)}"]`)))
-      .map((asset) => asset.id);
-    const folderPaths = folderItems.flatMap((item) =>
-      item.kind === "folder" &&
-      hits(panel.querySelector(`[data-asset-folder-path="${cssEscape(item.path)}"]`))
-        ? [item.path]
-        : [],
-    );
-    onSetMarqueeSelection({ assetIds, folderPaths });
+    drag.scrollTop = drag.viewport?.scrollTop ?? 0;
+    drag.tiles = [];
+    for (const el of panel.querySelectorAll<HTMLElement>("[data-asset-tile-id]")) {
+      drag.tiles.push({
+        kind: "asset",
+        key: el.dataset.assetTileId ?? "",
+        rect: el.getBoundingClientRect(),
+      });
+    }
+    for (const el of panel.querySelectorAll<HTMLElement>("[data-asset-folder-path]")) {
+      drag.tiles.push({
+        kind: "folder",
+        key: el.dataset.assetFolderPath ?? "",
+        rect: el.getBoundingClientRect(),
+      });
+    }
+  };
+
+  // The per-frame marquee step: position the box via direct style writes (no
+  // re-render) and hit-test against the cached rects, propagating the selection
+  // only when the hit set actually changed. Runs at most once per animation frame
+  // regardless of the pointer's event rate.
+  const applyMarquee = (): void => {
+    const drag = marqueeRef.current;
+    if (!drag) {
+      return;
+    }
+    drag.raf = 0;
+    if (drag.viewport && drag.viewport.scrollTop !== drag.scrollTop) {
+      snapshotMarqueeTiles(drag);
+    }
+    const rect = marqueeRect(drag);
+    const box = boxRef.current;
+    if (box) {
+      box.style.left = `${rect.left - drag.panelLeft}px`;
+      box.style.top = `${rect.top - drag.panelTop}px`;
+      box.style.width = `${rect.right - rect.left}px`;
+      box.style.height = `${rect.bottom - rect.top}px`;
+    }
+    const assetIds: string[] = [];
+    const folderPaths: string[] = [];
+    for (const tile of drag.tiles) {
+      if (rectsIntersect(rect, tile.rect)) {
+        (tile.kind === "asset" ? assetIds : folderPaths).push(tile.key);
+      }
+    }
+    const hits = `${assetIds.join("\n")}\0${folderPaths.join("\n")}`;
+    if (hits !== drag.lastHits) {
+      drag.lastHits = hits;
+      onSetMarqueeSelection({ assetIds, folderPaths });
+    }
   };
 
   const startMarquee = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -1071,33 +1126,57 @@ function AssetPanelBody({
     }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    const next: MarqueeState = {
+    const panelRect = event.currentTarget.getBoundingClientRect();
+    const drag: MarqueeDrag = {
       startX: event.clientX,
       startY: event.clientY,
       currentX: event.clientX,
       currentY: event.clientY,
+      panelLeft: panelRect.left,
+      panelTop: panelRect.top,
+      viewport: event.currentTarget.querySelector("[data-radix-scroll-area-viewport]"),
+      scrollTop: 0,
+      tiles: [],
+      lastHits: "\0",
+      raf: 0,
     };
-    setMarquee(next);
+    snapshotMarqueeTiles(drag);
+    marqueeRef.current = drag;
+    setMarqueeActive(true);
+    onMarqueeActiveChange(true);
     onSetMarqueeSelection({ assetIds: [], folderPaths: [] });
   };
 
   const moveMarquee = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (!marquee) {
+    const drag = marqueeRef.current;
+    if (!drag) {
       return;
     }
-    const next = { ...marquee, currentX: event.clientX, currentY: event.clientY };
-    setMarquee(next);
-    selectMarqueeAssets(next);
+    drag.currentX = event.clientX;
+    drag.currentY = event.clientY;
+    if (drag.raf === 0) {
+      drag.raf = requestAnimationFrame(applyMarquee);
+    }
   };
 
   const endMarquee = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (!marquee) {
+    const drag = marqueeRef.current;
+    if (!drag) {
       return;
     }
+    if (drag.raf !== 0) {
+      cancelAnimationFrame(drag.raf);
+      drag.raf = 0;
+    }
+    // Flush the final position so a fast flick-release still selects what the
+    // pointer covered.
+    applyMarquee();
+    marqueeRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    setMarquee(null);
+    setMarqueeActive(false);
+    onMarqueeActiveChange(false);
   };
 
   return (
@@ -1223,7 +1302,9 @@ function AssetPanelBody({
           )}
         </div>
       </ScrollArea>
-      {marquee ? <MarqueeBox panel={panelRef.current} marquee={marquee} /> : null}
+      {marqueeActive ? (
+        <div ref={boxRef} className="pointer-events-none absolute border border-ring bg-ring/15" />
+      ) : null}
     </div>
   );
 }
@@ -1284,7 +1365,7 @@ function NewFolderTile({
       data-asset-folder="true"
     >
       <div className="flex aspect-square w-full items-center justify-center">
-        <Folder className="size-12 text-muted-foreground" />
+        <Folder className="size-14 fill-current text-amber-600/80" />
       </div>
       <Input
         ref={inputRef}
@@ -1350,10 +1431,11 @@ function FolderTile({
   onChangeRename?(): void;
   onCancelRename?(): void;
 }) {
+  logRender("FolderTile");
   const content = (
     <>
       <div className="flex aspect-square w-full items-center justify-center">
-        <Folder className="size-12 text-muted-foreground" />
+        <Folder className="size-14 fill-current text-amber-600/80" />
       </div>
       {editing && onCommitRename && onCancelRename ? (
         <FolderNameInput
@@ -1476,11 +1558,22 @@ interface PendingAssetDelete {
   usages: AssetUsageDto[];
 }
 
-interface MarqueeState {
+/// Drag-local marquee state, kept in a ref (NOT React state): the box position is
+/// written straight to the DOM and the hit test runs against rects cached at drag
+/// start, so a pointer move never renders anything by itself — only an actual
+/// change in the hit set reaches React via onSetMarqueeSelection.
+interface MarqueeDrag {
   startX: number;
   startY: number;
   currentX: number;
   currentY: number;
+  panelLeft: number;
+  panelTop: number;
+  viewport: HTMLElement | null;
+  scrollTop: number;
+  tiles: { kind: "asset" | "folder"; key: string; rect: RectLike }[];
+  lastHits: string;
+  raf: number;
 }
 
 interface RectLike {
@@ -1490,7 +1583,7 @@ interface RectLike {
   bottom: number;
 }
 
-function marqueeRect(marquee: MarqueeState): RectLike {
+function marqueeRect(marquee: MarqueeDrag): RectLike {
   return {
     left: Math.min(marquee.startX, marquee.currentX),
     top: Math.min(marquee.startY, marquee.currentY),
@@ -1501,29 +1594,6 @@ function marqueeRect(marquee: MarqueeState): RectLike {
 
 function rectsIntersect(a: RectLike, b: RectLike): boolean {
   return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top;
-}
-
-function cssEscape(value: string): string {
-  return CSS.escape(value);
-}
-
-function MarqueeBox({ panel, marquee }: { panel: HTMLDivElement | null; marquee: MarqueeState }) {
-  if (!panel) {
-    return null;
-  }
-  const panelRect = panel.getBoundingClientRect();
-  const rect = marqueeRect(marquee);
-  return (
-    <div
-      className="pointer-events-none absolute border border-ring bg-ring/15"
-      style={{
-        left: `${rect.left - panelRect.left}px`,
-        top: `${rect.top - panelRect.top}px`,
-        width: `${rect.right - rect.left}px`,
-        height: `${rect.bottom - rect.top}px`,
-      }}
-    />
-  );
 }
 
 function FolderNameInput({
