@@ -194,6 +194,11 @@ namespace se
         // are optional, never gating device selection.
         const bool hasMemoryBudget =
             physicalResult.value().enable_extension_if_present(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        // VK_EXT_calibrated_timestamps samples the device + host clocks together so the profiler
+        // can project GPU spans onto the CPU steady_clock axis (one merged timeline). Optional;
+        // absent => the profiler keeps GPU spans on their own axis (correlated = false).
+        const bool hasCalibratedTs =
+            physicalResult.value().enable_extension_if_present(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
         VkPhysicalDeviceFeatures pipelineStatsFeat{};
         pipelineStatsFeat.pipelineStatisticsQuery = VK_TRUE;
         const bool hasPipelineStats = physicalResult.value().enable_features_if_present(pipelineStatsFeat);
@@ -255,6 +260,9 @@ namespace se
             renderer.profiler.timestampMask = validBits >= 64 ? ~0ULL : ((1ULL << validBits) - 1ULL);
             renderer.profiler.timestampsSupported = validBits != 0;
             renderer.profiler.pipelineStatsSupported = hasPipelineStats;
+            // Opt-in nested GPU sub-scopes (the deeper, larger-pool capture). Phase 5 will drive
+            // this from the capture's include-flags; until then an env var enables it.
+            renderer.profiler.subScopes = std::getenv("SAFFRON_PROFILE_SUBSCOPES") != nullptr;
 
             std::string name = renderer.context.vkbDevice.physical_device.name;
             for (char& c : name)
@@ -310,6 +318,41 @@ namespace se
             {
                 renderer.context.debugLabels = {};  // both or neither
             }
+        }
+
+        // VK_EXT_calibrated_timestamps: resolve its entry points and confirm both a device domain
+        // and the host CLOCK_MONOTONIC domain (what libc++ steady_clock samples) are calibrateable.
+        // Only then can readbackGpuTimings project GPU spans onto the CPU axis; otherwise correlation
+        // stays off and GPU spans keep their own frame-relative zero. The env var forces that
+        // own-axis fallback (for testing it on hardware that does support the extension).
+        if (hasCalibratedTs && std::getenv("SAFFRON_DISABLE_CALIBRATION") == nullptr)
+        {
+            VkInstance inst = renderer.context.vkbInstance.instance;
+            renderer.context.calibratedTs.getDomains =
+                reinterpret_cast<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT>(
+                    vkGetInstanceProcAddr(inst, "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT"));
+            renderer.context.calibratedTs.getTimestamps = reinterpret_cast<PFN_vkGetCalibratedTimestampsEXT>(
+                vkGetInstanceProcAddr(inst, "vkGetCalibratedTimestampsEXT"));
+            if (renderer.context.calibratedTs.getDomains != nullptr &&
+                renderer.context.calibratedTs.getTimestamps != nullptr)
+            {
+                u32 domainCount = 0;
+                renderer.context.calibratedTs.getDomains(renderer.context.physicalDevice, &domainCount, nullptr);
+                std::vector<VkTimeDomainEXT> domains(domainCount);
+                renderer.context.calibratedTs.getDomains(renderer.context.physicalDevice, &domainCount, domains.data());
+                const bool hasDevice =
+                    std::find(domains.begin(), domains.end(), VK_TIME_DOMAIN_DEVICE_EXT) != domains.end();
+                const bool hasMonotonic =
+                    std::find(domains.begin(), domains.end(), VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT) != domains.end();
+                if (hasDevice && hasMonotonic)
+                {
+                    renderer.profiler.calibration.available = true;
+                    renderer.profiler.calibration.hostDomain = VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT;
+                }
+            }
+            logInfo(renderer.profiler.calibration.available
+                        ? "calibrated timestamps available — GPU spans correlate to the CPU clock"
+                        : "calibrated timestamps unavailable — GPU spans stay on their own axis");
         }
 
         // Sample counts valid for the MSAA targets: the framebuffer limits intersected with each
@@ -755,6 +798,38 @@ namespace se
         }
     }
 
+    // A CpuRecorder pointing at the current frame slot's span buffer, or an inactive one
+    // (null buffer => every CpuScope is a no-op) when the profiler is Off or its pools are
+    // not yet armed — the same gate the GPU timestamp path uses.
+    auto cpuRecorder(Renderer& renderer) -> CpuRecorder
+    {
+        if (renderer.profiler.mode == ProfilerMode::Off || !renderer.profiler.poolsReady)
+        {
+            return {};
+        }
+        return CpuRecorder{ &renderer.cpuProfiler.registry, &renderer.cpuProfiler.buffers[renderer.frame.index] };
+    }
+
+    // The active GPU scope recorder for a pass body to open sub-scopes against, or null when
+    // sub-scopes are not opted in. The recorder's pool is only armed (non-null) while a frame
+    // is being recorded, so a stray call outside executeRenderGraph is a harmless no-op.
+    auto gpuScopeRecorder(Renderer& renderer) -> RgTimestamps*
+    {
+        return renderer.profiler.subScopes ? &renderer.profiler.scopeRecorder : nullptr;
+    }
+
+    // The pipeline-statistics counters captured per pass, in ascending VkQueryPipelineStatisticFlagBits
+    // bit order (the order vkGetQueryPoolResults returns them). The decode in readbackGpuTimings
+    // reads them positionally, so this order and PipelineStatsCount must stay in lockstep.
+    inline constexpr vk::QueryPipelineStatisticFlags PipelineStatsFlags =
+        vk::QueryPipelineStatisticFlagBits::eInputAssemblyVertices |
+        vk::QueryPipelineStatisticFlagBits::eVertexShaderInvocations |
+        vk::QueryPipelineStatisticFlagBits::eClippingInvocations |
+        vk::QueryPipelineStatisticFlagBits::eClippingPrimitives |
+        vk::QueryPipelineStatisticFlagBits::eFragmentShaderInvocations |
+        vk::QueryPipelineStatisticFlagBits::eComputeShaderInvocations;
+    inline constexpr u32 PipelineStatsCount = 6;
+
     auto allocateProfilerPools(Renderer& renderer) -> bool
     {
         GpuProfiler& prof = renderer.profiler;
@@ -766,7 +841,7 @@ namespace se
         {
             vk::QueryPoolCreateInfo info{};
             info.queryType = vk::QueryType::eTimestamp;
-            info.queryCount = 2 * MaxProfiledPasses;
+            info.queryCount = 2 * MaxProfiledScopes;
             auto created = checked(renderer.context.device.createQueryPool(info), "createQueryPool(timestamp)");
             if (!created)
             {
@@ -774,6 +849,25 @@ namespace se
                 return false;
             }
             pool = *created;
+        }
+        // Pipeline-statistics pools (one slot per top-level pass), only if the device feature is
+        // present. Absent => statsPools stay null and PipelineStats mode falls back to timestamps.
+        if (prof.pipelineStatsSupported)
+        {
+            for (vk::QueryPool& pool : prof.statsPools)
+            {
+                vk::QueryPoolCreateInfo info{};
+                info.queryType = vk::QueryType::ePipelineStatistics;
+                info.queryCount = MaxProfiledScopes;
+                info.pipelineStatistics = PipelineStatsFlags;
+                auto created = checked(renderer.context.device.createQueryPool(info), "createQueryPool(stats)");
+                if (!created)
+                {
+                    logError(created.error());
+                    return false;
+                }
+                pool = *created;
+            }
         }
         prof.poolsReady = true;
         return true;
@@ -790,11 +884,52 @@ namespace se
                 pool = nullptr;
             }
         }
-        for (std::vector<std::string>& names : prof.recordedNames)
+        for (vk::QueryPool& pool : prof.statsPools)
         {
-            names.clear();
+            if (pool)
+            {
+                renderer.context.device.destroyQueryPool(pool);
+                pool = nullptr;
+            }
+        }
+        for (std::vector<ScopeRecord>& records : prof.recordedScopes)
+        {
+            records.clear();
         }
         prof.poolsReady = false;
+    }
+
+    // Sample the device and host clocks together and store the offset that maps a GPU tick onto
+    // the CPU steady_clock axis. Cheap (no queue work); called periodically to track drift. A
+    // no-op when calibration is unavailable, leaving correlated = false (own-axis fallback).
+    void calibrateTimestamps(Renderer& renderer)
+    {
+        GpuProfiler& prof = renderer.profiler;
+        if (!prof.calibration.available || renderer.context.calibratedTs.getTimestamps == nullptr)
+        {
+            return;
+        }
+        std::array<VkCalibratedTimestampInfoEXT, 2> infos{};
+        infos[0].sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;
+        infos[0].timeDomain = VK_TIME_DOMAIN_DEVICE_EXT;
+        infos[1].sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;
+        infos[1].timeDomain = prof.calibration.hostDomain;
+        std::array<u64, 2> samples{};
+        u64 maxDeviation = 0;
+        const VkResult r = renderer.context.calibratedTs.getTimestamps(renderer.context.device, 2, infos.data(),
+                                                                       samples.data(), &maxDeviation);
+        if (r != VK_SUCCESS)
+        {
+            return;
+        }
+        // samples[0] is device ticks (same units as the query pool); samples[1] is host ns
+        // (CLOCK_MONOTONIC). offset = hostNs - deviceNs lets readback add a single term.
+        const u64 deviceTick = samples[0] & prof.timestampMask;
+        const double deviceNs = static_cast<double>(deviceTick) * prof.timestampPeriod;
+        prof.calibration.deviceToHostNsOffset = static_cast<i64>(static_cast<double>(samples[1]) - deviceNs);
+        prof.calibration.maxDeviationNs = maxDeviation;
+        prof.calibration.correlated = true;
+        prof.calibration.lastCalibratedSerial = renderer.frameSerial;
     }
 
     // Read back slot's timestamp pool (its GPU work completed at the beginFrame fence wait,
@@ -803,13 +938,13 @@ namespace se
     void readbackGpuTimings(Renderer& renderer, u32 slot)
     {
         GpuProfiler& prof = renderer.profiler;
-        const std::vector<std::string>& names = prof.recordedNames[slot];
-        if (names.empty() || !prof.timestampPools[slot])
+        const std::vector<ScopeRecord>& records = prof.recordedScopes[slot];
+        if (records.empty() || !prof.timestampPools[slot])
         {
             return;  // nothing recorded into this slot yet (first frames after enabling)
         }
-        const u32 passCount = static_cast<u32>(names.size());
-        const u32 queryCount = 2 * passCount;
+        const u32 scopeCount = static_cast<u32>(records.size());
+        const u32 queryCount = 2 * scopeCount;
         std::vector<u64> raw(static_cast<std::size_t>(queryCount) * 2, 0);
         const vk::Result r = renderer.context.device.getQueryPoolResults(
             prof.timestampPools[slot], 0, queryCount, raw.size() * sizeof(u64), raw.data(), 2 * sizeof(u64),
@@ -819,32 +954,106 @@ namespace se
             return;  // keep the last good read-back
         }
 
-        std::vector<PassTiming> timings;
-        timings.reserve(passCount);
+        // Pipeline statistics: read the stats pool only if this frame actually recorded stats (a
+        // record carries a statsSlot). That implies the frame ran in PipelineStats mode, so the
+        // pool was reset in beginFrame — reading an unreset pool is a validation error, so a
+        // timestamps-only frame (where the pool exists but was never reset) must not read it.
+        std::vector<u64> statsRaw;
+        bool statsAvail = false;
+        if (prof.statsPools[slot])
+        {
+            for (const ScopeRecord& rec : records)
+            {
+                if (rec.statsSlot >= 0)
+                {
+                    statsAvail = true;
+                    break;
+                }
+            }
+        }
+        if (statsAvail)
+        {
+            statsRaw.assign(static_cast<std::size_t>(MaxProfiledScopes) * (PipelineStatsCount + 1), 0);
+            static_cast<void>(renderer.context.device.getQueryPoolResults(
+                prof.statsPools[slot], 0, MaxProfiledScopes, statsRaw.size() * sizeof(u64), statsRaw.data(),
+                (PipelineStatsCount + 1) * sizeof(u64),
+                vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability));
+        }
+
+        // The i-th record owns query slots 2i (begin) / 2i+1 (end). The frame span is the
+        // earliest begin to the latest end across all scopes — NOT a sum, since sibling/async
+        // scopes overlap and a parent brackets its children, so a nested last-record-end is wrong.
         u64 spanBegin = 0;
         u64 spanEnd = 0;
         bool spanValid = false;
-        for (u32 p = 0; p < passCount; p = p + 1)
+        for (u32 i = 0; i < scopeCount; i = i + 1)
         {
-            const u64 beginVal = raw[4 * p];
-            const u64 beginAvail = raw[4 * p + 1];
-            const u64 endVal = raw[4 * p + 2];
-            const u64 endAvail = raw[4 * p + 3];
-            f32 ms = 0.0f;
-            if (beginAvail != 0 && endAvail != 0)
+            if (raw[4 * i + 1] != 0 && raw[4 * i + 3] != 0)
             {
-                const u64 b = beginVal & prof.timestampMask;
-                const u64 e = endVal & prof.timestampMask;
-                const u64 ticks = e >= b ? e - b : 0;
-                ms = static_cast<f32>(static_cast<double>(ticks) * prof.timestampPeriod / 1.0e6);
+                const u64 b = raw[4 * i] & prof.timestampMask;
+                const u64 e = raw[4 * i + 2] & prof.timestampMask;
                 if (!spanValid)
                 {
                     spanBegin = b;
+                    spanEnd = e;
                     spanValid = true;
                 }
-                spanEnd = e;
+                spanBegin = std::min(spanBegin, b);
+                spanEnd = std::max(spanEnd, e);
             }
-            timings.push_back(PassTiming{ names[p], ms });
+        }
+
+        std::vector<PassTiming> timings;
+        timings.reserve(scopeCount);
+        for (u32 i = 0; i < scopeCount; i = i + 1)
+        {
+            const ScopeRecord& rec = records[i];
+            PassTiming t;
+            t.name = rec.name;
+            t.parentIndex = rec.parentIndex;
+            t.depth = rec.depth;
+            if (raw[4 * i + 1] != 0 && raw[4 * i + 3] != 0)
+            {
+                const u64 b = raw[4 * i] & prof.timestampMask;
+                const u64 e = raw[4 * i + 2] & prof.timestampMask;
+                const u64 ticks = e >= b ? e - b : 0;
+                t.gpuMs = static_cast<f32>(static_cast<double>(ticks) * prof.timestampPeriod / 1.0e6);
+                // Correlated: project onto the CPU steady_clock axis (absolute host ns) so the GPU
+                // and CPU lanes share one zero. Otherwise stay frame-relative (own-axis fallback).
+                if (prof.calibration.correlated)
+                {
+                    const double offset = static_cast<double>(prof.calibration.deviceToHostNsOffset);
+                    t.startNs = static_cast<u64>((static_cast<double>(b) * prof.timestampPeriod) + offset);
+                    t.endNs = static_cast<u64>((static_cast<double>(e) * prof.timestampPeriod) + offset);
+                }
+                else
+                {
+                    if (spanValid && b >= spanBegin)
+                    {
+                        t.startNs = static_cast<u64>(static_cast<double>(b - spanBegin) * prof.timestampPeriod);
+                    }
+                    if (spanValid && e >= spanBegin)
+                    {
+                        t.endNs = static_cast<u64>(static_cast<double>(e - spanBegin) * prof.timestampPeriod);
+                    }
+                }
+            }
+            if (statsAvail && rec.statsSlot >= 0)
+            {
+                const std::size_t base = static_cast<std::size_t>(rec.statsSlot) * (PipelineStatsCount + 1);
+                if (statsRaw[base + PipelineStatsCount] != 0)  // availability word
+                {
+                    t.hasStats = true;
+                    t.stats.inputVertices = statsRaw[base + 0];
+                    t.stats.vertexInvocations = statsRaw[base + 1];
+                    t.stats.clippingInvocations = statsRaw[base + 2];
+                    t.stats.clippingPrimitives = statsRaw[base + 3];
+                    t.stats.fragmentInvocations = statsRaw[base + 4];
+                    t.stats.computeInvocations = statsRaw[base + 5];
+                    t.stats.pixels = rec.pixels;
+                }
+            }
+            timings.push_back(std::move(t));
         }
         prof.lastTimings = std::move(timings);
         prof.lastGpuTotalMs =
@@ -898,6 +1107,7 @@ namespace se
             renderer.profiler.lastTimings.clear();
             renderer.profiler.lastGpuTotalMs = 0.0f;
             renderer.gpuFrameMs = 0.0f;
+            renderer.profiler.calibration.correlated = false;  // re-enable forces a fresh calibration
         }
     }
 
@@ -929,6 +1139,159 @@ namespace se
     auto passTimingsTotalMs(const Renderer& renderer) -> f32
     {
         return renderer.profiler.lastGpuTotalMs;
+    }
+
+    // Copy this slot's finalized frame into the capture: the CPU lane (buffers[slot], still
+    // intact at the read-back seam) then the GPU lane (lastTimings, just read). parentIndex is
+    // rebased into the merged span vector so each lane's tree stays intact across frames.
+    void appendCaptureFrame(Renderer& renderer)
+    {
+        CaptureRecorder& cap = renderer.captureRecorder;
+        const std::vector<std::string>& names = renderer.cpuProfiler.registry.names;
+        const u32 base = static_cast<u32>(cap.capture.spans.size());
+        u32 cpuCount = 0;
+        if (cap.includeCpu)
+        {
+            for (const CpuSpan& s : renderer.cpuProfiler.buffers[renderer.frame.index].spans)
+            {
+                ProfileSpan ps;
+                ps.name = names[s.marker];
+                ps.lane = ProfileLane::Cpu;
+                ps.startNs = s.startNs;
+                ps.endNs = s.endNs;
+                ps.depth = s.depth;
+                ps.parentIndex = s.parent >= 0 ? static_cast<i32>(base) + s.parent : -1;
+                cap.capture.spans.push_back(std::move(ps));
+                cpuCount = cpuCount + 1;
+            }
+        }
+        const u32 gpuBase = base + cpuCount;
+        for (const PassTiming& t : renderer.profiler.lastTimings)
+        {
+            ProfileSpan ps;
+            ps.name = t.name;
+            ps.lane = ProfileLane::Gpu;
+            ps.startNs = t.startNs;
+            ps.endNs = t.endNs;
+            ps.depth = t.depth;
+            ps.parentIndex = t.parentIndex >= 0 ? static_cast<i32>(gpuBase) + t.parentIndex : -1;
+            ps.hasStats = t.hasStats;
+            ps.stats = t.stats;
+            cap.capture.spans.push_back(std::move(ps));
+        }
+    }
+
+    // Advance the capture state machine once per finalized frame (at the read-back seam). Arming
+    // burns down the read-back delay so recorded frames reflect the arm-time settings.
+    void tickCapture(Renderer& renderer)
+    {
+        CaptureRecorder& cap = renderer.captureRecorder;
+        if (cap.state == CaptureState::Arming)
+        {
+            if (cap.warmup > 0)
+            {
+                cap.warmup = cap.warmup - 1;
+            }
+            if (cap.warmup == 0)
+            {
+                cap.state = CaptureState::Recording;
+            }
+            return;
+        }
+        if (cap.state == CaptureState::Recording)
+        {
+            appendCaptureFrame(renderer);
+            cap.capturedFrames = cap.capturedFrames + 1;
+            if (cap.capturedFrames >= cap.targetFrames)
+            {
+                cap.state = CaptureState::Ready;
+            }
+        }
+    }
+
+    auto startProfileCapture(Renderer& renderer, CaptureMode mode, u32 frames, std::string filter, bool includeCpu,
+                             bool includeStats) -> u32
+    {
+        CaptureRecorder& cap = renderer.captureRecorder;
+        cap.mode = mode;
+        cap.targetFrames = mode == CaptureMode::Single ? 1u : std::clamp(frames, 1u, MaxCaptureFrames);
+        cap.capturedFrames = 0;
+        cap.warmup = MaxFramesInFlight + 1;  // flush the read-back delay before recording
+        cap.filter = std::move(filter);
+        cap.includeCpu = includeCpu;
+        cap.includeStats = includeStats && renderer.profiler.pipelineStatsSupported;
+        cap.capture = ProfileCapture{};
+        cap.captureId = cap.nextCaptureId;
+        cap.nextCaptureId = cap.nextCaptureId + 1;
+        cap.priorMode = renderer.profiler.mode;
+        cap.priorSubScopes = renderer.profiler.subScopes;
+        // PipelineStats mode is the heaviest level (it adds the per-pass statistics queries on
+        // top of timestamps); request it only when stats are wanted + supported, else timestamps.
+        const ProfilerMode wanted = cap.includeStats ? ProfilerMode::PipelineStats : ProfilerMode::Timestamps;
+        if (renderer.profiler.mode != wanted)
+        {
+            setProfilerMode(renderer, wanted);
+        }
+        renderer.profiler.subScopes = true;  // capture the full nested tree; restored on stop
+        cap.state = CaptureState::Arming;
+        return cap.captureId;
+    }
+
+    auto profileStatsSupported(const Renderer& renderer) -> bool
+    {
+        return renderer.profiler.pipelineStatsSupported;
+    }
+
+    auto profileCaptureState(const Renderer& renderer) -> CaptureState
+    {
+        return renderer.captureRecorder.state;
+    }
+
+    auto profileCaptureReady(const Renderer& renderer) -> bool
+    {
+        return renderer.captureRecorder.state == CaptureState::Ready;
+    }
+
+    auto profileCaptureMode(const Renderer& renderer) -> CaptureMode
+    {
+        return renderer.captureRecorder.mode;
+    }
+
+    auto profileCaptureCapturedFrames(const Renderer& renderer) -> u32
+    {
+        return renderer.captureRecorder.capturedFrames;
+    }
+
+    auto profileCaptureTargetFrames(const Renderer& renderer) -> u32
+    {
+        return renderer.captureRecorder.targetFrames;
+    }
+
+    auto stopProfileCapture(Renderer& renderer) -> ProfileCapture
+    {
+        CaptureRecorder& cap = renderer.captureRecorder;
+        const bool wasActive = cap.state != CaptureState::Idle;
+        ProfileCapture out = std::move(cap.capture);
+        out.meta.frameCount = cap.capturedFrames;
+        out.meta.filter = cap.filter;
+        out.meta.softwareGpu = renderer.softwareGpu;
+        out.meta.correlated = renderer.profiler.calibration.correlated;
+        out.meta.deviceName = renderer.context.vkbDevice.physical_device.name;
+        out.meta.timestampPeriod = renderer.profiler.timestampPeriod;
+        out.meta.targetFps = renderer.perfConfig.targetFps;
+        out.meta.mode = renderer.profiler.mode;
+        if (wasActive)
+        {
+            renderer.profiler.subScopes = cap.priorSubScopes;
+            if (cap.priorMode != renderer.profiler.mode)
+            {
+                setProfilerMode(renderer, cap.priorMode);
+            }
+        }
+        cap.capture = ProfileCapture{};
+        cap.capturedFrames = 0;
+        cap.state = CaptureState::Idle;
+        return out;
     }
 
     auto perfBudgetMs(const PerfConfig& config) -> f32
@@ -1348,12 +1711,22 @@ namespace se
         renderer.frameWaitNs = renderer.frameWaitNs + (steadyNowNs() - fenceWaitStart);
 
         // This slot's GPU work (from MaxFramesInFlight frames ago) is now complete, so its
-        // timestamp pool reads back without blocking. Then clear the slot's name list so
-        // executeRenderGraph can repopulate it for the frame about to be recorded.
+        // timestamp pool reads back without blocking. Then clear the slot's scope records so
+        // executeRenderGraph can repopulate them for the frame about to be recorded.
         if (renderer.profiler.mode != ProfilerMode::Off && renderer.profiler.poolsReady)
         {
+            // Re-sample the CPU/GPU clock offset on enable and roughly once a second after, so the
+            // merged timeline tracks clock drift over a capture.
+            if (!renderer.profiler.calibration.correlated ||
+                renderer.frameSerial - renderer.profiler.calibration.lastCalibratedSerial >= 64)
+            {
+                calibrateTimestamps(renderer);
+            }
             readbackGpuTimings(renderer, renderer.frame.index);
-            renderer.profiler.recordedNames[renderer.frame.index].clear();
+            // Drain this slot's merged spans into an in-flight capture before they are cleared.
+            tickCapture(renderer);
+            renderer.profiler.recordedScopes[renderer.frame.index].clear();
+            renderer.cpuProfiler.buffers[renderer.frame.index].reset();
         }
 
         if (renderer.shmPublish.enabled)
@@ -1452,7 +1825,13 @@ namespace se
         if (renderer.profiler.mode != ProfilerMode::Off && renderer.profiler.poolsReady)
         {
             frame.commandBuffer.resetQueryPool(renderer.profiler.timestampPools[renderer.frame.index], 0,
-                                               2 * MaxProfiledPasses);
+                                               2 * MaxProfiledScopes);
+            if (renderer.profiler.mode == ProfilerMode::PipelineStats &&
+                renderer.profiler.statsPools[renderer.frame.index])
+            {
+                frame.commandBuffer.resetQueryPool(renderer.profiler.statsPools[renderer.frame.index], 0,
+                                                   MaxProfiledScopes);
+            }
         }
 
         // Rendering scopes are opened in endFrame: pass 1 (scene → offscreen),
@@ -1541,6 +1920,11 @@ namespace se
             }
             renderer.reflection.capturePending = false;
         }
+
+        // CPU span for building this frame's render graph (cull + scene/lighting/post pass
+        // declarations). Excludes the rare IBL/probe bakes above (editor-time, not per-frame).
+        const CpuRecorder buildRec = cpuRecorder(renderer);
+        const CpuScope buildScope(&buildRec, "build-frame-graph");
 
         Image& offscreen = renderer.targets.offscreen;
         Image& depth = renderer.targets.depth;
@@ -2257,10 +2641,18 @@ namespace se
         scene.renderArea = offscreen.extent;
         scene.execute = [&renderer](vk::CommandBuffer cmd)
         {
-            recordSceneDrawList(renderer, cmd);
-            for (RenderFn& fn : renderer.frame.sceneSubmissions)
+            // Opt-in sub-scopes: split the scene pass into its batched geometry and the
+            // ad-hoc submission replay (editor overlay/gizmo), nested under the "scene" pass.
             {
-                fn(cmd);
+                const GpuScope geom(gpuScopeRecorder(renderer), cmd, "scene.geometry");
+                recordSceneDrawList(renderer, cmd);
+            }
+            {
+                const GpuScope subs(gpuScopeRecorder(renderer), cmd, "scene.submissions");
+                for (RenderFn& fn : renderer.frame.sceneSubmissions)
+                {
+                    fn(cmd);
+                }
             }
         };
         addPass(graph, std::move(scene));
@@ -2617,16 +3009,37 @@ namespace se
         // timestamps ride along only when a profiler mode armed the per-frame pool.
         const RgDebugLabels* labels =
             renderer.context.debugLabels.begin != nullptr ? &renderer.context.debugLabels : nullptr;
-        RgTimestamps ts;
-        const RgTimestamps* tsPtr = nullptr;
+        // Arm the GPU scope recorder for this frame (or clear it, so any pass-body sub-scope
+        // is a no-op when not recording). It lives on the profiler — not a local — so pass
+        // bodies reach the same recorder via gpuScopeRecorder to open child scopes.
+        RgTimestamps* tsPtr = nullptr;
         if (renderer.profiler.mode != ProfilerMode::Off && renderer.profiler.poolsReady)
         {
-            ts.pool = renderer.profiler.timestampPools[renderer.frame.index];
-            ts.capacity = 2 * MaxProfiledPasses;
-            ts.names = &renderer.profiler.recordedNames[renderer.frame.index];
-            tsPtr = &ts;
+            RgTimestamps& sr = renderer.profiler.scopeRecorder;
+            sr.pool = renderer.profiler.timestampPools[renderer.frame.index];
+            sr.capacity = 2 * MaxProfiledScopes;
+            sr.records = &renderer.profiler.recordedScopes[renderer.frame.index];
+            sr.nextSlot = 0;
+            sr.openScope = -1;
+            sr.depth = 0;
+            // Arm pipeline-statistics queries only in PipelineStats mode (and when the pools
+            // exist); otherwise leave the stats pool null so executeRenderGraph skips them.
+            const bool statsOn = renderer.profiler.mode == ProfilerMode::PipelineStats &&
+                                 renderer.profiler.statsPools[renderer.frame.index];
+            sr.statsPool = statsOn ? renderer.profiler.statsPools[renderer.frame.index] : vk::QueryPool{};
+            sr.statsCapacity = statsOn ? MaxProfiledScopes : 0;
+            sr.nextStatsSlot = 0;
+            tsPtr = &sr;
         }
-        executeRenderGraph(graph, frame.commandBuffer, tsPtr, labels);
+        else
+        {
+            renderer.profiler.scopeRecorder = RgTimestamps{};
+        }
+        const CpuRecorder rec = cpuRecorder(renderer);
+        {
+            const CpuScope scope(&rec, "execute-render-graph");
+            executeRenderGraph(graph, frame.commandBuffer, tsPtr, labels, &rec);
+        }
 
         // Store this frame's camera viewProj as next frame's "previous" for TAA motion
         // vectors. Only valid once a scene draw list was submitted this frame.
@@ -2691,6 +3104,7 @@ namespace se
 
         if (renderer.shmPublish.enabled)
         {
+            const CpuScope presentScope(&rec, "submit-present");
             // No swapchain image was acquired and nothing presents: submit with the frame
             // fence only, so the loop is paced purely by GPU completion (frames in flight).
             vk::CommandBufferSubmitInfo cmdInfo{};
@@ -2701,6 +3115,7 @@ namespace se
         }
         else
         {
+            const CpuScope presentScope(&rec, "submit-present");
             vk::Semaphore signalSemaphore = renderer.swapchain.renderFinished[renderer.frame.imageIndex];
 
             vk::SemaphoreSubmitInfo waitInfo{};
