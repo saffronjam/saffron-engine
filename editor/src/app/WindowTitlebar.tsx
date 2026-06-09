@@ -3,11 +3,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Box,
   File,
+  Flame,
   House,
   Image as ImageIcon,
   Maximize2,
   Minus,
-  Settings,
   Square,
   X,
 } from "lucide-react";
@@ -15,7 +15,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from "react";
 import { useEditorStore, type ViewTab } from "../state/store";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const appWindow = getCurrentWindow();
@@ -46,7 +45,6 @@ export function WindowTitlebar() {
   const setActiveViewTab = useEditorStore((s) => s.setActiveViewTab);
   const closeViewTab = useEditorStore((s) => s.closeViewTab);
   const moveViewTab = useEditorStore((s) => s.moveViewTab);
-  const setSettingsOpen = useEditorStore((s) => s.setSettingsOpen);
   const devMode = useEditorStore((s) => s.devMode);
   const setDevMode = useEditorStore((s) => s.setDevMode);
   const devClickCount = useRef(0);
@@ -321,18 +319,10 @@ export function WindowTitlebar() {
       </div>
       <div className="min-w-0 flex-1 self-stretch" data-tauri-drag-region />
       <div
-        className="flex w-44 flex-none justify-end"
+        className="flex w-33 flex-none justify-end"
         data-tauri-drag-region="false"
         data-titlebar-control="true"
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <TitlebarButton label="Editor settings" onClick={() => setSettingsOpen(true)}>
-              <Settings />
-            </TitlebarButton>
-          </TooltipTrigger>
-          <TooltipContent>Editor settings</TooltipContent>
-        </Tooltip>
         <TitlebarButton label="Minimize" onClick={minimize}>
           <Minus />
         </TitlebarButton>
@@ -434,6 +424,9 @@ function TitlebarTab({
 function tabIcon(tab: ViewTab) {
   if (tab.kind === "scene") {
     return House;
+  }
+  if (tab.kind === "flamegraph") {
+    return Flame;
   }
   if (tab.assetType === "mesh") {
     return Box;

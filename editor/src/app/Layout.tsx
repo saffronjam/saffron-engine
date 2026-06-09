@@ -26,12 +26,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HierarchyPanel } from "../panels/HierarchyPanel";
 import { InspectorPanel } from "../panels/InspectorPanel";
 import { EnvironmentPanel } from "../panels/EnvironmentPanel";
-import { RenderStatsPanel } from "../panels/RenderStatsPanel";
+import { RenderPanel } from "../panels/RenderPanel";
 import { AssetsPanel } from "../panels/AssetsPanel";
 import { ViewportPanel } from "../panels/ViewportPanel";
+import { RightSidebar } from "../panels/RightSidebar";
 import { emitLayoutSettled } from "./layoutBus";
 import {
+  loadRightSidebarWidth,
   loadSidebarWidth,
+  persistRightSidebarWidth,
   persistSidebarWidth,
   useEditorStore,
   type BottomTab,
@@ -41,16 +44,24 @@ const SIDEBAR_DEFAULT_WIDTH = 280;
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 520;
 const VIEWPORT_MIN_WIDTH = 520;
+const RIGHT_SIDEBAR_DEFAULT_WIDTH = 320;
 
 export function Layout() {
   const projectPath = useEditorStore((s) => s.project?.path);
   const playState = useEditorStore((s) => s.playState);
+  const rightToolsOpen = useEditorStore((s) => s.rightTools.length > 0);
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     clampSidebarWidth(loadSidebarWidth(projectPath) ?? SIDEBAR_DEFAULT_WIDTH),
   );
+  const [rightWidth, setRightWidth] = useState(() =>
+    clampSidebarWidth(loadRightSidebarWidth(projectPath) ?? RIGHT_SIDEBAR_DEFAULT_WIDTH),
+  );
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const rightDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const sidebarWidthRef = useRef(sidebarWidth);
   sidebarWidthRef.current = sidebarWidth;
+  const rightWidthRef = useRef(rightWidth);
+  rightWidthRef.current = rightWidth;
   const projectPathRef = useRef(projectPath);
   projectPathRef.current = projectPath;
 
@@ -68,19 +79,32 @@ export function Layout() {
   useEffect(() => {
     const onPointerMove = (event: PointerEvent): void => {
       const drag = dragRef.current;
-      if (!drag) {
+      if (drag) {
+        setSidebarWidth(clampSidebarWidth(drag.startWidth + event.clientX - drag.startX));
         return;
       }
-      setSidebarWidth(clampSidebarWidth(drag.startWidth + event.clientX - drag.startX));
+      // The right resizer sits on the sidebar's left edge: dragging left widens it.
+      const rightDrag = rightDragRef.current;
+      if (rightDrag) {
+        setRightWidth(clampSidebarWidth(rightDrag.startWidth + rightDrag.startX - event.clientX));
+      }
     };
     const onPointerUp = (): void => {
-      if (!dragRef.current) {
+      const wasLeft = dragRef.current !== null;
+      const wasRight = rightDragRef.current !== null;
+      if (!wasLeft && !wasRight) {
         return;
       }
       dragRef.current = null;
+      rightDragRef.current = null;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      persistSidebarWidth(projectPathRef.current, sidebarWidthRef.current);
+      if (wasLeft) {
+        persistSidebarWidth(projectPathRef.current, sidebarWidthRef.current);
+      }
+      if (wasRight) {
+        persistRightSidebarWidth(projectPathRef.current, rightWidthRef.current);
+      }
       emitLayoutSettled();
     };
 
@@ -97,6 +121,13 @@ export function Layout() {
   const beginSidebarResize = (event: React.PointerEvent<HTMLDivElement>): void => {
     event.preventDefault();
     dragRef.current = { startX: event.clientX, startWidth: sidebarWidth };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  const beginRightResize = (event: React.PointerEvent<HTMLDivElement>): void => {
+    event.preventDefault();
+    rightDragRef.current = { startX: event.clientX, startWidth: rightWidth };
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   };
@@ -156,6 +187,23 @@ export function Layout() {
           <AssetsPanel />
         </ResizablePanel>
       </ResizablePanelGroup>
+      {/* The right sidebar (perf tools) renders only when a tool is open; closing all its
+          tabs removes it and the viewport reclaims the width. Pixel width like the left,
+          so it cannot collapse while the native viewport attaches. */}
+      {rightToolsOpen ? (
+        <>
+          <div
+            className="relative flex w-px flex-none cursor-col-resize items-center justify-center bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize tools sidebar"
+            onPointerDown={beginRightResize}
+          />
+          <aside className="min-h-0 flex-none bg-background" style={{ width: `${rightWidth}px` }}>
+            <RightSidebar />
+          </aside>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -168,9 +216,9 @@ function clampSidebarWidth(width: number): number {
   return Math.min(Math.max(width, SIDEBAR_MIN_WIDTH), max);
 }
 
-/// The left-bottom dock node: Inspector, Environment, and Render Stats tabbed into
-/// one node. Keeping every panel in a non-viewport region avoids the native viewport
-/// painting over them (see the file header).
+/// The left-bottom dock node: Inspector, Environment, and Render tabbed into one node.
+/// Keeping every panel in a non-viewport region avoids the native viewport painting over
+/// them (see the file header).
 function LeftBottomTabs() {
   // Store-controlled so other surfaces can switch tabs (e.g. an inspector deep-link);
   // manual tab clicks route through the same slice.
@@ -197,8 +245,8 @@ function LeftBottomTabs() {
         <TabsTrigger value="environment" className="px-3 text-xs">
           Environment
         </TabsTrigger>
-        <TabsTrigger value="stats" className="px-3 text-xs">
-          Stats
+        <TabsTrigger value="render" className="px-3 text-xs">
+          Render
         </TabsTrigger>
       </TabsList>
       <TabsContent value="inspector" className="flex min-h-0 flex-1 flex-col">
@@ -207,8 +255,8 @@ function LeftBottomTabs() {
       <TabsContent value="environment" className="flex min-h-0 flex-1 flex-col">
         <EnvironmentPanel />
       </TabsContent>
-      <TabsContent value="stats" className="flex min-h-0 flex-1 flex-col">
-        <RenderStatsPanel />
+      <TabsContent value="render" className="flex min-h-0 flex-1 flex-col">
+        <RenderPanel />
       </TabsContent>
     </Tabs>
   );

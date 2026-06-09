@@ -1,4 +1,5 @@
-/// The Render Stats panel: the performance-telemetry dashboard plus the render toggles.
+/// The Render Stats panel: the performance-telemetry dashboard. The render configuration
+/// (anti-aliasing, feature toggles, exposure) lives in the Render panel beside Environment.
 ///
 /// Two timing families that must not be conflated:
 ///   - "Engine frame" / "GPU" / the percentile graph come from the engine
@@ -13,7 +14,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { client } from "../control/client";
 import { useEditorStore } from "../state/store";
-import { NumberDrag } from "../components/NumberDrag";
 import { FrameTimeGraph } from "../components/FrameTimeGraph";
 import { MetricsRefreshControl } from "../components/MetricsRefreshControl";
 import {
@@ -39,38 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-type AaMode = RenderStats["aa"];
-
-const AA_MODES: { value: AaMode; label: string }[] = [
-  { value: "off", label: "Off" },
-  { value: "fxaa", label: "FXAA" },
-  { value: "taa", label: "TAA" },
-  { value: "msaa2", label: "MSAA 2x" },
-  { value: "msaa4", label: "MSAA 4x" },
-  { value: "msaa8", label: "MSAA 8x" },
-];
-
 const TARGET_FPS = [30, 60, 90, 120, 144];
-
-/// The boolean feature toggles (label + the stat field + its setter). RT-gated rows
-/// carry `rtGated` so the panel disables them when the device lacks support.
-const TOGGLES: {
-  label: string;
-  field: keyof RenderStats;
-  set: (on: boolean) => Promise<unknown>;
-  rtGated?: boolean;
-}[] = [
-  { label: "Clustered", field: "clustered", set: (on) => client.setClustered(on) },
-  { label: "Depth Pre-pass", field: "depthPrepass", set: (on) => client.setDepthPrepass(on) },
-  { label: "Shadows", field: "shadows", set: (on) => client.setShadows(on) },
-  { label: "IBL", field: "ibl", set: (on) => client.setIbl(on) },
-  { label: "SSAO", field: "ssao", set: (on) => client.setSsao(on) },
-  { label: "Contact Shadows", field: "contactShadows", set: (on) => client.setContactShadows(on) },
-  { label: "SSGI", field: "ssgi", set: (on) => client.setSsgi(on) },
-  { label: "DDGI", field: "ddgi", set: (on) => client.setGi(on ? "ddgi" : "off") },
-  { label: "RT Shadows", field: "rtShadows", set: (on) => client.setRtShadows(on), rtGated: true },
-  { label: "ReSTIR", field: "restir", set: (on) => client.setRestir(on), rtGated: true },
-];
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -105,38 +74,6 @@ function Bar({ fraction, status }: { fraction: number; status: PerfStatus }) {
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
       <div className={cn("h-full rounded-full", STATUS_BG[status])} style={{ width: `${pct}%` }} />
     </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  checked,
-  disabled,
-  tooltip,
-  onCheckedChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled: boolean;
-  tooltip?: string;
-  onCheckedChange(next: boolean): void;
-}) {
-  const row = (
-    <div className="grid grid-cols-[1fr_auto] items-center gap-1.5">
-      <Label className="truncate text-[11px] font-normal text-muted-foreground">{label}</Label>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
-    </div>
-  );
-  if (!tooltip) {
-    return row;
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div>{row}</div>
-      </TooltipTrigger>
-      <TooltipContent>{tooltip}</TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -200,7 +137,6 @@ export function RenderStatsPanel() {
   const metricsBucketMs = useEditorStore((s) => s.metricsBucketMs);
   const setRenderStats = useEditorStore((s) => s.setRenderStats);
   const setPerfConfig = useEditorStore((s) => s.setPerfConfig);
-  const setDragActive = useEditorStore((s) => s.setDragActive);
   const [error, setError] = useState<string | null>(null);
 
   // The volatile engine/UI readouts (render-stats, poll rate, UI frame rate) are sampled from
@@ -238,45 +174,6 @@ export function RenderStatsPanel() {
   const optimistic = (patch: Partial<RenderStats>): void => {
     setRenderStats({ ...stats, ...patch });
     refreshStats();
-  };
-
-  const onAa = (mode: AaMode): void => {
-    setError(null);
-    optimistic({ aa: mode });
-    void client
-      .setAa(mode)
-      .then((res) => optimistic({ aa: res.aa }))
-      .catch((err: unknown) => setError(errorText(err)));
-  };
-
-  const onToggle = (
-    field: keyof RenderStats,
-    set: (on: boolean) => Promise<unknown>,
-    next: boolean,
-  ): void => {
-    setError(null);
-    const previous = stats[field];
-    optimistic({ [field]: next } as Partial<RenderStats>);
-    void set(next)
-      .then((res) => {
-        const echoed = (res as Record<string, unknown>)[field];
-        if (typeof echoed === "boolean") {
-          optimistic({ [field]: echoed } as Partial<RenderStats>);
-        }
-      })
-      .catch((err: unknown) => {
-        optimistic({ [field]: previous } as Partial<RenderStats>);
-        setError(errorText(err));
-      });
-  };
-
-  const onExposure = (ev: number): void => {
-    setError(null);
-    optimistic({ exposureEv: ev });
-    void client
-      .setExposure(ev)
-      .then((res) => optimistic({ exposureEv: res.exposureEv }))
-      .catch((err: unknown) => setError(errorText(err)));
   };
 
   const onProfiler = (on: boolean): void => {
@@ -545,57 +442,6 @@ export function RenderStatsPanel() {
               }
             />
           </section>
-
-          <div className="grid grid-cols-[1fr_auto] items-center gap-1.5">
-            <Label className="truncate text-[11px] font-normal text-muted-foreground">
-              Anti-aliasing
-            </Label>
-            <Select value={stats.aa} disabled={!ready} onValueChange={(v) => onAa(v as AaMode)}>
-              <SelectTrigger size="sm" className="h-7 w-[112px] font-mono text-[11px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {AA_MODES.map((m) => (
-                  <SelectItem key={m.value} value={m.value} className="text-[11px]">
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {TOGGLES.map((t) => {
-            const disabled = !ready || (t.rtGated === true && !stats.rtSupported);
-            const tooltip =
-              t.rtGated === true && !stats.rtSupported
-                ? "Ray tracing not supported on this device"
-                : undefined;
-            return (
-              <ToggleRow
-                key={t.field}
-                label={t.label}
-                checked={stats[t.field] === true}
-                disabled={disabled}
-                tooltip={tooltip}
-                onCheckedChange={(next) => onToggle(t.field, t.set, next)}
-              />
-            );
-          })}
-
-          <div className="grid grid-cols-[1fr_120px] items-center gap-1.5">
-            <Label className="truncate text-[11px] font-normal text-muted-foreground">
-              Exposure (EV)
-            </Label>
-            <NumberDrag
-              value={stats.exposureEv}
-              min={-8}
-              max={8}
-              step={0.05}
-              onChange={onExposure}
-              onDragStart={() => setDragActive(true)}
-              onDragEnd={() => setDragActive(false)}
-            />
-          </div>
 
           {error ? (
             <p className="rounded-sm border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">

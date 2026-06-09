@@ -21,6 +21,7 @@ import { ProjectStartupModal } from "./ProjectStartupModal";
 import { SettingsModal } from "./SettingsModal";
 import type { ProjectInfo } from "../control/client";
 import { AssetPreview } from "../components/AssetViewer";
+import { CaptureFlame } from "../components/CaptureFlame";
 import { emitLayoutSettled } from "./layoutBus";
 import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,9 @@ export function App() {
   const uiFrameRateHz = useEditorStore((s) => s.uiFrameRateHz);
   const activeViewTabId = useEditorStore((s) => s.activeViewTabId);
   const projectPath = useEditorStore((s) => s.project?.path);
+  const activeKind = useEditorStore(
+    (s) => s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId)?.kind ?? "scene",
+  );
   const activeAsset = useEditorStore((s) => {
     const tab = s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId);
     return tab?.kind === "asset"
@@ -210,7 +214,8 @@ export function App() {
           <Topbar />
           <Layout key={projectPath ?? ""} />
         </div>
-        {!sceneTabActive && <AssetWorkspace asset={activeAsset} />}
+        {activeKind === "asset" && <AssetWorkspace asset={activeAsset} />}
+        {activeKind === "flamegraph" && <FlameGraphWorkspace />}
         <ProjectStartupModal open={projectModalOpen} onProjectLoaded={handleProjectLoaded} />
         <SettingsModal />
         <Toaster />
@@ -235,6 +240,23 @@ function AssetWorkspace({ asset }: { asset: AssetEntry | null }) {
   return (
     <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-background p-6">
       <AssetPreview entry={asset} className="h-full max-h-full w-auto max-w-full" />
+    </main>
+  );
+}
+
+/// The Flame graph main tab: a large view of the last profiler capture's flame chart.
+function FlameGraphWorkspace() {
+  const capture = useEditorStore((s) => s.capture);
+  if (capture === null) {
+    return (
+      <main className="flex min-h-0 flex-1 items-center justify-center bg-background text-xs italic text-muted-foreground">
+        Capture a frame in the Profiler to populate the flame graph.
+      </main>
+    );
+  }
+  return (
+    <main className="min-h-0 flex-1 overflow-hidden bg-background p-3">
+      <CaptureFlame />
     </main>
   );
 }

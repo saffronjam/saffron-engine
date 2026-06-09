@@ -3,7 +3,18 @@
 /// the engine's single gizmo state (`set-gizmo`/`get-gizmo`). Clicks set `store.gizmo`
 /// optimistically and fire `set-gizmo`; the reconcile poll's `get-gizmo` read keeps it
 /// in sync with external mutations (e.g. `se set-gizmo`).
-import { Anchor, Move3D, Pause, Play, Rotate3D, Scaling, Square, StepForward } from "lucide-react";
+import {
+  Anchor,
+  Move3D,
+  Pause,
+  Play,
+  Rotate3D,
+  Scaling,
+  Settings,
+  Square,
+  StepForward,
+  Wrench,
+} from "lucide-react";
 import { client } from "../control/client";
 import { useEditorStore } from "../state/store";
 import { COMMANDS_BY_ID, bindingFor, formatBinding, type CommandId } from "../lib/keybindings";
@@ -11,6 +22,12 @@ import { notify } from "../lib/flash";
 import type { GizmoState } from "../protocol";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ProjectMenu } from "../app/ProjectMenu";
 import { AlarmBadge } from "../components/AlarmBadge";
 
@@ -24,6 +41,8 @@ export function Topbar() {
   const playState = useEditorStore((s) => s.playState);
   const setPlayState = useEditorStore((s) => s.setPlayState);
   const keyBindings = useEditorStore((s) => s.keyBindings);
+  const openRightTool = useEditorStore((s) => s.openRightTool);
+  const setSettingsOpen = useEditorStore((s) => s.setSettingsOpen);
 
   const ready = phase === "ready";
   // The gizmo is hidden during play (the engine rejects gizmo commands), so its
@@ -256,8 +275,32 @@ export function Topbar() {
           </Tooltip>
         </div>
       </div>
-      <div className="flex w-32 items-center justify-end">
+      <div className="flex items-center justify-end gap-1.5">
         <AlarmBadge />
+        <div className="flex items-center gap-0.5" role="group" aria-label="Tools">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" size="icon-sm" variant="ghost" aria-label="Tools">
+                <Wrench />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-40">
+              <DropdownMenuItem onSelect={() => openRightTool("stats")}>Stats</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => openRightTool("profiler")}>
+                Profiler
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Editor settings"
+          >
+            <Settings />
+          </Button>
+        </div>
       </div>
     </header>
   );
