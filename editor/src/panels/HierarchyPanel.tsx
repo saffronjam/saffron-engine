@@ -23,8 +23,10 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { logRender } from "../lib/renderLog";
 
 export function HierarchyPanel() {
+  logRender("HierarchyPanel");
   const selectEntity = useEditorStore((s) => s.selectEntity);
   const setSelectedId = useEditorStore((s) => s.setSelectedId);
   const setParent = useEditorStore((s) => s.setParent);

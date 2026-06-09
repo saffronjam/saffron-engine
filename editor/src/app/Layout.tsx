@@ -31,6 +31,7 @@ import { AssetsPanel } from "../panels/AssetsPanel";
 import { ViewportPanel } from "../panels/ViewportPanel";
 import { RightSidebar } from "../panels/RightSidebar";
 import { emitLayoutSettled } from "./layoutBus";
+import { logRender } from "../lib/renderLog";
 import {
   loadRightSidebarWidth,
   loadSidebarWidth,
@@ -47,6 +48,7 @@ const VIEWPORT_MIN_WIDTH = 520;
 const RIGHT_SIDEBAR_DEFAULT_WIDTH = 320;
 
 export function Layout() {
+  logRender("Layout");
   const projectPath = useEditorStore((s) => s.project?.path);
   const playState = useEditorStore((s) => s.playState);
   const rightToolsOpen = useEditorStore((s) => s.rightTools.length > 0);

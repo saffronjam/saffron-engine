@@ -18,6 +18,7 @@ import { matchesBinding } from "../lib/keybindings";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { logRender } from "../lib/renderLog";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -124,6 +125,7 @@ function flattenVisible(nodes: FolderNode[], expanded: Set<string>, out: Visible
 }
 
 export function AssetFolderTree(props: FolderTreeProps) {
+  logRender("AssetFolderTree");
   const { folders, currentFolder } = props;
   const creatingParent = props.creatingIn?.parent ?? null;
   const roots = useMemo(() => buildFolderTree(folders), [folders]);

@@ -12,6 +12,7 @@ import { matchesBinding } from "../lib/keybindings";
 import type { AssetEntry } from "../protocol";
 import { cn } from "@/lib/utils";
 import { useOutsideCommit } from "../lib/useOutsideCommit";
+import { logRender } from "../lib/renderLog";
 import { Input } from "@/components/ui/input";
 import {
   ContextMenu,
@@ -127,6 +128,7 @@ export function AssetTile({
   onSelect,
   onBeginDrag,
 }: AssetTileProps) {
+  logRender("AssetTile");
   const [url, setUrl] = useState<string | null>(() =>
     getCachedThumbnailUrl(entry.id, THUMBNAIL_FETCH_SIZE),
   );

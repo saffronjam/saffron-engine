@@ -23,6 +23,7 @@ import type { ProjectInfo } from "../control/client";
 import { AssetPreview } from "../components/AssetViewer";
 import { CaptureFlame } from "../components/CaptureFlame";
 import { emitLayoutSettled } from "./layoutBus";
+import { logRender } from "../lib/renderLog";
 import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 
@@ -43,11 +44,11 @@ function revealEditorWindow(): Promise<void> {
 }
 
 export function App() {
+  logRender("App");
   const setPhase = useEditorStore((s) => s.setPhase);
   const setProject = useEditorStore((s) => s.setProject);
   const setViewportHidden = useEditorStore((s) => s.setViewportHidden);
   const phase = useEditorStore((s) => s.engineStatus.phase);
-  const uiFrameRateHz = useEditorStore((s) => s.uiFrameRateHz);
   const activeViewTabId = useEditorStore((s) => s.activeViewTabId);
   const projectPath = useEditorStore((s) => s.project?.path);
   const activeKind = useEditorStore(
@@ -219,13 +220,23 @@ export function App() {
         <ProjectStartupModal open={projectModalOpen} onProjectLoaded={handleProjectLoaded} />
         <SettingsModal />
         <Toaster />
-        <footer className="flex h-[22px] flex-none items-center justify-end border-t border-border bg-card px-3">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-            {phase} · UI {uiFrameRateHz > 0 ? uiFrameRateHz.toFixed(0) : "--"} fps
-          </span>
-        </footer>
+        <StatusFooter />
       </div>
     </TooltipProvider>
+  );
+}
+
+/// The status strip below the dock. A leaf so the fps meter's twice-a-second store
+/// write re-renders this one line, not the entire shell above it.
+function StatusFooter() {
+  const phase = useEditorStore((s) => s.engineStatus.phase);
+  const uiFrameRateHz = useEditorStore((s) => s.uiFrameRateHz);
+  return (
+    <footer className="flex h-[22px] flex-none items-center justify-end border-t border-border bg-card px-3">
+      <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+        {phase} · UI {uiFrameRateHz > 0 ? uiFrameRateHz.toFixed(0) : "--"} fps
+      </span>
+    </footer>
   );
 }
 

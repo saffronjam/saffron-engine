@@ -30,11 +30,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProjectMenu } from "../app/ProjectMenu";
 import { AlarmBadge } from "../components/AlarmBadge";
+import { logRender } from "../lib/renderLog";
 
 type GizmoOp = GizmoState["op"];
 type GizmoSpace = GizmoState["space"];
 
 export function Topbar() {
+  logRender("Topbar");
   const phase = useEditorStore((s) => s.engineStatus.phase);
   const gizmo = useEditorStore((s) => s.gizmo);
   const setGizmo = useEditorStore((s) => s.setGizmo);
