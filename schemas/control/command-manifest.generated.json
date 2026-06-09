@@ -30,6 +30,27 @@
       "fixture": "empty"
     },
     {
+      "name": "profiler.capture-start",
+      "params": "CaptureStartParams",
+      "result": "CaptureStartResult",
+      "status": "typed",
+      "fixture": "capture-single"
+    },
+    {
+      "name": "profiler.capture-stop",
+      "params": "EmptyParams",
+      "result": "CaptureStopResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "profiler.capture-status",
+      "params": "EmptyParams",
+      "result": "CaptureStatusResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
       "name": "frame-history",
       "params": "FrameHistoryParams",
       "result": "FrameHistoryDto",

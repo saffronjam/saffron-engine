@@ -78,6 +78,60 @@
       }
     },
     {
+      "name": "profiler.capture-start",
+      "summary": "arm a bounded profiler capture",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/CaptureStartParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CaptureStartResult"
+        }
+      }
+    },
+    {
+      "name": "profiler.capture-stop",
+      "summary": "finish + return the armed profiler capture",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CaptureStopResult"
+        }
+      }
+    },
+    {
+      "name": "profiler.capture-status",
+      "summary": "non-destructive capture progress",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CaptureStatusResult"
+        }
+      }
+    },
+    {
       "name": "frame-history",
       "summary": "frame-time percentiles + stutter count",
       "params": [
@@ -1973,6 +2027,133 @@
           "slot"
         ]
       },
+      "CaptureStartParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "frames",
+              "rolling"
+            ]
+          },
+          "frames": {
+            "type": "integer"
+          },
+          "filter": {
+            "type": "string"
+          },
+          "includeCpu": {
+            "type": "boolean"
+          },
+          "includePipelineStats": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "CaptureStartResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "captureId": {
+            "type": "integer"
+          },
+          "ack": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "captureId",
+          "ack"
+        ]
+      },
+      "CaptureStatusResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "arming",
+              "recording",
+              "ready"
+            ]
+          },
+          "capturedFrames": {
+            "type": "integer"
+          },
+          "targetFrames": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "frames",
+              "rolling"
+            ]
+          },
+          "pipelineStatsSupported": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state",
+          "capturedFrames",
+          "targetFrames",
+          "mode",
+          "pipelineStatsSupported"
+        ]
+      },
+      "CaptureStopResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ready": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "frames",
+              "rolling"
+            ]
+          },
+          "frameCount": {
+            "type": "integer"
+          },
+          "inlined": {
+            "type": "boolean"
+          },
+          "capture": {
+            "$ref": "#/components/schemas/ProfileCaptureDto"
+          },
+          "chromeTrace": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "pending": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "mode",
+          "frameCount",
+          "inlined",
+          "capture",
+          "chromeTrace",
+          "path",
+          "pending"
+        ]
+      },
       "ComponentList": {
         "type": "object",
         "additionalProperties": false,
@@ -2746,6 +2927,42 @@
           "pid"
         ]
       },
+      "PipelineStatsDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inputVertices": {
+            "type": "integer"
+          },
+          "vertexInvocations": {
+            "type": "integer"
+          },
+          "clippingInvocations": {
+            "type": "integer"
+          },
+          "clippingPrimitives": {
+            "type": "integer"
+          },
+          "fragmentInvocations": {
+            "type": "integer"
+          },
+          "computeInvocations": {
+            "type": "integer"
+          },
+          "pixels": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "inputVertices",
+          "vertexInvocations",
+          "clippingInvocations",
+          "clippingPrimitives",
+          "fragmentInvocations",
+          "computeInvocations",
+          "pixels"
+        ]
+      },
       "PlayStateResult": {
         "type": "object",
         "additionalProperties": false,
@@ -2808,6 +3025,109 @@
           "boxProjection",
           "valid",
           "dirty"
+        ]
+      },
+      "ProfileCaptureDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "spans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSpanDto"
+            }
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ProfileCaptureMetadataDto"
+          }
+        },
+        "required": [
+          "spans",
+          "metadata"
+        ]
+      },
+      "ProfileCaptureMetadataDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "softwareGpu": {
+            "type": "boolean"
+          },
+          "correlated": {
+            "type": "boolean"
+          },
+          "deviceName": {
+            "type": "string"
+          },
+          "timestampPeriod": {
+            "type": "number"
+          },
+          "targetFps": {
+            "type": "number"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "timestamps",
+              "pipeline-stats"
+            ]
+          },
+          "filter": {
+            "type": "string"
+          },
+          "frameCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "softwareGpu",
+          "correlated",
+          "deviceName",
+          "timestampPeriod",
+          "targetFps",
+          "mode",
+          "filter",
+          "frameCount"
+        ]
+      },
+      "ProfileSpanDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "cpu",
+              "gpu"
+            ]
+          },
+          "startNs": {
+            "type": "integer"
+          },
+          "endNs": {
+            "type": "integer"
+          },
+          "parentIndex": {
+            "type": "integer"
+          },
+          "depth": {
+            "type": "integer"
+          },
+          "pipelineStats": {
+            "$ref": "#/components/schemas/PipelineStatsDto"
+          }
+        },
+        "required": [
+          "name",
+          "lane",
+          "startNs",
+          "endNs",
+          "parentIndex",
+          "depth"
         ]
       },
       "ProfilerModeResult": {
