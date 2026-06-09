@@ -924,6 +924,78 @@
       }
     },
     {
+      "name": "get-script-status",
+      "summary": "play state, live script instances, error high-water",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ScriptStatusResult"
+        }
+      }
+    },
+    {
+      "name": "drain-script-errors",
+      "summary": "drain script errors (seq cursor)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DrainScriptErrorsParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DrainScriptErrorsResult"
+        }
+      }
+    },
+    {
+      "name": "get-script-schema",
+      "summary": "a project script's declared fields",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/GetScriptSchemaParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GetScriptSchemaResult"
+        }
+      }
+    },
+    {
+      "name": "set-script-override",
+      "summary": "write one per-instance script field override",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetScriptOverrideParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SetScriptOverrideResult"
+        }
+      }
+    },
+    {
       "name": "add-entity",
       "summary": "add-entity {preset}",
       "params": [
@@ -1208,6 +1280,24 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/ProjectInfoDto"
+        }
+      }
+    },
+    {
+      "name": "create-script",
+      "summary": "boilerplate .lua under the project src/",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/CreateScriptParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CreateScriptResult"
         }
       }
     },
@@ -2216,6 +2306,30 @@
           "name"
         ]
       },
+      "CreateScriptParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "CreateScriptResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
       "DeleteAssetFolderParams": {
         "type": "object",
         "additionalProperties": false,
@@ -2316,6 +2430,43 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AlarmEventDto"
+            }
+          },
+          "highWaterSeq": {
+            "type": "integer"
+          },
+          "oldestSeq": {
+            "type": "integer"
+          },
+          "overflowed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "highWaterSeq",
+          "oldestSeq",
+          "overflowed"
+        ]
+      },
+      "DrainScriptErrorsParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "since": {
+            "type": "integer"
+          }
+        },
+        "required": []
+      },
+      "DrainScriptErrorsResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptErrorDto"
             }
           },
           "highWaterSeq": {
@@ -2599,6 +2750,33 @@
           "cpuMs",
           "gpuMs",
           "cpuWaitMs"
+        ]
+      },
+      "GetScriptSchemaParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "GetScriptSchemaResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptFieldDto"
+            }
+          }
+        },
+        "required": [
+          "fields"
         ]
       },
       "GizmoPointerParams": {
@@ -3548,6 +3726,72 @@
           "pending"
         ]
       },
+      "ScriptErrorDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "script": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "tick": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "entity",
+          "script",
+          "message",
+          "tick"
+        ]
+      },
+      "ScriptFieldDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "defaultValue": {}
+        },
+        "required": [
+          "name",
+          "type",
+          "defaultValue"
+        ]
+      },
+      "ScriptStatusResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "instances": {
+            "type": "integer"
+          },
+          "errorHighWater": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state",
+          "instances",
+          "errorHighWater"
+        ]
+      },
       "SelectionResult": {
         "type": "object",
         "additionalProperties": false,
@@ -4120,6 +4364,49 @@
           "rtShadows"
         ]
       },
+      "SetScriptOverrideParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "entity",
+          "slot",
+          "name",
+          "value"
+        ]
+      },
+      "SetScriptOverrideResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scriptPath": {
+            "type": "string"
+          },
+          "overrides": {}
+        },
+        "required": [
+          "scriptPath",
+          "overrides"
+        ]
+      },
       "SetShadowsResult": {
         "type": "object",
         "additionalProperties": false,
@@ -4513,6 +4800,34 @@
           "slots"
         ]
       },
+      "Script": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scripts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "scriptPath": {
+                  "type": "string"
+                },
+                "overrides": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "scriptPath",
+                "overrides"
+              ]
+            }
+          }
+        },
+        "required": [
+          "scripts"
+        ]
+      },
       "DirectionalLight": {
         "type": "object",
         "additionalProperties": false,
@@ -4739,6 +5054,9 @@
           "MaterialSet": {
             "$ref": "#/components/schemas/MaterialSet"
           },
+          "Script": {
+            "$ref": "#/components/schemas/Script"
+          },
           "DirectionalLight": {
             "$ref": "#/components/schemas/DirectionalLight"
           },
@@ -4781,6 +5099,9 @@
           },
           {
             "$ref": "#/components/schemas/MaterialSet"
+          },
+          {
+            "$ref": "#/components/schemas/Script"
           },
           {
             "$ref": "#/components/schemas/DirectionalLight"

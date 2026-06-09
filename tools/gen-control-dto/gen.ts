@@ -292,6 +292,30 @@ const commands: CommandDef[] = [
   { name: "stop", params: "EmptyParams", result: "PlayStateResult", summary: "stop play and restore the authored scene" },
   { name: "get-play-state", params: "EmptyParams", result: "PlayStateResult", summary: "current play state" },
   {
+    name: "get-script-status",
+    params: "EmptyParams",
+    result: "ScriptStatusResult",
+    summary: "play state, live script instances, error high-water",
+  },
+  {
+    name: "drain-script-errors",
+    params: "DrainScriptErrorsParams",
+    result: "DrainScriptErrorsResult",
+    summary: "drain script errors (seq cursor)",
+  },
+  {
+    name: "get-script-schema",
+    params: "GetScriptSchemaParams",
+    result: "GetScriptSchemaResult",
+    summary: "a project script's declared fields",
+  },
+  {
+    name: "set-script-override",
+    params: "SetScriptOverrideParams",
+    result: "SetScriptOverrideResult",
+    summary: "write one per-instance script field override",
+  },
+  {
     name: "add-entity",
     params: "AddEntityParams",
     result: "EntityRef",
@@ -367,6 +391,12 @@ const commands: CommandDef[] = [
   },
   { name: "get-project", params: "EmptyParams", result: "ProjectInfoDto", summary: "active project metadata" },
   { name: "new-project", params: "NewProjectParams", result: "ProjectInfoDto", summary: "new-project {name}" },
+  {
+    name: "create-script",
+    params: "CreateScriptParams",
+    result: "CreateScriptResult",
+    summary: "boilerplate .lua under the project src/",
+  },
   { name: "open-project", params: "PathParams", result: "ProjectInfoDto", summary: "open-project {path}" },
   { name: "import-model", params: "PathParams", result: "ImportModelResult", summary: "import-model {path}" },
   { name: "import-texture", params: "PathParams", result: "ImportTextureResult", summary: "import-texture {path}" },
@@ -467,6 +497,10 @@ const commandFixtures = new Map<string, string>([
   ["step", "step-one"],
   ["stop", "empty"],
   ["get-play-state", "empty"],
+  ["get-script-status", "empty"],
+  ["drain-script-errors", "alarms-since-0"],
+  ["get-script-schema", "script-schema-file"],
+  ["set-script-override", "script-override-slot"],
   ["add-entity", "cube-preset"],
   ["copy-entity", "cube-entity"],
   ["rename-entity", "cube-rename"],
@@ -504,6 +538,7 @@ const commandSkips = new Map<string, string>([
   ["delete-asset-folder", "mutates the project asset catalog"],
   ["move-asset", "mutates the project asset catalog"],
   ["delete-asset", "removes a project asset"],
+  ["create-script", "writes a script file into the project src/"],
   ["save-scene", "writes a scene file"],
   ["load-scene", "loads and replaces the scene from a file"],
   ["reload-project", "reloads and replaces the active project's scene and catalog"],
@@ -1225,6 +1260,15 @@ export interface MaterialSet {
   slots: Material[];
 }
 
+export interface ScriptSlot {
+  scriptPath: string;
+  overrides: Record<string, unknown>;
+}
+
+export interface Script {
+  scripts: ScriptSlot[];
+}
+
 export interface DirectionalLight {
   direction: Vec3;
   color: Vec3;
@@ -1288,6 +1332,7 @@ export interface Components {
   Camera?: Camera;
   Material?: Material;
   MaterialSet?: MaterialSet;
+  Script?: Script;
   DirectionalLight?: DirectionalLight;
   PointLight?: PointLight;
   SpotLight?: SpotLight;
@@ -1304,6 +1349,7 @@ export type ComponentBody =
   | Camera
   | Material
   | MaterialSet
+  | Script
   | DirectionalLight
   | PointLight
   | SpotLight
@@ -1410,6 +1456,7 @@ function componentSchemas(): Record<string, unknown> {
     "Camera",
     "Material",
     "MaterialSet",
+    "Script",
     "DirectionalLight",
     "PointLight",
     "SpotLight",
@@ -1463,6 +1510,22 @@ function componentSchemas(): Record<string, unknown> {
       additionalProperties: false,
       properties: { slots: { type: "array", items: { $ref: "#/components/schemas/Material" } } },
       required: ["slots"],
+    },
+    Script: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        scripts: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: { scriptPath: { type: "string" }, overrides: { type: "object" } },
+            required: ["scriptPath", "overrides"],
+          },
+        },
+      },
+      required: ["scripts"],
     },
     DirectionalLight: {
       type: "object",
@@ -1863,6 +1926,36 @@ namespace se
                 s.emissiveStrength = jsonF32Or(sj, "emissiveStrength", 1.0f);
                 s.unlit = jsonBoolOr(sj, "unlit", false);
                 c.slots.push_back(s);
+            }
+        }
+        return {};
+    }
+
+    auto scriptComponentToJson(const ScriptComponent& c) -> nlohmann::json
+    {
+        nlohmann::json scripts = nlohmann::json::array();
+        for (const ScriptSlot& s : c.scripts)
+        {
+            scripts.push_back(nlohmann::json{ { "scriptPath", s.scriptPath }, { "overrides", s.overrides } });
+        }
+        return nlohmann::json{ { "scripts", std::move(scripts) } };
+    }
+
+    auto scriptComponentFromJson(ScriptComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        c.scripts.clear();
+        if (auto it = j.find("scripts"); it != j.end() && it->is_array())
+        {
+            for (const nlohmann::json& sj : *it)
+            {
+                ScriptSlot s;
+                s.scriptPath = jsonStringOr(sj, "scriptPath", std::string{});
+                s.overrides = sj.value("overrides", nlohmann::json::object());
+                if (!s.overrides.is_object())
+                {
+                    s.overrides = nlohmann::json::object();
+                }
+                c.scripts.push_back(std::move(s));
             }
         }
         return {};

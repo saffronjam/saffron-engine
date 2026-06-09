@@ -3,9 +3,9 @@
 // with the generated DTO manifest, and validates live command results against
 // the generated OpenRPC schemas.
 
-import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 
@@ -315,6 +315,29 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
       return { targetFps: 30 };
     case "alarms-since-0":
       return { since: 0 };
+    case "script-schema-file": {
+      // get-script-schema reads <projectRoot>/src/<path>; author the script there.
+      // The engine runs with cwd HERE, so a relative root resolves against it.
+      const project = await call("get-project");
+      const root = (project.envelope.result as { root: string }).root;
+      const src = join(isAbsolute(root) ? root : join(HERE, root), "src");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(
+        join(src, "contract-schema.lua"),
+        'local C = {}\nC.properties = { speed = 2.0, label = "x" }\nfunction C.on_update(self, dt) end\nreturn C\n',
+      );
+      return { path: "contract-schema.lua" };
+    }
+    case "script-override-slot": {
+      const entity = await entityId(`Contract Script ${process.pid}`);
+      await call("add-component", { entity, component: "Script" });
+      await call("set-component", {
+        entity,
+        component: "Script",
+        json: { scripts: [{ scriptPath: "contract-schema.lua", overrides: {} }] },
+      });
+      return { entity, slot: 0, name: "speed", value: 9 };
+    }
     default:
       throw new Error(`unknown manifest fixture '${fixture}'`);
   }

@@ -359,6 +359,34 @@
       "fixture": "empty"
     },
     {
+      "name": "get-script-status",
+      "params": "EmptyParams",
+      "result": "ScriptStatusResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "drain-script-errors",
+      "params": "DrainScriptErrorsParams",
+      "result": "DrainScriptErrorsResult",
+      "status": "typed",
+      "fixture": "alarms-since-0"
+    },
+    {
+      "name": "get-script-schema",
+      "params": "GetScriptSchemaParams",
+      "result": "GetScriptSchemaResult",
+      "status": "typed",
+      "fixture": "script-schema-file"
+    },
+    {
+      "name": "set-script-override",
+      "params": "SetScriptOverrideParams",
+      "result": "SetScriptOverrideResult",
+      "status": "typed",
+      "fixture": "script-override-slot"
+    },
+    {
       "name": "add-entity",
       "params": "AddEntityParams",
       "result": "EntityRef",
@@ -469,6 +497,13 @@
       "result": "ProjectInfoDto",
       "status": "typed",
       "fixture": "new-project"
+    },
+    {
+      "name": "create-script",
+      "params": "CreateScriptParams",
+      "result": "CreateScriptResult",
+      "status": "typed",
+      "skip": "writes a script file into the project src/"
     },
     {
       "name": "open-project",
