@@ -18,13 +18,15 @@ import { useEditorStore } from "../state/store";
 import { makeCoalescer, type Coalescer } from "../control/coalesce";
 import { errorText, useFlash } from "../lib/flash";
 import { renderField, resolveHint } from "../components/fieldRenderer";
-import type { Material, Transform } from "../protocol";
+import { ScriptSlots } from "../components/ScriptSlots";
+import type { Material, ScriptSlot, Transform } from "../protocol";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { humanizeFieldName } from "@/lib/humanize";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { logRender } from "../lib/renderLog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,6 +44,7 @@ const COMPONENT_ORDER = [
   "Camera",
   "Material",
   "MaterialSet",
+  "Script",
   "DirectionalLight",
   "PointLight",
   "SpotLight",
@@ -73,6 +76,7 @@ export function orderedComponentNames(components: Record<string, unknown>): stri
 }
 
 export function InspectorPanel() {
+  logRender("InspectorPanel");
   const selectedId = useEditorStore((s) => s.selectedId);
   const inspected = useEditorStore((s) => s.componentsBySelected);
   const selectionVersion = useEditorStore((s) => s.selectionVersion);
@@ -263,6 +267,75 @@ export function InspectorPanel() {
     void client.addComponent(selectedId, component).catch((err: unknown) => flash(errorText(err)));
   };
 
+  // One section body per component, dispatched by name with early returns (not a
+  // JSX ternary chain). Script and MaterialSet have structured slot bodies; every
+  // other component is the generic field grid.
+  const componentBody = (component: string, dto: Record<string, unknown>): React.ReactElement => {
+    if (component === "Script") {
+      return (
+        <ScriptSlots
+          entityId={selectedId}
+          scripts={(dto.scripts as ScriptSlot[] | undefined) ?? []}
+        />
+      );
+    }
+    if (component === "MaterialSet") {
+      const slots = (dto.slots as Record<string, unknown>[] | undefined) ?? [];
+      return (
+        <>
+          {slots.map((slot, slotIndex) => (
+            <div key={slotIndex} className="rounded border border-border/60">
+              <div className="border-b border-border/60 bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                Slot {slotIndex}
+              </div>
+              <div className="flex flex-col gap-1.5 px-2 py-1.5">
+                {Object.entries(slot).map(([field, value]) => (
+                  <div key={field} className="grid grid-cols-[78px_1fr] items-center gap-1.5">
+                    <Label className="truncate text-[11px] font-normal text-muted-foreground">
+                      {humanizeFieldName(field)}
+                    </Label>
+                    <div className="min-w-0">
+                      {renderField(
+                        "Material",
+                        field,
+                        value,
+                        (next) => onSlotFieldChange(slotIndex, field, next),
+                        { onDragStart, onDragEnd: () => onSlotFieldDragEnd(slotIndex, field) },
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
+      );
+    }
+    return (
+      <>
+        {Object.entries(dto).map(([field, value]) => (
+          <div key={field} className="grid grid-cols-[78px_1fr] items-center gap-1.5">
+            <Label className="truncate text-[11px] font-normal text-muted-foreground">
+              {humanizeFieldName(field)}
+            </Label>
+            <div className="min-w-0">
+              {renderField(
+                component,
+                field,
+                value,
+                (next) => onFieldChange(component, field, next),
+                {
+                  onDragStart,
+                  onDragEnd: () => onFieldDragEnd(component, field),
+                },
+              )}
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
@@ -304,56 +377,7 @@ export function InspectorPanel() {
                   ) : null}
                 </header>
                 <div className="flex flex-col gap-1.5 px-2 py-1.5">
-                  {component === "MaterialSet"
-                    ? ((dto.slots as Record<string, unknown>[] | undefined) ?? []).map(
-                        (slot, slotIndex) => (
-                          <div key={slotIndex} className="rounded border border-border/60">
-                            <div className="border-b border-border/60 bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                              Slot {slotIndex}
-                            </div>
-                            <div className="flex flex-col gap-1.5 px-2 py-1.5">
-                              {Object.entries(slot).map(([field, value]) => (
-                                <div
-                                  key={field}
-                                  className="grid grid-cols-[78px_1fr] items-center gap-1.5"
-                                >
-                                  <Label className="truncate text-[11px] font-normal text-muted-foreground">
-                                    {humanizeFieldName(field)}
-                                  </Label>
-                                  <div className="min-w-0">
-                                    {renderField(
-                                      "Material",
-                                      field,
-                                      value,
-                                      (next) => onSlotFieldChange(slotIndex, field, next),
-                                      {
-                                        onDragStart,
-                                        onDragEnd: () => onSlotFieldDragEnd(slotIndex, field),
-                                      },
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ),
-                      )
-                    : Object.entries(dto).map(([field, value]) => (
-                        <div key={field} className="grid grid-cols-[78px_1fr] items-center gap-1.5">
-                          <Label className="truncate text-[11px] font-normal text-muted-foreground">
-                            {humanizeFieldName(field)}
-                          </Label>
-                          <div className="min-w-0">
-                            {renderField(
-                              component,
-                              field,
-                              value,
-                              (next) => onFieldChange(component, field, next),
-                              { onDragStart, onDragEnd: () => onFieldDragEnd(component, field) },
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                  {componentBody(component, dto)}
                 </div>
               </section>
             );
