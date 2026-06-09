@@ -34,6 +34,9 @@ namespace se
         registerComponent<MaterialSetComponent>(
             reg, "MaterialSet", [](Scene&, Entity) {}, materialSetComponentToJson, materialSetComponentFromJson, true);
 
+        registerComponent<ScriptComponent>(
+            reg, "Script", [](Scene&, Entity) {}, scriptComponentToJson, scriptComponentFromJson, true);
+
         registerComponent<DirectionalLightComponent>(
             reg, "DirectionalLight", [](Scene&, Entity) {}, directionalLightComponentToJson,
             directionalLightComponentFromJson, true);

@@ -126,6 +126,22 @@ export namespace se
         std::vector<MaterialSlot> slots;
     };
 
+    // One script attached to an entity: a .lua path relative to the project src/
+    // plus per-instance field overrides (filled by the editor; empty until then).
+    struct ScriptSlot
+    {
+        std::string scriptPath;
+        nlohmann::json overrides = nlohmann::json::object();
+    };
+
+    // An entity's scripts, run top-to-bottom each play tick. entt keys components
+    // by type, so multiple scripts per entity is this vector, never two components.
+    // Data only — the Lua runtime lives entirely in Saffron.Script.
+    struct ScriptComponent
+    {
+        std::vector<ScriptSlot> scripts;
+    };
+
     // A perspective camera; its view comes from the entity's TransformComponent.
     struct CameraComponent
     {
@@ -808,6 +824,8 @@ export namespace se
     auto materialComponentFromJson(MaterialComponent& c, const nlohmann::json& j) -> Result<void>;
     auto materialSetComponentToJson(const MaterialSetComponent& c) -> nlohmann::json;
     auto materialSetComponentFromJson(MaterialSetComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto scriptComponentToJson(const ScriptComponent& c) -> nlohmann::json;
+    auto scriptComponentFromJson(ScriptComponent& c, const nlohmann::json& j) -> Result<void>;
     auto directionalLightComponentToJson(const DirectionalLightComponent& c) -> nlohmann::json;
     auto directionalLightComponentFromJson(DirectionalLightComponent& c, const nlohmann::json& j) -> Result<void>;
     auto pointLightComponentToJson(const PointLightComponent& c) -> nlohmann::json;

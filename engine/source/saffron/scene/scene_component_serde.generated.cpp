@@ -215,6 +215,36 @@ namespace se
         return {};
     }
 
+    auto scriptComponentToJson(const ScriptComponent& c) -> nlohmann::json
+    {
+        nlohmann::json scripts = nlohmann::json::array();
+        for (const ScriptSlot& s : c.scripts)
+        {
+            scripts.push_back(nlohmann::json{ { "scriptPath", s.scriptPath }, { "overrides", s.overrides } });
+        }
+        return nlohmann::json{ { "scripts", std::move(scripts) } };
+    }
+
+    auto scriptComponentFromJson(ScriptComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        c.scripts.clear();
+        if (auto it = j.find("scripts"); it != j.end() && it->is_array())
+        {
+            for (const nlohmann::json& sj : *it)
+            {
+                ScriptSlot s;
+                s.scriptPath = jsonStringOr(sj, "scriptPath", std::string{});
+                s.overrides = sj.value("overrides", nlohmann::json::object());
+                if (!s.overrides.is_object())
+                {
+                    s.overrides = nlohmann::json::object();
+                }
+                c.scripts.push_back(std::move(s));
+            }
+        }
+        return {};
+    }
+
     auto directionalLightComponentToJson(const DirectionalLightComponent& c) -> nlohmann::json
     {
         return nlohmann::json{ { "direction", vec3ToJson(c.direction) },
