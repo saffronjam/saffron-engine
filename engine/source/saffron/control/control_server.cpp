@@ -6,6 +6,7 @@ module;
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <poll.h>
 #include <unistd.h>
 #include <cerrno>
 #include <cstdlib>
@@ -286,7 +287,28 @@ namespace se
 
                 std::string out = dumpJson(reply);
                 out.push_back('\n');
-                static_cast<void>(::send(client.fd, out.data(), out.size(), MSG_NOSIGNAL));
+                // The client socket is non-blocking, so a single send() short-writes any reply
+                // larger than the socket buffer (e.g. a multi-frame profiler capture) and silently
+                // drops the rest — the client then never sees the '\n' terminator and hangs. Loop
+                // until the whole reply is flushed, waiting for writability when the buffer fills.
+                std::size_t sent = 0;
+                while (sent < out.size() && client.fd >= 0)
+                {
+                    const ssize_t n = ::send(client.fd, out.data() + sent, out.size() - sent, MSG_NOSIGNAL);
+                    if (n > 0)
+                    {
+                        sent = sent + static_cast<std::size_t>(n);
+                    }
+                    else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                    {
+                        pollfd pfd{ client.fd, POLLOUT, 0 };
+                        static_cast<void>(::poll(&pfd, 1, 1000));
+                    }
+                    else if (!(n < 0 && errno == EINTR))
+                    {
+                        client.fd = -1;  // peer gone or fatal error; drop the client
+                    }
+                }
             }
         }
 

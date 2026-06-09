@@ -87,8 +87,13 @@ export function CaptureControls() {
         setCaptureProgress(status.capturedFrames, status.targetFrames);
         if (status.state === "ready" || status.state === "idle") {
           clearInterval(id);
-          const result = await client.captureStop();
-          setCapture(result.ready ? result.capture : null);
+          try {
+            const result = await client.captureStop();
+            setCapture(result.ready ? result.capture : null);
+          } catch (err) {
+            notifyError(`Capture failed: ${errorText(err)}`);
+          }
+          // Always leave recording, even if draining failed, so the controls never freeze.
           setCaptureState("ready");
         }
       })();
