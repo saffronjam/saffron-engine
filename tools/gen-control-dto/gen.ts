@@ -87,6 +87,9 @@ const enumWireNames = new Map<string, Record<string, string>>([
   ["ScreenshotTargetDto", { Viewport: "viewport", Window: "window" }],
   ["AssetTypeDto", { Mesh: "mesh", Texture: "texture", Other: "other" }],
   ["ProfilerModeDto", { Off: "off", Timestamps: "timestamps", PipelineStats: "pipeline-stats" }],
+  ["ProfileLaneDto", { Cpu: "cpu", Gpu: "gpu" }],
+  ["CaptureModeDto", { Single: "single", Frames: "frames", Rolling: "rolling" }],
+  ["CaptureStateDto", { Idle: "idle", Arming: "arming", Recording: "recording", Ready: "ready" }],
   ["AlarmSeverityDto", { Info: "info", Warning: "warning", Critical: "critical" }],
   ["AlarmStateDto", { Firing: "firing", Resolved: "resolved" }],
 ]);
@@ -105,6 +108,24 @@ const commands: CommandDef[] = [
     params: "EmptyParams",
     result: "RenderPassTimingsDto",
     summary: "last frame per-pass GPU timings",
+  },
+  {
+    name: "profiler.capture-start",
+    params: "CaptureStartParams",
+    result: "CaptureStartResult",
+    summary: "arm a bounded profiler capture",
+  },
+  {
+    name: "profiler.capture-stop",
+    params: "EmptyParams",
+    result: "CaptureStopResult",
+    summary: "finish + return the armed profiler capture",
+  },
+  {
+    name: "profiler.capture-status",
+    params: "EmptyParams",
+    result: "CaptureStatusResult",
+    summary: "non-destructive capture progress",
   },
   {
     name: "frame-history",
@@ -400,6 +421,9 @@ const commandFixtures = new Map<string, string>([
   ["render-stats", "empty"],
   ["profiler.set-mode", "profiler-timestamps"],
   ["pass-timings", "empty"],
+  ["profiler.capture-start", "capture-single"],
+  ["profiler.capture-stop", "empty"],
+  ["profiler.capture-status", "empty"],
   ["frame-history", "frame-history-samples"],
   ["get-perf-config", "empty"],
   ["set-perf-config", "perf-config-30"],
@@ -1108,6 +1132,12 @@ function tsType(type: string): string {
       return '"mesh" | "texture" | "other"';
     case "ProfilerModeDto":
       return '"off" | "timestamps" | "pipeline-stats"';
+    case "ProfileLaneDto":
+      return '"cpu" | "gpu"';
+    case "CaptureModeDto":
+      return '"single" | "frames" | "rolling"';
+    case "CaptureStateDto":
+      return '"idle" | "arming" | "recording" | "ready"';
     case "AlarmSeverityDto":
       return '"info" | "warning" | "critical"';
     case "AlarmStateDto":

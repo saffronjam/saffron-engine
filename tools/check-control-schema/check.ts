@@ -307,6 +307,8 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
       return { frames: 1 };
     case "profiler-timestamps":
       return { mode: "timestamps" };
+    case "capture-single":
+      return { mode: "single" };
     case "frame-history-samples":
       return { samples: 16 };
     case "perf-config-30":
