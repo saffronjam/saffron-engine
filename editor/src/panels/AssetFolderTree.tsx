@@ -321,7 +321,11 @@ function rowStateClass(selected: boolean, dropActive: boolean): string {
   return cn(
     rowClass,
     selected ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-accent",
-    dropActive && "ring-1 ring-ring bg-accent/60",
+    // A drop-active row shows a ring as the affordance; the translucent fill is gated to
+    // unselected rows so it never replaces the selected row's solid bg and matched text,
+    // which would wash the label out.
+    dropActive && "ring-1 ring-ring",
+    dropActive && !selected && "bg-accent/60",
   );
 }
 

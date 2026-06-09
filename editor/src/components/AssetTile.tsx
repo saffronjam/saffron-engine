@@ -205,7 +205,7 @@ export function AssetTile({
               }
             }}
             className={cn(
-              "group flex w-[72px] cursor-grab flex-col gap-1 rounded-md border border-border bg-background p-1",
+              "group flex w-[72px] cursor-grab flex-col gap-1 rounded-md border border-transparent p-1",
               "transition-colors hover:border-ring hover:bg-accent/40 active:cursor-grabbing",
               selected && "border-ring bg-accent/60 ring-1 ring-ring",
             )}

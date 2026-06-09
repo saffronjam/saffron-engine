@@ -1122,9 +1122,17 @@ function AssetPanelBody({
         }
       }}
       onDragLeave={(event) => {
+        // dragleave bubbles on every interior element boundary, and the WebKitGTK
+        // webview leaves relatedTarget null, so a containment check clears the
+        // drop-target on each micro-move and the folder highlight flickers. dragover
+        // already keeps the target current while inside, so clear only once the
+        // pointer is genuinely outside the panel bounds.
+        const rect = event.currentTarget.getBoundingClientRect();
         if (
-          event.relatedTarget instanceof Node &&
-          event.currentTarget.contains(event.relatedTarget)
+          event.clientX >= rect.left &&
+          event.clientX < rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY < rect.bottom
         ) {
           return;
         }
@@ -1275,8 +1283,8 @@ function NewFolderTile({
       className="flex w-[72px] flex-col gap-1 rounded-md border border-ring bg-background p-1"
       data-asset-folder="true"
     >
-      <div className="flex aspect-square w-full items-center justify-center rounded-sm bg-muted">
-        <Folder className="size-8 text-muted-foreground" />
+      <div className="flex aspect-square w-full items-center justify-center">
+        <Folder className="size-12 text-muted-foreground" />
       </div>
       <Input
         ref={inputRef}
@@ -1344,8 +1352,8 @@ function FolderTile({
 }) {
   const content = (
     <>
-      <div className="flex aspect-square w-full items-center justify-center rounded-sm bg-muted">
-        <Folder className="size-8 text-muted-foreground" />
+      <div className="flex aspect-square w-full items-center justify-center">
+        <Folder className="size-12 text-muted-foreground" />
       </div>
       {editing && onCommitRename && onCancelRename ? (
         <FolderNameInput
@@ -1369,7 +1377,7 @@ function FolderTile({
       data-asset-folder="true"
       data-asset-folder-path={path}
       className={cn(
-        "flex w-[72px] flex-col gap-1 rounded-md border border-border bg-background p-1 text-left transition-colors hover:border-ring hover:bg-accent/40",
+        "flex w-[72px] flex-col gap-1 rounded-md border border-transparent p-1 text-left transition-colors hover:border-ring hover:bg-accent/40",
         selected && "border-ring bg-accent/60 ring-1 ring-ring",
         dragActive && "border-ring bg-accent/60 ring-1 ring-ring",
       )}
