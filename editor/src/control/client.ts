@@ -11,6 +11,10 @@ import type {
   ActiveAlarmsDto,
   AssetList,
   AssetUsagesResult,
+  CaptureStartParams,
+  CaptureStartResult,
+  CaptureStatusResult,
+  CaptureStopResult,
   ComponentBody,
   CommandParamsMap,
   CommandResultMap,
@@ -353,6 +357,21 @@ export const client = {
   /// Last frame's per-pass GPU times (needs the profiler in timestamps mode).
   passTimings(): Promise<RenderPassTimingsDto> {
     return call("pass-timings");
+  },
+  /// Arm a bounded profiler capture (single frame by default). Forces timestamps mode +
+  /// sub-scopes for the duration; returns the capture id + ack.
+  captureStart(params: CaptureStartParams): Promise<CaptureStartResult> {
+    return call("profiler.capture-start", params);
+  },
+  /// Non-destructive capture progress — poll while recording to drive the live counter and
+  /// detect readiness without draining the capture.
+  captureStatus(): Promise<CaptureStatusResult> {
+    return call("profiler.capture-status");
+  },
+  /// Finish + return the armed capture. A single capture comes back inline (`capture` +
+  /// `chromeTrace`); a multi-frame one is written to `path`. `ready` is false when none armed.
+  captureStop(): Promise<CaptureStopResult> {
+    return call("profiler.capture-stop");
   },
   /// Frame-time percentiles + stutter count, optionally with the recent raw samples
   /// (the live-graph source). Always recorded, independent of the profiler.
