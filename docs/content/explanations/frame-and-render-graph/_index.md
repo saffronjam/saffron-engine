@@ -24,3 +24,4 @@ layers add their own passes to the cull → scene → UI frame.
 | [Performance telemetry](performance-telemetry/) | CPU/GPU split, per-pass GPU timestamps, throughput counters, VRAM budget, the profiler mode gate | `renderer.cppm`, `render_graph.cppm` |
 | [Performance alarms](performance-alarms/) | EMA + hysteresis + debounce, MAD-spike / burn-rate detectors, severity, the non-blocking `drain-alarms` seq cursor | `renderer.cppm`, `renderer_types.cppm` |
 | [Renderer profiling](renderer-profiling/) | the capture model (merged CPU+GPU spans, nesting, calibration), timestamp caveats, capture modes, Chrome-Trace + Perfetto export, pipeline statistics, software-GPU honesty | `render_graph.cppm`, `renderer.cppm` |
+| [Compute skinning](compute-skinning/) | deform-once into a base-layout buffer, the deformed buffer + per-instance dispatch, compute→vertex barrier | `skin.slang`, `renderer_drawlist.cpp` |
