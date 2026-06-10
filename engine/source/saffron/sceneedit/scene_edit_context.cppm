@@ -172,6 +172,15 @@ export namespace se
     inline constexpr f32 PlayFixedStep = 1.0f / 60.0f;  // the deterministic `step` tick
     inline constexpr f32 PlayMaxDelta = 1.0f / 3.0f;    // dt clamp so a hitch never spikes the simulation
 
+    // Line-skeleton viewport overlay for the selected rig: bone segments + joint dots,
+    // with optional per-joint RGB axes. Opt-in (show defaults false); drawn in Edit and Play.
+    struct SkeletonOverlayOptions
+    {
+        bool show = false;     // master toggle (set-skeleton-overlay)
+        bool axes = false;     // per-joint RGB axis lines
+        f32 jointSize = 4.0f;  // joint-dot radius in pixels at unit distance (scaled screen-constant)
+    };
+
     // The editor's mutable state: the scene being edited, the component registry
     // that drives every panel, and the current selection (broadcast as a signal).
     struct SceneEditContext
@@ -195,6 +204,7 @@ export namespace se
         bool preserveChildren = false;              // transform a parent without moving its children
                                                     // (their locals rebase to hold the world pose)
         NativeGizmoState nativeGizmo;               // overlay-gizmo hover/drag state (mode/space synced from above)
+        SkeletonOverlayOptions skeletonOverlay;     // line-skeleton viewport overlay for the selected rig
         std::vector<MaterialSmoothTarget> materialSmoothing;    // pending smoothed material edits, one per entity
         std::vector<TransformSmoothTarget> transformSmoothing;  // pending smoothed transform edits, one per entity
         SceneEditCameraInput flyInput;                          // latest fly-input command state; lookDelta accumulates
