@@ -17,6 +17,7 @@ textures by UUID, caches their GPU resources, names them in a catalog, and feeds
 | `mesh-and-vertex-layout` | `Vertex` (pos/normal/uv), `Mesh`, `Submesh`, fixed stride | `geometry.cppm` · `Vertex`, `Mesh` |
 | `gltf-and-obj-import` | cgltf + tinyobjloader through their no-throw APIs into a common mesh | `geometry.cppm` · import fns |
 | `smesh-format` | the baked, versioned binary mesh format | `geometry.cppm` · save/load mesh |
+| `sanim-format` | the baked, versioned animation-clip sidecar | `geometry.cppm` · save/load animation |
 | `image-decoding` | stb_image PNG/JPG → RGBA8, embedded glTF textures | `geometry.cppm` · `decodeImage` |
 | `gpu-mesh-upload` | VMA staging, `GpuMesh`, mesh AABB bounds | `renderer_drawlist.cpp` · `uploadMesh` |
 | `asset-server-and-catalog` | `AssetServer`, UUID→GPU caches, the named/renameable catalog | `assets.cppm` · `AssetServer` |

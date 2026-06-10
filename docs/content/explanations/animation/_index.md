@@ -25,3 +25,4 @@ This section starts at the bottom: the pure data and math the rest of the system
 | Page | Covers | Code |
 |---|---|---|
 | `animation-data-model` | the clip/track keyframe model, the decomposed joint pose + blend layer, and clip sampling (STEP/LINEAR/CUBICSPLINE with slerp) | `geometry.cppm`; `animation.cppm`; `animation.cpp` |
+| `playback-runtime` | the per-frame evaluator: sample → pose → blend → pose override → world composition; non-destructive Edit preview vs Play; wrap modes | `animation.cpp`; `scene.cppm`; `host.cppm` |

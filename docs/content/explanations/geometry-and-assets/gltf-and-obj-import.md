@@ -64,6 +64,21 @@ normal is near-zero, `generateNormals` recomputes smooth per-vertex normals by s
 cross-product face normals of each triangle and normalizing. A vertex with no contributing
 face falls back to `+Y`.
 
+## Skeletal clips
+
+When a glTF declares a skin, the importer also walks `data->animations`. Each animation
+becomes an `AnimClip`, and each of its channels a track: the channel's target node is matched
+to a joint by its position in the skin's joint list, and its sampler's keyframe times and
+values are read through the same accessor API into the flat arrays the sampler expects. A
+track records both that joint index and the node's name, so a later reimport can re-resolve a
+stale index. Channels that target a non-joint node, drive morph-target weights, or use a
+sparse accessor are skipped in v1 (logged, not silently dropped).
+
+The decoded clips ride along on `ImportedModel.animations`; the
+[import pipeline](../import-pipeline/) bakes each to a [`.sanim`](../sanim-format/) sidecar and
+registers it as an `AssetType::Animation` catalog entry. The mechanics of the clip and track
+types are the [animation data model](../../animation/animation-data-model/).
+
 ## The material table
 
 Both importers build a table of `ImportedMaterial`, one entry per distinct source material,
@@ -110,6 +125,7 @@ becomes one `MaterialComponent`, a multi-material model a
 |---|---|---|
 | Extension dispatch | `geometry.cppm` | `importModelFile`, `importModelWithMaterial` |
 | glTF parse + walk | `geometry.cppm` | `importGltfModel`, `importGltf` |
+| Skeletal clip decode | `geometry.cppm` | `importGltfModel`, `AnimClip`, `AnimTrack` |
 | OBJ parse + dedup | `geometry.cppm` | `importObjModel`, `importObj` |
 | Missing-normal fallback | `geometry.cppm` | `anyNormalsPresent`, `generateNormals` |
 | Material extraction | `geometry.cppm` | `ImportedMaterial`, `extractGltfMaterial`, `readGltfTextureBytes` |
