@@ -649,7 +649,9 @@ namespace se
         {
             renderer.instancing.buffers[i].reset();  // RAII frees the SSBO before the allocator
             renderer.instancing.jointBuffers[i].reset();
+            renderer.instancing.prevJointBuffers[i].reset();
             renderer.skinning.deformedBuffers[i].reset();
+            renderer.skinning.prevDeformedBuffers[i].reset();
             renderer.lighting.lightListBuffers[i].reset();
             renderer.lighting.clusterBuffers[i].reset();
             if (renderer.lighting.lightBuffers[i] != VK_NULL_HANDLE)
@@ -1999,28 +2001,33 @@ namespace se
         // the meshes were uploaded long ago, and the host-written palette is covered by the
         // submit's implicit host-write dependency.
         RgResource deformedBuffer{};
+        RgResource prevDeformedBuffer{};
         const bool doSkin = !renderer.frame.sceneDrawList.skinDispatches.empty() && renderer.pipelines.skin &&
-                            renderer.skinning.deformedBuffers[f];
+                            renderer.skinning.deformedBuffers[f] && renderer.skinning.prevDeformedBuffers[f];
         if (doSkin)
         {
             deformedBuffer = importBuffer(graph, renderer.skinning.deformedBuffers[f]->buffer);
+            prevDeformedBuffer = importBuffer(graph, renderer.skinning.prevDeformedBuffers[f]->buffer);
             RgPass skinPass;
             skinPass.name = "skin";
             skinPass.kind = RgPassKind::Compute;
-            skinPass.accesses = { RgAccess{ deformedBuffer, RgUsage::StorageWriteCompute } };
+            // Both deformed buffers are written this pass (current pose + previous pose), so the
+            // graph emits the compute-write barrier for each before the consumers read them.
+            skinPass.accesses = { RgAccess{ deformedBuffer, RgUsage::StorageWriteCompute },
+                                  RgAccess{ prevDeformedBuffer, RgUsage::StorageWriteCompute } };
             skinPass.execute = [&renderer](vk::CommandBuffer cmd)
             {
-                const std::vector<SkinDispatch>& dispatches = renderer.frame.sceneDrawList.skinDispatches;
-                if (dispatches.empty())
+                const SceneDrawList& drawList = renderer.frame.sceneDrawList;
+                if (drawList.skinDispatches.empty())
                 {
                     return;
                 }
                 cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.skin->pipeline);
-                for (const SkinDispatch& d : dispatches)
+                auto run = [&](const SkinDispatch& d)
                 {
                     if (!d.set)
                     {
-                        continue;
+                        return;
                     }
                     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.skin->layout, 0, d.set,
                                            {});
@@ -2034,6 +2041,16 @@ namespace se
                     cmd.pushConstants(renderer.pipelines.skin->layout, vk::ShaderStageFlagBits::eCompute, 0,
                                       sizeof(push), &push);
                     cmd.dispatch((d.vertexCount + 63) / 64, 1, 1);
+                };
+                // Current pose into the deformed buffer, previous pose into the prev-deformed
+                // buffer; the kernel is identical, only the bound palette + output differ.
+                for (const SkinDispatch& d : drawList.skinDispatches)
+                {
+                    run(d);
+                }
+                for (const SkinDispatch& d : drawList.prevSkinDispatches)
+                {
+                    run(d);
                 }
             };
             addPass(graph, std::move(skinPass));
@@ -2351,6 +2368,13 @@ namespace se
                 RgAttachment{ motionDepthRes, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
                               vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
             motionPass.renderArea = offscreen.extent;
+            // The motion pass reads both deformed buffers as vertex input (cur + prev position),
+            // so it must wait on the skin compute writes — declare the reads to derive the barrier.
+            if (doSkin)
+            {
+                motionPass.accesses.push_back(RgAccess{ deformedBuffer, RgUsage::VertexInputRead });
+                motionPass.accesses.push_back(RgAccess{ prevDeformedBuffer, RgUsage::VertexInputRead });
+            }
             motionPass.execute = [&renderer](vk::CommandBuffer cmd) { recordMotion(renderer, cmd); };
             addPass(graph, std::move(motionPass));
         }
