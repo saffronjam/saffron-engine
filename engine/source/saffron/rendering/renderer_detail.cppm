@@ -553,6 +553,172 @@ export namespace se
         return *blas;
     }
 
+    // Records the per-frame skinned BLAS refits into `cmd`: for each skinned instance this
+    // frame, (re)builds a per-instance BLAS over its slice of the frame's deformed buffer.
+    // The first frame for an entity is a full MODE_BUILD (with ALLOW_UPDATE); every later
+    // frame is an in-place MODE_UPDATE (src == dst) since skinned topology never changes —
+    // only vertex positions move. Mirrors recordTlasBuild: records into a graph-supplied cmd
+    // (no own command buffer / waitIdle), and hand-writes the AS-build -> AS-build barrier so
+    // the TLAS build that reads these BLASes waits on them. The skin-compute -> AS-build-read
+    // barrier on the deformed buffer is graph-derived (the pass declares AccelStructBuildRead).
+    void recordSkinnedBlasBuilds(Renderer& renderer, vk::CommandBuffer cmd, u32 frame,
+                                 const std::vector<SkinnedRtInstance>& skinned)
+    {
+        if (skinned.empty() || !renderer.skinning.deformedBuffers[frame])
+        {
+            return;
+        }
+        const vk::DeviceAddress deformedBase =
+            bufferDeviceAddress(renderer, renderer.skinning.deformedBuffers[frame]->buffer);
+
+        // Size the shared scratch to the largest build/update need across this frame's set,
+        // then refit each instance into it (the AS-build barrier below serializes reuse).
+        vk::DeviceSize scratchNeeded = 0;
+        struct Plan
+        {
+            SkinnedBlas* slot = nullptr;
+            VkAccelerationStructureGeometryKHR geom{};
+            u32 triangleCount = 0;
+            bool update = false;
+        };
+        std::vector<Plan> plans;
+        plans.reserve(skinned.size());
+        for (const SkinnedRtInstance& inst : skinned)
+        {
+            if (!inst.mesh || inst.vertexCount == 0 || inst.indexCount < 3 || inst.entity == 0)
+            {
+                continue;
+            }
+            SkinnedBlas& slot = renderer.rt.skinnedBlas[frame][inst.entity];
+            Plan plan;
+            plan.slot = &slot;
+            plan.triangleCount = inst.indexCount / 3;
+            plan.geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+            plan.geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            plan.geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+            plan.geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            plan.geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            plan.geom.geometry.triangles.vertexData.deviceAddress =
+                deformedBase + static_cast<vk::DeviceAddress>(inst.deformedOffset) * sizeof(Vertex);
+            plan.geom.geometry.triangles.vertexStride = sizeof(Vertex);
+            plan.geom.geometry.triangles.maxVertex = inst.vertexCount - 1;
+            plan.geom.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+            plan.geom.geometry.triangles.indexData.deviceAddress =
+                bufferDeviceAddress(renderer, inst.mesh->indexBuffer);
+
+            VkAccelerationStructureBuildGeometryInfoKHR sizeInfo{
+                VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR
+            };
+            sizeInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            // FAST_TRACE + ALLOW_UPDATE is the standard skinned-refit pair: traversal-optimised,
+            // yet refittable in place. ALLOW_UPDATE must be present on the FIRST build so later
+            // MODE_UPDATE refits are legal.
+            sizeInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                             VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+            sizeInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+            sizeInfo.geometryCount = 1;
+            sizeInfo.pGeometries = &plan.geom;
+
+            VkAccelerationStructureBuildSizesInfoKHR sizes{
+                VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR
+            };
+            renderer.context.rt.getBuildSizes(static_cast<VkDevice>(renderer.context.device),
+                                              VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &sizeInfo,
+                                              &plan.triangleCount, &sizes);
+
+            // Build the AS on the first frame for this entity; refit it in place afterwards.
+            if (!slot.as)
+            {
+                auto blas = createAccelStructure(renderer, sizes.accelerationStructureSize,
+                                                 VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR);
+                if (!blas)
+                {
+                    logError(blas.error());
+                    continue;
+                }
+                slot.as = *blas;
+                slot.built = false;
+            }
+            plan.update = slot.built;
+            scratchNeeded = glm::max(scratchNeeded, plan.update ? sizes.updateScratchSize : sizes.buildScratchSize);
+            plans.push_back(plan);
+        }
+        if (plans.empty())
+        {
+            return;
+        }
+        if (!renderer.rt.blasScratchBuffers[frame] || renderer.rt.blasScratchCapacity[frame] < scratchNeeded)
+        {
+            auto scratch =
+                makeRtBuffer(renderer, scratchNeeded,
+                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, false);
+            if (!scratch)
+            {
+                logError(scratch.error());
+                return;
+            }
+            renderer.rt.blasScratchBuffers[frame] = *scratch;
+            renderer.rt.blasScratchCapacity[frame] = static_cast<u32>(scratchNeeded);
+        }
+        const vk::DeviceAddress scratchAddr =
+            bufferDeviceAddress(renderer, renderer.rt.blasScratchBuffers[frame]->buffer);
+
+        // Every build reuses the one shared scratch region, so consecutive builds must serialize
+        // on it (the next build's scratch write waits on the prior build's scratch use). Emit an
+        // AS-build -> AS-build barrier between builds; the per-character count is tiny so this is
+        // cheaper than plumbing aligned per-build scratch offsets.
+        vk::MemoryBarrier2 scratchBarrier{};
+        scratchBarrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+        scratchBarrier.srcAccessMask =
+            vk::AccessFlagBits2::eAccelerationStructureWriteKHR | vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+        scratchBarrier.dstStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+        scratchBarrier.dstAccessMask =
+            vk::AccessFlagBits2::eAccelerationStructureWriteKHR | vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+        vk::DependencyInfo scratchDep{};
+        scratchDep.setMemoryBarriers(scratchBarrier);
+
+        for (std::size_t i = 0; i < plans.size(); i = i + 1)
+        {
+            const Plan& plan = plans[i];
+            if (i > 0)
+            {
+                cmd.pipelineBarrier2(scratchDep);  // serialize the shared scratch reuse
+            }
+            VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR
+            };
+            buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                              VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+            buildInfo.mode = plan.update ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
+                                         : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+            buildInfo.geometryCount = 1;
+            buildInfo.pGeometries = &plan.geom;
+            VkAccelerationStructureKHR dst = static_cast<VkAccelerationStructureKHR>(plan.slot->as->handle);
+            buildInfo.dstAccelerationStructure = dst;
+            buildInfo.srcAccelerationStructure = plan.update ? dst : VK_NULL_HANDLE;  // in-place refit
+            buildInfo.scratchData.deviceAddress = scratchAddr;
+            VkAccelerationStructureBuildRangeInfoKHR range{};
+            range.primitiveCount = plan.triangleCount;
+            const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+            renderer.context.rt.cmdBuild(static_cast<VkCommandBuffer>(cmd), 1, &buildInfo, &pRange);
+            plan.slot->built = true;
+        }
+        renderer.rt.skinnedBlasCount = static_cast<u32>(plans.size());
+
+        // Barrier: the BLAS refit writes (build stage) -> the TLAS build that reads them as
+        // input (build stage). Hand-written here, the accepted AS-pass exception to graph-derived
+        // barriers (recordTlasBuild emits the matching AS-build -> fragment one for the TLAS).
+        vk::MemoryBarrier2 barrier{};
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+        barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+        barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+        vk::DependencyInfo dep{};
+        dep.setMemoryBarriers(barrier);
+        cmd.pipelineBarrier2(dep);
+    }
+
     // Ensures the frame's TLAS instance buffer holds `count` instances (host-visible, AS
     // build input + BDA), growing to the next power of two. Allocates/resizes the TLAS +
     // scratch lazily inside recordTlasBuild (sizes depend on count).
@@ -1282,6 +1448,13 @@ export namespace se
         VkBufferCreateInfo info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
         info.size = bytes;
         info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        // When RT is on the deformed buffer also feeds the per-frame skinned BLAS refit, so it
+        // needs shader device address + AS-build-input usage (mirrors the static mesh buffers).
+        if (renderer.context.rtSupported)
+        {
+            info.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+        }
         VmaAllocationCreateInfo alloc{};
         alloc.usage = VMA_MEMORY_USAGE_AUTO;
         VkBuffer raw = VK_NULL_HANDLE;
