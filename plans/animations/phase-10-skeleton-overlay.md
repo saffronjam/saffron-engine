@@ -1,6 +1,6 @@
 # Phase 10 — skeleton line overlay + `show-bones`
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 
