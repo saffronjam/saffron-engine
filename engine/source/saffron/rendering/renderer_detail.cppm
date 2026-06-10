@@ -2041,17 +2041,22 @@ export namespace se
         stages[1].module = shaderModule;
         stages[1].pName = "fragmentMain";
 
-        vk::VertexInputBindingDescription binding{};
-        binding.binding = 0;
-        binding.stride = sizeof(Vertex);
-        binding.inputRate = vk::VertexInputRate::eVertex;
-        std::array<vk::VertexInputAttributeDescription, 3> attributes{
+        // Two per-vertex streams: binding 0 is this frame's (deformed) Vertex stream, binding
+        // 1 the previous frame's. The drawIndexed vertexOffset applies to both, so a skinned
+        // batch shifts cur + prev by the same deformedVertexOffset; a static batch binds the
+        // same buffer twice (prevPosition == position, object motion comes from prevModel).
+        std::array<vk::VertexInputBindingDescription, 2> bindings{
+            vk::VertexInputBindingDescription{ 0, sizeof(Vertex), vk::VertexInputRate::eVertex },
+            vk::VertexInputBindingDescription{ 1, sizeof(Vertex), vk::VertexInputRate::eVertex }
+        };
+        std::array<vk::VertexInputAttributeDescription, 4> attributes{
             vk::VertexInputAttributeDescription{ 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position) },
             vk::VertexInputAttributeDescription{ 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal) },
-            vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uv0) }
+            vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uv0) },
+            vk::VertexInputAttributeDescription{ 3, 1, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position) }
         };
         vk::PipelineVertexInputStateCreateInfo vertexInput{};
-        vertexInput.setVertexBindingDescriptions(binding);
+        vertexInput.setVertexBindingDescriptions(bindings);
         vertexInput.setVertexAttributeDescriptions(attributes);
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -2779,12 +2784,13 @@ export namespace se
         renderer.skinning.setLayout = *skinLayout;
 
         // One per-frame pool, reset wholesale each frame; sized for SkinMaxSetsPerFrame
-        // per-instance sets (4 storage buffers each).
+        // per-instance sets (4 storage buffers each), doubled to also hold the parallel
+        // previous-pose dispatch sets the motion pass reads.
         for (u32 fi = 0; fi < MaxFramesInFlight; fi = fi + 1)
         {
-            vk::DescriptorPoolSize skinPoolSize{ vk::DescriptorType::eStorageBuffer, 4 * SkinMaxSetsPerFrame };
+            vk::DescriptorPoolSize skinPoolSize{ vk::DescriptorType::eStorageBuffer, 8 * SkinMaxSetsPerFrame };
             vk::DescriptorPoolCreateInfo skinPoolInfo{};
-            skinPoolInfo.maxSets = SkinMaxSetsPerFrame;
+            skinPoolInfo.maxSets = 2 * SkinMaxSetsPerFrame;
             skinPoolInfo.setPoolSizes(skinPoolSize);
             auto skinPool = checked(renderer.context.device.createDescriptorPool(skinPoolInfo), "skinPool");
             if (!skinPool)
