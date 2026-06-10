@@ -408,6 +408,20 @@
       "skip": "needs a rigged entity with an animation player (covered by the e2e)"
     },
     {
+      "name": "get-skeleton-overlay",
+      "params": "EmptyParams",
+      "result": "SkeletonOverlayResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "set-skeleton-overlay",
+      "params": "SetSkeletonOverlayParams",
+      "result": "SkeletonOverlayResult",
+      "status": "typed",
+      "fixture": "skeleton-overlay-on"
+    },
+    {
       "name": "get-script-status",
       "params": "EmptyParams",
       "result": "ScriptStatusResult",

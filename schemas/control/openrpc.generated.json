@@ -1050,6 +1050,42 @@
       }
     },
     {
+      "name": "get-skeleton-overlay",
+      "summary": "the line-skeleton overlay toggle, axes, and joint size",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SkeletonOverlayResult"
+        }
+      }
+    },
+    {
+      "name": "set-skeleton-overlay",
+      "summary": "the selected rig's line-skeleton viewport overlay (show|axes|jointSize)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetSkeletonOverlayParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SkeletonOverlayResult"
+        }
+      }
+    },
+    {
       "name": "get-script-status",
       "summary": "play state, live script instances, error high-water",
       "params": [
@@ -4801,6 +4837,22 @@
           "shadows"
         ]
       },
+      "SetSkeletonOverlayParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "show": {
+            "type": "boolean"
+          },
+          "axes": {
+            "type": "boolean"
+          },
+          "jointSize": {
+            "type": "number"
+          }
+        },
+        "required": []
+      },
       "SetSkinningResult": {
         "type": "object",
         "additionalProperties": false,
@@ -4895,6 +4947,26 @@
         "required": [
           "width",
           "height"
+        ]
+      },
+      "SkeletonOverlayResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "show": {
+            "type": "boolean"
+          },
+          "axes": {
+            "type": "boolean"
+          },
+          "jointSize": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "show",
+          "axes",
+          "jointSize"
         ]
       },
       "StepParams": {
