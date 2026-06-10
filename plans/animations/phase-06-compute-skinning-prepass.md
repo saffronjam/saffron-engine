@@ -1,6 +1,6 @@
 # Phase 6 — compute skinning pre-pass + deformed-vertex buffer
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 
