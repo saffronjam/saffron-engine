@@ -11,6 +11,8 @@ import { appendFrameSamples } from "../lib/frameSeries";
 import type {
   ActiveAlarmDto,
   AlarmEventDto,
+  AnimationClipDto,
+  AnimationStateResult,
   AssetEntry,
   EntityListEntry,
   Environment,
@@ -144,6 +146,13 @@ export interface EditorState {
   /// The gizmo is hidden and save/load are locked while not "edit"; panels stay live
   /// (writes discard on stop).
   playState: PlayState;
+  /// The selected rig's animation player state (playhead, clip, wrap, speed) or null
+  /// when the selection is not an animation player. Read-only mirror of the engine,
+  /// refreshed by the reconcile poll's animationVersion gate; drives the TimelinePanel.
+  animationState: AnimationStateResult | null;
+  /// The animation clips available to the selected rig (the project catalog). Fetched
+  /// alongside `animationState` when the selection changes.
+  animationClips: AnimationClipDto[];
   /// When true, the native viewport window is parked off-screen so an overlay
   /// (a modal dialog) can paint over the viewport rect — the reparented X11
   /// child always paints on top otherwise. The ViewportPanel reads this and skips
@@ -220,6 +229,8 @@ export interface EditorState {
   closeBottomTool(tool: BottomTool): void;
   setActiveBottomTool(tool: BottomTool): void;
   setEnvironment(environment: Environment | null): void;
+  /// Set the selected rig's animation state and available clips together (poll-driven).
+  setAnimationState(state: AnimationStateResult | null, clips: AnimationClipDto[]): void;
   setRenderStats(renderStats: RenderStats | null): void;
   setPerfConfig(perfConfig: PerfConfigDto | null): void;
   setFrameHistory(frameHistory: FrameHistoryDto | null): void;
@@ -318,6 +329,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   dragActive: false,
   gizmo: { op: "translate", space: "world", preserveChildren: false },
   playState: "edit",
+  animationState: null,
+  animationClips: [],
   viewportHidden: false,
   nativeDialogOpen: false,
   showComponentSubrows: loadShowSubrows(),
@@ -536,6 +549,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   setActiveBottomTool: (tool) =>
     set((s) => (s.bottomTools.includes(tool) ? { activeBottomTool: tool } : {})),
   setEnvironment: (environment) => set({ environment }),
+  setAnimationState: (animationState, animationClips) => set({ animationState, animationClips }),
   setRenderStats: (renderStats) => set({ renderStats }),
   setPerfConfig: (perfConfig) => set({ perfConfig }),
   setFrameHistory: (frameHistory) => set({ frameHistory }),
@@ -1078,6 +1092,8 @@ export function startReconcile(client: Client): () => void {
   let knownSelectionVersion = -1;
   let knownSelectedId: string | null = null;
   let knownPlayVersion = -1;
+  let knownAnimationVersion = -1;
+  let animationInFlight = false;
 
   let lastTickAt = 0;
   let emaIntervalMs = 0;
@@ -1168,6 +1184,36 @@ export function startReconcile(client: Client): () => void {
           pendingRefresh = null;
           refreshHeavyState(next);
         }
+      }
+    })();
+  };
+
+  /// Refresh the selected rig's animation state + clips for the TimelinePanel. Driven by
+  /// the animationVersion gate (a play/seek/pause bumped the player) or a selection change.
+  /// `get-animation-state` rejects when the entity is not an animation player — that is the
+  /// "not rigged / nothing playing yet" case, so clear the slice silently (no toast).
+  const refreshAnimation = (selectedId: string | null): void => {
+    if (animationInFlight) {
+      return;
+    }
+    if (selectedId === null) {
+      useEditorStore.getState().setAnimationState(null, []);
+      return;
+    }
+    animationInFlight = true;
+    void (async () => {
+      try {
+        const [state, clips] = await Promise.all([
+          client.getAnimationState(selectedId).catch(() => null),
+          client.listClips(selectedId).catch(() => ({ clips: [] })),
+        ]);
+        if (stopped) {
+          return;
+        }
+        useEditorStore.getState().setAnimationState(state, clips.clips);
+      } catch {
+      } finally {
+        animationInFlight = false;
       }
     })();
   };
@@ -1340,10 +1386,19 @@ export function startReconcile(client: Client): () => void {
         previousSceneVersion,
       });
 
+      // Animation gate, parallel to the playVersion gate: refetch the selected rig's
+      // playhead/clips when the engine bumps animationVersion (a play/seek/pause, here
+      // or via the `se` CLI) or when the selection changes to a different entity. The
+      // returned `time` drives the TimelinePanel playhead (canvas, never React state).
+      if (selection.animationVersion !== knownAnimationVersion || selectionChanged) {
+        refreshAnimation(nextSelectedId);
+      }
+
       knownSceneVersion = selection.sceneVersion;
       knownSelectionVersion = selection.selectionVersion;
       knownSelectedId = nextSelectedId;
       knownPlayVersion = selection.playVersion;
+      knownAnimationVersion = selection.animationVersion;
     } catch {
     } finally {
       fastInFlight = false;
