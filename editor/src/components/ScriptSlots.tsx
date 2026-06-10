@@ -400,7 +400,7 @@ export function ScriptSlots({ entityId, scripts }: { entityId: string; scripts: 
             <Input
               autoFocus
               type="text"
-              placeholder="turret"
+              placeholder="Script name"
               className="font-mono"
               value={newScriptName}
               onChange={(event) => setNewScriptName(event.currentTarget.value)}
