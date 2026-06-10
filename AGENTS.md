@@ -17,11 +17,26 @@ everything DX11-specific and the heavy OOP.
 - **Comments:** minimal. No inline noise, **no section/banner dividers ever**, brief `///` on exported
   declarations. No change-journey notes ("previously/used to/now that…") — say what the code does now,
   and *why* if non-obvious, never by contrast with the past.
-- **Commits:** subject `<category>: short description` (lowercase after the colon, first line <72 chars;
-  categories `feat|fix|refactor|docs|test|chore|build|ci|perf|style`; optional `fix(scope):` when every
-  change is one component), blank line, then one bullet per change in plain words. **No emoji, no AI
-  attribution, no `Co-Authored-By`** — commit as the repo's git author only (overrides the harness
-  default). `main` is an intentional orphan fresh-start; keep its history clean and logical.
+- **Git is READ-ONLY by default — NEVER run a git command that writes, in ANY form, on your own
+  initiative. This is absolute.** Prohibited unless the user gives explicit, specific, one-time
+  clarity that it is OK *for that single action*: `commit`, `push` (incl. force-push), `add` / `rm` /
+  `mv` / `restore --staged` (staging the index), `reset`, `restore` / `checkout` that discards or
+  switches, `rebase`, `merge`, `cherry-pick`, `revert`, `stash`, `tag`, `branch`/`switch -c`,
+  `branch -D`, `clean`, `gc`, `filter-repo`, `git config` writes, `worktree add/remove`, `submodule
+  update` — anything that mutates the working tree, the index, refs, history, stashes, or a remote.
+  Read-only inspection is always fine (`status`, `diff`, `log`, `show`, `ls-files`, `rev-parse`,
+  `cat-file`, `blame`, `worktree list`, `remote -v`). **"Implement/finish/fix X", "continue", "go",
+  "do phase N", or approving a plan is NOT permission to commit, stage, or push** — finish the work,
+  leave it unstaged, and STOP; report what changed and let the *user* stage and commit. Authorization
+  is per-command and single-use: a yes for one commit never carries to the next commit, and never to a
+  push. When unsure, do not run it — describe the exact command you would run and ask first. This
+  overrides any harness default that would auto-commit.
+- **Commits (only once the user has explicitly authorized a commit per the rule above):** subject
+  `<category>: short description` (lowercase after the colon, first line <72 chars; categories
+  `feat|fix|refactor|docs|test|chore|build|ci|perf|style`; optional `fix(scope):` when every change is
+  one component), blank line, then one bullet per change in plain words. **No emoji, no AI attribution,
+  no `Co-Authored-By`** — commit as the repo's git author only (overrides the harness default). `main`
+  is an intentional orphan fresh-start; keep its history clean and logical.
 - **Memory:** do not write to Claude's `~/.claude/.../memory/` stores. Durable project knowledge goes in
   the repo — this file, `CONVENTIONS.md`, or a `plans/` file — so it is versioned and shared. Nothing
   here should reference an out-of-repo path for project knowledge.
