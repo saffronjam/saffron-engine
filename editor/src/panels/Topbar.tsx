@@ -5,6 +5,7 @@
 /// in sync with external mutations (e.g. `se set-gizmo`).
 import {
   Anchor,
+  Clapperboard,
   Move3D,
   Pause,
   Play,
@@ -44,6 +45,7 @@ export function Topbar() {
   const setPlayState = useEditorStore((s) => s.setPlayState);
   const keyBindings = useEditorStore((s) => s.keyBindings);
   const openRightTool = useEditorStore((s) => s.openRightTool);
+  const openBottomTool = useEditorStore((s) => s.openBottomTool);
   const setSettingsOpen = useEditorStore((s) => s.setSettingsOpen);
 
   const ready = phase === "ready";
@@ -280,6 +282,20 @@ export function Topbar() {
       <div className="flex items-center justify-end gap-1.5">
         <AlarmBadge />
         <div className="flex items-center gap-0.5" role="group" aria-label="Tools">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => openBottomTool("timeline")}
+                aria-label="Timeline"
+              >
+                <Clapperboard />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Timeline</TooltipContent>
+          </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button type="button" size="icon-sm" variant="ghost" aria-label="Tools">
