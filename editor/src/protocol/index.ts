@@ -287,6 +287,7 @@ export interface Selection {
   sceneVersion: number;
   playState: string;
   playVersion: number;
+  animationVersion: number;
 }
 
 type CompatCommandResultOverrides = {
