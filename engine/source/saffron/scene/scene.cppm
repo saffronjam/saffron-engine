@@ -84,6 +84,40 @@ export namespace se
         std::vector<entt::entity> boneHandles;  // resolved cache
     };
 
+    // Drives a skinned rig from an AssetType::Animation clip. Dumb data — the evaluator
+    // and serde live elsewhere (Saffron.Animation / the component registry). Sits beside
+    // SkinnedMeshComponent on the mesh entity; the import attaches it for any rig that
+    // ships clips. previewInEdit/pingForward and the transition trio are runtime state.
+    struct AnimationPlayerComponent
+    {
+        Uuid clip;        // the AssetType::Animation catalog entry to play
+        f32 time = 0.0f;  // playhead, seconds
+        f32 speed = 1.0f;
+        enum class Wrap : u8
+        {
+            Once,
+            Loop,
+            PingPong
+        } wrap = Wrap::Loop;
+        bool playing = false;        // advance time? (the game loop in Play / the timeline in Edit)
+        bool previewInEdit = false;  // runtime: is this entity previewed in Edit? (serialize as false)
+        bool pingForward = true;     // runtime: ping-pong direction state
+        Uuid prevClip;               // transition state (filled later); harmless at rest
+        f32 transition = 0.0f;
+        f32 transitionDuration = 0.0f;
+    };
+
+    // Runtime-only (never serialized): the animated local TRS the evaluator writes onto a
+    // driven bone each frame. World-transform composition prefers it over the bone's
+    // TransformComponent, so the authored rest pose stays untouched and Edit preview is
+    // non-destructive. Removed from a bone when its rig stops animating (reverts to rest).
+    struct PoseOverrideComponent
+    {
+        glm::vec3 translation{ 0.0f };
+        glm::quat rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+        glm::vec3 scale{ 1.0f };
+    };
+
     // References a mesh asset by stable id; the AssetServer resolves it to a GPU mesh.
     struct MeshComponent
     {
@@ -214,7 +248,8 @@ export namespace se
     {
         Mesh,
         Texture,
-        Other
+        Other,
+        Animation
     };
 
     struct AssetEntry
@@ -226,6 +261,7 @@ export namespace se
         std::string folder;
         bool hdr = false;     // texture: decode as linear float (.hdr); else sRGB RGBA8
         bool linear = false;  // texture: upload as a linear RGBA8 format (metallic-roughness), not sRGB
+        f32 duration = 0.0f;  // animation: clip length in seconds (0 for non-animation entries)
     };
 
     struct AssetCatalog
@@ -561,6 +597,19 @@ export namespace se
             });
     }
 
+    // A transformable entity's effective local matrix: the animation pose override when
+    // present (composed from its quaternion directly, no Euler round-trip), else the
+    // authored TransformComponent. Keeps the rest pose pristine under non-destructive preview.
+    auto localMatrix(Scene& scene, Entity entity) -> glm::mat4
+    {
+        if (const auto* pose = scene.registry.try_get<PoseOverrideComponent>(entity.handle))
+        {
+            return glm::translate(glm::mat4(1.0f), pose->translation) * glm::mat4_cast(pose->rotation) *
+                   glm::scale(glm::mat4(1.0f), pose->scale);
+        }
+        return transformMatrix(getComponent<TransformComponent>(scene, entity));
+    }
+
     // Exact world matrix composed by walking the parent chain. Used where the cached
     // per-frame matrix may lag a just-edited local transform (reparenting math).
     auto composeWorldMatrix(Scene& scene, Entity entity) -> glm::mat4
@@ -568,7 +617,7 @@ export namespace se
         glm::mat4 local{ 1.0f };
         if (hasComponent<TransformComponent>(scene, entity))
         {
-            local = transformMatrix(getComponent<TransformComponent>(scene, entity));
+            local = localMatrix(scene, entity);
         }
         if (hasComponent<RelationshipComponent>(scene, entity))
         {
@@ -620,7 +669,7 @@ export namespace se
             glm::mat4 world = parentWorld;
             if (hasComponent<TransformComponent>(scene, entity))
             {
-                world = parentWorld * transformMatrix(getComponent<TransformComponent>(scene, entity));
+                world = parentWorld * localMatrix(scene, entity);
                 if (!hasComponent<WorldTransformComponent>(scene, entity))
                 {
                     addComponent<WorldTransformComponent>(scene, entity);
@@ -829,6 +878,8 @@ export namespace se
     auto materialSetComponentFromJson(MaterialSetComponent& c, const nlohmann::json& j) -> Result<void>;
     auto scriptComponentToJson(const ScriptComponent& c) -> nlohmann::json;
     auto scriptComponentFromJson(ScriptComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto animationPlayerComponentToJson(const AnimationPlayerComponent& c) -> nlohmann::json;
+    auto animationPlayerComponentFromJson(AnimationPlayerComponent& c, const nlohmann::json& j) -> Result<void>;
     auto directionalLightComponentToJson(const DirectionalLightComponent& c) -> nlohmann::json;
     auto directionalLightComponentFromJson(DirectionalLightComponent& c, const nlohmann::json& j) -> Result<void>;
     auto pointLightComponentToJson(const PointLightComponent& c) -> nlohmann::json;
