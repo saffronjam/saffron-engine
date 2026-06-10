@@ -43,7 +43,9 @@ The theme defaults to system sans and monospace stacks. Roboto and Roboto Mono r
 
 ## Layout: a resizable dock
 
-The dock is reproduced with `react-resizable-panels` (shadcn's `resizable`): a full-height Hierarchy plus tabbed Inspector/Environment/Stats column on the left, and a right region stacking the [Viewport](../viewport-panel/) over the Assets browser. The split ratios are right-region bottom 0.28 and a 0.45/0.55 split within the left column. Render Stats is tabbed next to Inspector and Environment. The viewport is a `<canvas>` the webview paints, so panels, popovers, and modals stack over it by `z-index` like any other DOM element — the chrome and the viewport are one composited surface.
+The dock is reproduced with `react-resizable-panels` (shadcn's `resizable`): a full-height Hierarchy plus tabbed Inspector/Environment/Stats column on the left, and a right region stacking the [Viewport](../viewport-panel/) over the Assets browser. The split ratios are right-region bottom 0.28 and a 0.45/0.55 split within the left column. Render Stats is tabbed next to Inspector and Environment. The viewport is composited under the transparent webview (see [viewport compositing](../viewport-compositing/)), so any layout change that moves the viewport rect must re-glue the subsurface through the layout-settled bus.
+
+A **bottom dock** stacks below the Viewport/Assets pair when opened (the Topbar timeline button), with its own closeable tab strip — empty until the timeline lands, and it vanishes once its last tab closes so the viewport reclaims the height. It is a third panel inside the same right vertical group, so `react-resizable-panels` persists its split. Opening, closing, or resizing it fires `emitLayoutSettled` (the open/close case forced on the next frame) so the viewport subsurface re-glues to the new bounds.
 
 ## In the code
 
@@ -52,6 +54,7 @@ The dock is reproduced with `react-resizable-panels` (shadcn's `resizable`): a f
 | shadcn tokens | `editor/src/styles.css` | `:root` / `.dark` vars, `@theme inline` |
 | Font defaults | `editor/src/styles.css` | `@font-face`, `--font-sans` / `--font-mono` |
 | The dock layout | `editor/src/app/Layout.tsx` | `Layout`, `LeftBottomTabs`, the panel split sizes |
+| The bottom dock | `editor/src/panels/BottomDock.tsx` | `BottomDock`, `BOTTOM_TOOL_LABEL` |
 | Layout-settled bus | `editor/src/app/layoutBus.ts` | `emitLayoutSettled`, `onLayoutSettled` |
 
 ## Related
