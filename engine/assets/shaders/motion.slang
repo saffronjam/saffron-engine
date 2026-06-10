@@ -1,13 +1,22 @@
-// Per-pixel screen-space motion vectors for TAA (camera motion; geometry assumed static
-// — per-instance previous-model tracking is a later add). Renders the instanced scene
-// depth-tested; the fragment outputs (prevUV - curUV), i.e. the offset from this pixel's
-// current UV to where the same surface point was last frame. RG16F. Set 2 = instances;
-// push = current + previous camera viewProj.
+// Per-pixel screen-space motion vectors for TAA. Renders the instanced scene depth-tested;
+// the fragment outputs (prevUV - curUV), i.e. the offset from this pixel's current UV to
+// where the same surface point was last frame. RG16F. Set 2 = instances; push = current +
+// previous camera viewProj.
+//
+// Two sources of motion are reprojected together:
+//   - object motion: inst.model vs inst.prevModel (the whole entity moved).
+//   - deformation motion (skinned meshes): binding 0 = this frame's deformed position,
+//     binding 1 = the previous frame's deformed position. For a static mesh both bindings
+//     point at the same static stream, so prevPosition == position and only object motion
+//     contributes.
+// current clip = curViewProj  * model     * position
+// previous clip = prevViewProj * prevModel * prevPosition
 
 struct Instance
 {
     float4x4 model;
     float4x4 normalMatrix;
+    float4x4 prevModel;  // last frame's world matrix (object-motion reprojection)
     float4 baseColor;
     uint4 texture;
     float4 pbr;
@@ -24,9 +33,10 @@ struct Push
 
 struct VertexInput
 {
-    [[vk::location(0)]] float3 position;
+    [[vk::location(0)]] float3 position;      // binding 0: this frame's (deformed) position
     [[vk::location(1)]] float3 normal;
     [[vk::location(2)]] float2 uv0;
+    [[vk::location(3)]] float3 prevPosition;  // binding 1: previous frame's (deformed) position
 };
 
 struct VertexOutput
@@ -41,10 +51,11 @@ VertexOutput vertexMain(VertexInput input, uint instanceIndex : SV_VulkanInstanc
 {
     Instance inst = instances[instanceIndex];
     VertexOutput output;
-    float4 worldPos = mul(inst.model, float4(input.position, 1.0));
-    output.position = mul(pc.curViewProj, worldPos);
+    float4 curWorld = mul(inst.model, float4(input.position, 1.0));
+    float4 prevWorld = mul(inst.prevModel, float4(input.prevPosition, 1.0));
+    output.position = mul(pc.curViewProj, curWorld);
     output.curClip = output.position;
-    output.prevClip = mul(pc.prevViewProj, worldPos);
+    output.prevClip = mul(pc.prevViewProj, prevWorld);
     return output;
 }
 
