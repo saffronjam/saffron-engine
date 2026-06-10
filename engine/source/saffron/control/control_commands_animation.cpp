@@ -3,6 +3,7 @@ module;
 #include <nlohmann/json.hpp>
 #include <entt/entt.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <format>
 #include <optional>
@@ -92,6 +93,15 @@ namespace se
                 addComponent<AnimationPlayerComponent>(scene, *entity);
             }
             return &getComponent<AnimationPlayerComponent>(scene, *entity);
+        }
+
+        auto skeletonOverlayState(const SkeletonOverlayOptions& opts) -> SkeletonOverlayResult
+        {
+            SkeletonOverlayResult out;
+            out.show = opts.show;
+            out.axes = opts.axes;
+            out.jointSize = opts.jointSize;
+            return out;
         }
 
         auto stateOf(EngineContext& ctx, const AnimationPlayerComponent& player) -> AnimationStateResult
@@ -238,6 +248,33 @@ namespace se
                 (*player)->playing = false;
                 ctx.sceneEdit.animationVersion += 1;
                 return stateOf(ctx, **player);
+            });
+
+        registerCommand<EmptyParams, SkeletonOverlayResult>(
+            reg, "get-skeleton-overlay",
+            "get-skeleton-overlay — the line-skeleton overlay toggle, axes, and joint size",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<SkeletonOverlayResult>
+            { return skeletonOverlayState(ctx.sceneEdit.skeletonOverlay); });
+
+        registerCommand<SetSkeletonOverlayParams, SkeletonOverlayResult>(
+            reg, "set-skeleton-overlay",
+            "set-skeleton-overlay {show?, axes?, jointSize?} — the selected rig's line-skeleton viewport overlay",
+            [](EngineContext& ctx, const SetSkeletonOverlayParams& params) -> Result<SkeletonOverlayResult>
+            {
+                SkeletonOverlayOptions& opts = ctx.sceneEdit.skeletonOverlay;
+                if (params.show)
+                {
+                    opts.show = *params.show;
+                }
+                if (params.axes)
+                {
+                    opts.axes = *params.axes;
+                }
+                if (params.jointSize)
+                {
+                    opts.jointSize = std::max(0.5f, *params.jointSize);
+                }
+                return skeletonOverlayState(opts);
             });
     }
 }
