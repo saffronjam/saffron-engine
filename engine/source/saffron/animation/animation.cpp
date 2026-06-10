@@ -139,8 +139,7 @@ namespace se
             }
         }
 
-        // Per-joint blend of the animated local pose with an external producer's pose
-        // (IK/physics). Inert in v1 (all weights 0); the seam phase 13 fills.
+        // Per-joint blend of two poses (lerp T/S, slerp R). The cross-fade primitive.
         auto blendJoint(const JointPose& base, const JointPose& over, f32 weight) -> JointPose
         {
             JointPose out;
@@ -148,6 +147,22 @@ namespace se
             out.rotation = glm::normalize(glm::slerp(base.rotation, over.rotation, weight));
             out.scale = glm::mix(base.scale, over.scale, weight);
             return out;
+        }
+
+        // Cubic ease (C¹) for the cross-fade alpha.
+        auto smoothstep01(f32 x) -> f32
+        {
+            x = glm::clamp(x, 0.0f, 1.0f);
+            return x * x * (3.0f - 2.0f * x);
+        }
+
+        // Quintic decay 1 → 0 with zero value, slope, and acceleration at x = 1 (C²,
+        // zero-jerk): the inertialization offset weight as the transition runs out.
+        auto quinticDecay(f32 x) -> f32
+        {
+            x = glm::clamp(x, 0.0f, 1.0f);
+            const f32 smoother = x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f);
+            return 1.0f - smoother;
         }
 
         // sampleClip, but each track is bound to its joint by index when sound and re-resolved
@@ -315,37 +330,54 @@ namespace se
         }
     }
 
+    auto poseDiff(const JointPose& from, const JointPose& to) -> PoseDelta
+    {
+        PoseDelta delta;
+        delta.translation = from.translation - to.translation;
+        delta.rotation = glm::normalize(from.rotation * glm::inverse(to.rotation));
+        delta.scale = from.scale / glm::max(to.scale, glm::vec3(1e-6f));
+        return delta;
+    }
+
+    auto applyDelta(const JointPose& base, const PoseDelta& delta, f32 weight) -> JointPose
+    {
+        JointPose out;
+        out.translation = base.translation + delta.translation * weight;
+        const glm::quat step = glm::normalize(glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f), delta.rotation, weight));
+        out.rotation = glm::normalize(step * base.rotation);
+        out.scale = base.scale * glm::pow(delta.scale, glm::vec3(weight));
+        return out;
+    }
+
     void tickAnimation(AnimationRuntime& runtime, Scene& scene, const AssetCatalog& catalog, std::string_view assetRoot,
                        f32 dt, AnimMode mode)
     {
         forEach<AnimationPlayerComponent, SkinnedMeshComponent>(
             scene,
-            [&](Entity, AnimationPlayerComponent& player, SkinnedMeshComponent& skin)
+            [&](Entity entity, AnimationPlayerComponent& player, SkinnedMeshComponent& skin)
             {
                 // Play animates every rig; Edit previews only the timeline-selected one.
                 const bool active = mode == AnimMode::Play || player.previewInEdit;
                 const AnimClip* clip = active ? loadClip(runtime, catalog, assetRoot, player.clip) : nullptr;
+                const u64 key =
+                    hasComponent<IdComponent>(scene, entity) ? getComponent<IdComponent>(scene, entity).id.value : 0;
                 if (clip == nullptr)
                 {
                     clearOverrides(scene, skin);
+                    runtime.transitions.erase(key);
                     return;
                 }
-                if (player.playing && clip->duration > 0.0f)
-                {
-                    advanceTime(player, clip->duration, dt);
-                }
 
-                // Seed the pose with each bone's rest local TRS so untracked joints (and
-                // untracked channels of a tracked joint) keep their authored value, and
-                // collect the name<->index maps for durable track resolution.
+                // Seed each bone's rest local TRS so untracked joints (and untracked
+                // channels of a tracked joint) keep their authored value, and collect the
+                // name<->index maps for durable track resolution.
                 const std::size_t jointCount = skin.bones.size();
-                PoseBuffer pose;
-                pose.local.resize(jointCount);
+                std::vector<JointPose> rest(jointCount);
                 std::vector<std::string> boneNames(jointCount);
                 std::unordered_map<std::string, i32> nameToIndex;
                 for (std::size_t i = 0; i < jointCount; i = i + 1)
                 {
-                    pose.local[i] = restPoseOf(scene, skin, i);
+                    rest[i] = restPoseOf(scene, skin, i);
                     if (i < skin.boneHandles.size())
                     {
                         const Entity bone{ skin.boneHandles[i] };
@@ -356,17 +388,88 @@ namespace se
                         }
                     }
                 }
-                sampleClipResolved(*clip, player.time, boneNames, nameToIndex, pose);
+                auto sampleInto = [&](const AnimClip& source, f32 time) -> std::vector<JointPose>
+                {
+                    PoseBuffer pose;
+                    pose.local = rest;
+                    sampleClipResolved(source, time, boneNames, nameToIndex, pose);
+                    return std::move(pose.local);
+                };
+                // The bone's current pose (last frame's override, else rest) — the outgoing
+                // pose a just-started transition freezes.
+                auto outgoingAt = [&](std::size_t i) -> JointPose
+                {
+                    if (i < skin.boneHandles.size())
+                    {
+                        const entt::entity h = skin.boneHandles[i];
+                        if (h != entt::null && scene.registry.valid(h))
+                        {
+                            if (const auto* over = scene.registry.try_get<PoseOverrideComponent>(h))
+                            {
+                                return JointPose{ over->translation, over->rotation, over->scale };
+                            }
+                        }
+                    }
+                    return rest[i];
+                };
 
-                // Write the blended local pose onto each bone as a runtime override. The
-                // blend layer is inert in v1 (all weights 0 -> final == sampled local).
+                // Advance playback, noting a Loop wrap so it can be blended across the seam.
+                const f32 prevTime = player.time;
+                if (player.playing && clip->duration > 0.0f)
+                {
+                    advanceTime(player, clip->duration, dt);
+                }
+                const bool wrapped = player.wrap == AnimationPlayerComponent::Wrap::Loop && player.time < prevTime;
+                if (wrapped && player.loopBlend > 0.0f && player.transition >= player.transitionDuration)
+                {
+                    player.prevClip = player.clip;  // a Loop wrap is a transition from end-pose to start-pose
+                    player.transition = 0.0f;
+                    player.transitionDuration = player.loopBlend;
+                }
+
+                std::vector<JointPose> finalLocal = sampleInto(*clip, player.time);
+
+                const bool transitioning =
+                    player.transitionDuration > 0.0f && player.transition < player.transitionDuration;
+                if (transitioning)
+                {
+                    // Freeze the outgoing pose + capture the offset once, at the switch frame.
+                    if (player.transition <= 0.0f || !runtime.transitions.contains(key))
+                    {
+                        TransitionState state;
+                        state.outgoing.resize(jointCount);
+                        state.offset.resize(jointCount);
+                        for (std::size_t i = 0; i < jointCount; i = i + 1)
+                        {
+                            state.outgoing[i] = outgoingAt(i);
+                            state.offset[i] = poseDiff(state.outgoing[i], finalLocal[i]);
+                        }
+                        runtime.transitions[key] = std::move(state);
+                    }
+                    const TransitionState& state = runtime.transitions[key];
+                    const f32 x = glm::clamp(player.transition / player.transitionDuration, 0.0f, 1.0f);
+                    for (std::size_t i = 0; i < jointCount && i < state.offset.size(); i = i + 1)
+                    {
+                        finalLocal[i] = player.transitionMode == AnimationPlayerComponent::Transition::CrossFade
+                                            ? blendJoint(state.outgoing[i], finalLocal[i], smoothstep01(x))
+                                            : applyDelta(finalLocal[i], state.offset[i], quinticDecay(x));
+                    }
+                    player.transition = player.transition + dt;
+                    if (player.transition >= player.transitionDuration)
+                    {
+                        runtime.transitions.erase(key);
+                        player.prevClip = Uuid{ 0 };
+                        player.transition = 0.0f;
+                        player.transitionDuration = 0.0f;
+                    }
+                }
+                else
+                {
+                    runtime.transitions.erase(key);
+                }
+
                 for (std::size_t i = 0; i < jointCount; i = i + 1)
                 {
-                    JointPose finalPose = pose.local[i];
-                    if (i < pose.weight.size() && i < pose.override_.size() && pose.weight[i] > 0.0f)
-                    {
-                        finalPose = blendJoint(pose.local[i], pose.override_[i], pose.weight[i]);
-                    }
                     if (i >= skin.boneHandles.size())
                     {
                         continue;
@@ -377,9 +480,9 @@ namespace se
                         continue;
                     }
                     PoseOverrideComponent& override_ = scene.registry.emplace_or_replace<PoseOverrideComponent>(handle);
-                    override_.translation = finalPose.translation;
-                    override_.rotation = finalPose.rotation;
-                    override_.scale = finalPose.scale;
+                    override_.translation = finalLocal[i].translation;
+                    override_.rotation = finalLocal[i].rotation;
+                    override_.scale = finalLocal[i].scale;
                 }
             });
     }
@@ -634,6 +737,126 @@ namespace se
             player.time = 0.0f;
             tickAnimation(runtime, scene, catalog, "", 0.5f, AnimMode::Play);
             expect(scene.registry.all_of<PoseOverrideComponent>(rootBone.handle), "play animates without preview");
+        }
+
+        // PoseDelta (Phase 4): the delta carries `to` onto `from` at weight 1 and is the
+        // identity at weight 0 — the reusable offset machinery transitions build on.
+        {
+            JointPose from;
+            from.translation = glm::vec3(1.0f, 2.0f, 3.0f);
+            from.rotation = glm::angleAxis(glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            from.scale = glm::vec3(2.0f);
+            JointPose to;  // identity rest
+            const PoseDelta delta = poseDiff(from, to);
+            const JointPose full = applyDelta(to, delta, 1.0f);
+            const JointPose none = applyDelta(to, delta, 0.0f);
+            expect(glm::distance(full.translation, from.translation) < eps, "applyDelta w=1 translation");
+            expect(quatClose(full.rotation, from.rotation), "applyDelta w=1 rotation");
+            expect(glm::distance(full.scale, from.scale) < eps, "applyDelta w=1 scale");
+            expect(glm::distance(none.translation, to.translation) < eps && quatClose(none.rotation, to.rotation),
+                   "applyDelta w=0 is the base");
+        }
+
+        // Transitions (Phase 4): a 90 deg Y clip, switched in from the rest (identity)
+        // outgoing pose. Cross-fade and inertialization both start at the outgoing pose and
+        // end at the incoming clip; inertialization is C0 at the switch (no pop).
+        {
+            const f32 s = std::sqrt(0.5f);
+            const glm::quat q90 = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            const AssetCatalog catalog;
+            AnimClip clip;
+            clip.name = "spin90";
+            clip.duration = 1.0f;
+            AnimTrack rot;
+            rot.joint = 0;
+            rot.jointName = "J0";
+            rot.path = AnimTrack::Path::Rotation;
+            rot.interp = AnimTrack::Interp::Linear;
+            rot.times = { 0.0f, 1.0f };
+            rot.values = { 0.0f, s, 0.0f, s, 0.0f, s, 0.0f, s };
+            clip.tracks.push_back(rot);
+
+            auto run = [&](AnimationPlayerComponent::Transition mode, glm::quat& switchRot, glm::quat& endRot)
+            {
+                Scene scene;
+                Entity bone = createEntity(scene, "J0");
+                Entity meshEntity = createEntity(scene, "Rig");
+                SkinnedMeshComponent& skin = addComponent<SkinnedMeshComponent>(scene, meshEntity);
+                skin.bones = { getComponent<IdComponent>(scene, bone).id };
+                skin.boneHandles = { bone.handle };
+                AnimationPlayerComponent& player = addComponent<AnimationPlayerComponent>(scene, meshEntity);
+                player.clip = Uuid{ 9001 };
+                player.previewInEdit = true;
+                player.playing = true;
+                player.transitionMode = mode;
+                player.prevClip = Uuid{ 1 };  // a distinct outgoing clip id (its pose comes from the bone)
+                player.transition = 0.0f;
+                player.transitionDuration = 1.0f;
+                AnimationRuntime runtime;
+                runtime.clipCache.emplace(player.clip.value, clip);
+
+                tickAnimation(runtime, scene, catalog, "", 0.5f, AnimMode::Edit);  // switch frame, x=0
+                switchRot = scene.registry.get<PoseOverrideComponent>(bone.handle).rotation;
+                tickAnimation(runtime, scene, catalog, "", 0.5f, AnimMode::Edit);  // x=0.5 -> 1, transition ends
+                tickAnimation(runtime, scene, catalog, "", 0.5f, AnimMode::Edit);  // steady incoming
+                endRot = scene.registry.get<PoseOverrideComponent>(bone.handle).rotation;
+            };
+
+            glm::quat cfSwitch;
+            glm::quat cfEnd;
+            run(AnimationPlayerComponent::Transition::CrossFade, cfSwitch, cfEnd);
+            expect(quatClose(cfSwitch, glm::quat(1.0f, 0.0f, 0.0f, 0.0f)), "crossfade starts at the outgoing pose");
+            expect(quatClose(cfEnd, q90), "crossfade ends at the incoming clip");
+
+            glm::quat inSwitch;
+            glm::quat inEnd;
+            run(AnimationPlayerComponent::Transition::Inertialize, inSwitch, inEnd);
+            expect(quatClose(inSwitch, glm::quat(1.0f, 0.0f, 0.0f, 0.0f)),
+                   "inertialization is C0 at the switch (no pop)");
+            expect(quatClose(inEnd, q90), "inertialization ends at the incoming clip");
+        }
+
+        // Loop-wrap blend (Phase 4): a clip whose start (0 deg) and end (90 deg Y) differ
+        // would pop at the wrap; loopBlend inertializes across it, so the wrap frame holds
+        // the pre-wrap (end) pose rather than snapping to the start.
+        {
+            const f32 s = std::sqrt(0.5f);
+            const AssetCatalog catalog;
+            Scene scene;
+            Entity bone = createEntity(scene, "J0");
+            Entity meshEntity = createEntity(scene, "Rig");
+            SkinnedMeshComponent& skin = addComponent<SkinnedMeshComponent>(scene, meshEntity);
+            skin.bones = { getComponent<IdComponent>(scene, bone).id };
+            skin.boneHandles = { bone.handle };
+            AnimationPlayerComponent& player = addComponent<AnimationPlayerComponent>(scene, meshEntity);
+            player.clip = Uuid{ 9002 };
+            player.previewInEdit = true;
+            player.playing = true;
+            player.wrap = AnimationPlayerComponent::Wrap::Loop;
+            player.loopBlend = 0.5f;
+            player.time = 0.8f;
+
+            AnimClip clip;
+            clip.name = "ramp";
+            clip.duration = 1.0f;
+            AnimTrack rot;
+            rot.joint = 0;
+            rot.jointName = "J0";
+            rot.path = AnimTrack::Path::Rotation;
+            rot.interp = AnimTrack::Interp::Linear;
+            rot.times = { 0.0f, 1.0f };
+            rot.values = { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, s, 0.0f, s };  // identity -> 90 deg Y
+            clip.tracks.push_back(rot);
+            AnimationRuntime runtime;
+            runtime.clipCache.emplace(player.clip.value, clip);
+
+            tickAnimation(runtime, scene, catalog, "", 0.1f, AnimMode::Edit);  // time -> 0.9, near the end pose
+            const glm::quat preWrap = scene.registry.get<PoseOverrideComponent>(bone.handle).rotation;
+            tickAnimation(runtime, scene, catalog, "", 0.2f, AnimMode::Edit);  // time wraps past the end to ~0.1
+            const glm::quat wrapFrame = scene.registry.get<PoseOverrideComponent>(bone.handle).rotation;
+            // With the blend the wrap frame stays at the pre-wrap pose; a hard cut would jump
+            // ~72 deg toward the start pose, which quatClose would reject.
+            expect(quatClose(wrapFrame, preWrap), "loop wrap holds the pre-wrap pose (no pop)");
         }
 
         if (failures != 0)

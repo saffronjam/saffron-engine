@@ -39,6 +39,22 @@ export namespace se
         std::vector<f32> weight;
     };
 
+    /// A per-joint pose offset — the delta that carries one pose onto another: additive
+    /// translation, a delta quaternion (`from * inverse(to)`), and a multiplicative scale
+    /// ratio. The same delta-pose machinery a physics handoff (ragdoll) uses to nudge an
+    /// animated target, so it lives here where it is easy to test before it is load-bearing.
+    struct PoseDelta
+    {
+        glm::vec3 translation{ 0.0f };
+        glm::quat rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+        glm::vec3 scale{ 1.0f };
+    };
+
+    /// The delta that takes `to` onto `from`: `applyDelta(to, poseDiff(from, to), 1) == from`.
+    auto poseDiff(const JointPose& from, const JointPose& to) -> PoseDelta;
+    /// `base` shifted by `weight`·`delta` (weight 0 → base, 1 → the pose `delta` was built from).
+    auto applyDelta(const JointPose& base, const PoseDelta& delta, f32 weight) -> JointPose;
+
     /// Sample one track at time t. Returns a vec3 in .xyz for Translation/Scale, or a
     /// normalized quaternion as xyzw for Rotation. STEP holds the previous key, LINEAR
     /// lerps (slerp for rotation), CUBICSPLINE is a Hermite spline with dt-scaled
@@ -57,11 +73,20 @@ export namespace se
         Play,
     };
 
+    /// An in-flight clip switch, captured once at the switch and decayed over the
+    /// transition (runtime-only, keyed by the mesh entity's uuid).
+    struct TransitionState
+    {
+        std::vector<JointPose> outgoing;  // the frozen outgoing pose (cross-fade)
+        std::vector<PoseDelta> offset;    // outgoing − incoming-at-switch (inertialization)
+    };
+
     /// Per-session animation state: clip Uuid -> loaded AnimClip. The Host owns one and
     /// clears it on project (re)load so a reimported clip is picked up fresh.
     struct AnimationRuntime
     {
         std::unordered_map<u64, AnimClip> clipCache;
+        std::unordered_map<u64, TransitionState> transitions;  // active clip switches by entity uuid
     };
 
     /// Sample and (when playing) advance every AnimationPlayerComponent on a SkinnedMesh

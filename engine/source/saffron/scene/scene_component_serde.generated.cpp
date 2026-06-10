@@ -152,7 +152,7 @@ namespace se
         c.primary = jsonBoolOr(j, "primary", true);
         c.showModel = jsonBoolOr(j, "showModel", true);
         c.showFrustum = jsonBoolOr(j, "showFrustum", true);
-        c.frustumMaxDistance = jsonF32Or(j, "frustumMaxDistance", 25.0f);
+        c.frustumMaxDistance = jsonF32Or(j, "frustumMaxDistance", 10.0f);
         return {};
     }
 
@@ -255,8 +255,12 @@ namespace se
         const char* wrap = c.wrap == AnimationPlayerComponent::Wrap::Once       ? "once"
                            : c.wrap == AnimationPlayerComponent::Wrap::PingPong ? "pingpong"
                                                                                 : "loop";
-        return nlohmann::json{ { "clip", uuidToJson(c.clip.value) }, { "time", c.time }, { "speed", c.speed },
-                               { "wrap", wrap }, { "playing", c.playing } };
+        const char* transition =
+            c.transitionMode == AnimationPlayerComponent::Transition::CrossFade ? "crossfade" : "inertialize";
+        return nlohmann::json{ { "clip", uuidToJson(c.clip.value) }, { "time", c.time },
+                               { "speed", c.speed },                 { "wrap", wrap },
+                               { "playing", c.playing },             { "transitionMode", transition },
+                               { "loopBlend", c.loopBlend } };
     }
 
     auto animationPlayerComponentFromJson(AnimationPlayerComponent& c, const nlohmann::json& j) -> Result<void>
@@ -269,6 +273,10 @@ namespace se
                  : wrap == "pingpong" ? AnimationPlayerComponent::Wrap::PingPong
                                       : AnimationPlayerComponent::Wrap::Loop;
         c.playing = jsonBoolOr(j, "playing", false);
+        const std::string transition = jsonStringOr(j, "transitionMode", std::string{ "inertialize" });
+        c.transitionMode = transition == "crossfade" ? AnimationPlayerComponent::Transition::CrossFade
+                                                      : AnimationPlayerComponent::Transition::Inertialize;
+        c.loopBlend = jsonF32Or(j, "loopBlend", 0.0f);
         return {};
     }
 

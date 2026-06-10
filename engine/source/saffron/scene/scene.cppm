@@ -102,7 +102,15 @@ export namespace se
         bool playing = false;        // advance time? (the game loop in Play / the timeline in Edit)
         bool previewInEdit = false;  // runtime: is this entity previewed in Edit? (serialize as false)
         bool pingForward = true;     // runtime: ping-pong direction state
-        Uuid prevClip;               // transition state (filled later); harmless at rest
+        // How an active clip switch blends: inertialize (decay the pose offset, the default)
+        // or sustain a two-clip cross-fade. loopBlend > 0 inertializes across a Loop wrap.
+        enum class Transition : u8
+        {
+            Inertialize,
+            CrossFade
+        } transitionMode = Transition::Inertialize;
+        f32 loopBlend = 0.0f;  // seconds of wrap-blend for a Loop clip (0 = hard cut)
+        Uuid prevClip;         // active-transition state (runtime; idle/0 at rest)
         f32 transition = 0.0f;
         f32 transitionDuration = 0.0f;
     };
@@ -185,7 +193,7 @@ export namespace se
         bool primary = true;  // the scene renders through the first primary camera
         bool showModel = true;
         bool showFrustum = true;
-        f32 frustumMaxDistance = 25.0f;
+        f32 frustumMaxDistance = 10.0f;
     };
 
     // A directional light; the scene shades through the first one. direction points
