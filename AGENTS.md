@@ -132,20 +132,21 @@ Json     → Core
 Window   → {Core, Signal}
 Geometry → Core
 Scene    → {Core, Json}
+Animation→ {Core, Geometry, Scene}                pose/clip types + samplers (classic #include)
 Script   → {Core, Scene}                          (Lua 5.5 + LuaBridge3; only Host may import it)
 Rendering→ {Core, Window, Geometry}              partitions :Types :Detail :RenderGraph
 Assets   → {Core, Json, Geometry, Rendering, Scene}
 SceneEdit→ {Core, Signal, Scene, Json}            partition :Context
 Control  → {Core, Json, Window, Rendering, Scene, SceneEdit, Assets}   partition :Command
 App      → {Core, Window, Rendering}
-Host     → {Core, App, Window, Rendering, SceneEdit, Control, Scene, Script, Assets}   (the SaffronEngine exe)
+Host     → {Core, App, Window, Rendering, SceneEdit, Control, Scene, Animation, Script, Assets}   (the SaffronEngine exe)
 ```
 
 - `core`/`signal`/`app` use `import std`; `window` uses `import std` + the SDL3 **C** header (safe).
-- Modules wrapping heavy **C++** third-party headers (`rendering`, `scene`, `script`, `geometry`, `json`,
-  `assets`, `sceneedit`, `control`, `host`) use classic `#include` in the global module fragment and
-  **do NOT `import std`** (mixing breaks the TU). They are still consumed normally by the `import std`
-  modules — the BMI carries the std types.
+- Modules wrapping heavy **C++** third-party headers (`rendering`, `scene`, `animation`, `script`,
+  `geometry`, `json`, `assets`, `sceneedit`, `control`, `host`) use classic `#include` in the global
+  module fragment and **do NOT `import std`** (mixing breaks the TU). They are still consumed normally by
+  the `import std` modules — the BMI carries the std types.
 - Larger modules split into an interface partition + `.cpp` implementation units.
 - There is no engine UI toolkit: the in-viewport gizmo is a **native overlay** (`OverlayVertex` /
   `buildNativeGizmo` in `Saffron.Host`), and the full editor UI is the React/Tauri frontend.

@@ -61,6 +61,42 @@ export namespace se
         glm::vec4 weights{ 0.0f };  // normalized blend weights
     };
 
+    /// One animated joint channel: a sampled curve targeting a joint's translation,
+    /// rotation, or scale. A faithful, lossless mirror of a glTF animation channel +
+    /// sampler — bound to a joint by stable index plus the durable node name.
+    struct AnimTrack
+    {
+        /// Stable index into SkinnedMeshComponent.bones (resolved at import by name).
+        i32 joint = -1;
+        /// The glTF node name — the durable binding key (survives reorder/reimport).
+        std::string jointName;
+        enum class Path : u8
+        {
+            Translation,
+            Rotation,
+            Scale,
+        } path = Path::Translation;
+        enum class Interp : u8
+        {
+            Step,
+            Linear,
+            CubicSpline,
+        } interp = Interp::Linear;
+        std::vector<f32> times;   // sampler.input — strictly increasing, seconds
+        std::vector<f32> values;  // sampler.output — flat: vec3 per key (T/S) or quat
+                                  // xyzw per key (R); CubicSpline stores 3x
+                                  // (in-tangent, value, out-tangent) per key
+    };
+
+    /// A named animation clip: a bundle of joint tracks with a total duration. POD-ish
+    /// and serializable; the .sanim (SANM) writer/loader lives next to saveMeshSkinned.
+    struct AnimClip
+    {
+        std::string name;
+        f32 duration = 0.0f;  // max track end time, seconds
+        std::vector<AnimTrack> tracks;
+    };
+
     // One glTF node of the imported scene graph: name, parent index (-1 == root), and
     // the local TRS (rotation as the source quaternion; consumers convert to their
     // own Euler convention).
