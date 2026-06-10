@@ -305,6 +305,8 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
       const entity = await entityId(`Contract Mesh Assign ${process.pid}`);
       return { entity, slot: "mesh", asset: await meshAssetId() };
     }
+    case "skeleton-overlay-on":
+      return { show: true, axes: true, jointSize: 5 };
     case "step-one":
       return { frames: 1 };
     case "profiler-timestamps":
