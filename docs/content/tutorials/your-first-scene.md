@@ -104,8 +104,8 @@ The scene renders through the first camera whose `primary` flag is set, which a 
 ./cmd/se inspect "Main Camera"     # dumps every component as JSON
 ```
 
-In the editor: **Create ▸ Camera**, then aim it with the gizmo. A camera shows as a
-billboard icon you can click to select.
+In the editor: **Create ▸ Camera**, then aim it with the gizmo. In edit mode, a camera shows
+as a small camera model plus its frustum; both helpers are hidden while playing.
 
 ## Check it's drawing
 

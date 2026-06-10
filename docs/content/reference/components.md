@@ -59,6 +59,8 @@ A mesh imported with more than one material carries this instead of `MaterialCom
 | `nearPlane` | `f32` | `0.1` |
 | `farPlane` | `f32` | `100.0` |
 | `primary` | `bool` | `true` (scene renders through the first primary) |
+| `showModel` | `bool` | `true` (editor-only camera model) |
+| `showFrustum` | `bool` | `true` (editor-only frustum overlay) |
 
 ## `DirectionalLightComponent`
 | Field | Type | Default |

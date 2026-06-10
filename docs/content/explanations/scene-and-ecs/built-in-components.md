@@ -114,12 +114,18 @@ struct CameraComponent
     f32 nearPlane = 0.1f;
     f32 farPlane = 100.0f;
     bool primary = true;   // scene renders through the first primary camera
+    bool showModel = true;
+    bool showFrustum = true;
 };
 ```
 
 The camera's view comes from the entity's `TransformComponent`, not the component itself:
 `primaryCamera` inverts the transform's model matrix. The component carries only projection
 parameters. The scene renders through the first camera flagged `primary`.
+
+`showModel` and `showFrustum` control editor helpers only. In edit mode, the host draws the
+system camera model and dark-orange frustum from the camera's transform, FOV, and clip planes.
+Play mode does not render either helper.
 
 ## Light types
 

@@ -18,6 +18,16 @@ afterAll(async () => {
   rmSync(projectDir, { recursive: true, force: true });
 });
 
+interface Ref {
+  id: string;
+  name: string;
+}
+interface Inspect {
+  id: string;
+  name: string;
+  components: Record<string, any>;
+}
+
 test("fly-input look deltas converge to delta * lookSpeed", async () => {
   const before = await engine.call<EditorCamera>("get-camera");
 
@@ -50,5 +60,32 @@ test("the editor camera roundtrips through project save/load", async () => {
   expect(loaded.yaw).toBeCloseTo(saved.yaw, 4);
   expect(loaded.pitch).toBeCloseTo(saved.pitch, 4);
   expect(loaded.fov).toBeCloseTo(saved.fov, 4);
+  expect(engine.validationErrors()).toEqual([]);
+});
+
+test("scene camera editor helpers default on and roundtrip", async () => {
+  const camera = await engine.call<Ref>("add-entity", { args: ["camera"] });
+  const created = await engine.call<Inspect>("inspect", { entity: camera.id });
+  expect(created.components.Camera.showModel).toBe(true);
+  expect(created.components.Camera.showFrustum).toBe(true);
+
+  await engine.call("set-component-field", {
+    entity: camera.id,
+    component: "Camera",
+    field: "showModel",
+    value: false,
+  });
+  await engine.call("set-component-field", {
+    entity: camera.id,
+    component: "Camera",
+    field: "showFrustum",
+    value: false,
+  });
+  await engine.call("save-project", { path: `${projectDir}/project.json` });
+
+  await engine.call("load-project", { path: `${projectDir}/project.json` });
+  const loaded = await engine.call<Inspect>("inspect", { entity: camera.id });
+  expect(loaded.components.Camera.showModel).toBe(false);
+  expect(loaded.components.Camera.showFrustum).toBe(false);
   expect(engine.validationErrors()).toEqual([]);
 });
