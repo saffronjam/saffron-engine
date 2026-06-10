@@ -34,6 +34,7 @@ import Saffron.Rendering;
 import Saffron.SceneEdit;
 import Saffron.Control;
 import Saffron.Scene;
+import Saffron.Geometry;
 import Saffron.Animation;
 import Saffron.Script;
 import Saffron.Assets;
@@ -49,6 +50,7 @@ namespace se
         se::SceneEditContext* editor = nullptr;
         se::ControlContext* control = nullptr;
         se::AssetServer assets;
+        se::AnimationRuntime animation;         // per-session clip cache for the evaluator
         se::ScriptHost script;                  // the Lua runtime; the Host is its only owner
         se::SubscriptionId scriptSubscription;  // the onPlayStateChanged lifecycle hook
         bool scriptVmActive = false;            // a VM exists (Playing/Paused); stop destroys it
@@ -624,6 +626,7 @@ export namespace se
                 se::runSceneSerializationSelfTest();
                 se::runSceneHierarchySelfTest();
                 se::runPlayModeSelfTest();
+                se::runGeometrySelfTest(se::assetPath("models"));
                 if (auto animation = se::runAnimationSelfTest(); !animation)
                 {
                     se::logError(animation.error());
@@ -649,6 +652,7 @@ export namespace se
                 state->editor->projectName = project.name;
                 state->editor->projectDisplayName = project.displayName;
                 state->editor->scenePath = project.path;
+                state->animation.clipCache.clear();  // the new catalog rebinds clip ids
             };
             if (const char* selected = std::getenv("SAFFRON_PROJECT"); selected != nullptr && selected[0] != '\0')
             {
@@ -741,6 +745,13 @@ export namespace se
                 {
                     se::pollControl(*state->control, app.window, app.renderer, *state->editor, state->assets);
                 }
+                // Animation runs every frame in both Edit (preview) and Play, before
+                // scripts so a script can still override a bone the same frame. It only
+                // writes runtime PoseOverrideComponents, never the authored rest pose.
+                const se::AnimMode animMode =
+                    state->editor->playState == se::PlayState::Edit ? se::AnimMode::Edit : se::AnimMode::Play;
+                se::tickAnimation(state->animation, se::activeScene(*state->editor), state->assets.catalog,
+                                  state->assets.root, dt.seconds, animMode);
                 // Control first, tick second: a play/pause/step command that arrives this
                 // frame takes effect this frame (a step runs its tick the same frame).
                 se::tickPlay(*state->editor, dt.seconds);

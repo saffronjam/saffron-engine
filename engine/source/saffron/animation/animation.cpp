@@ -1,7 +1,8 @@
 module;
 
-// Same global-module-fragment shape as the interface unit: glm via classic
+// Same global-module-fragment shape as the interface unit: glm + entt via classic
 // includes, no `import std`.
+#include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -12,6 +13,7 @@ module;
 #include <format>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 module Saffron.Animation;
@@ -31,6 +33,159 @@ namespace se
         auto fromQuat(glm::quat q) -> glm::vec4
         {
             return { q.x, q.y, q.z, q.w };
+        }
+
+        // A bone's authored rest local TRS, read from its TransformComponent (Euler ->
+        // quat, matching transformMatrix). Identity if the handle is stale.
+        auto restPoseOf(Scene& scene, const SkinnedMeshComponent& skin, std::size_t i) -> JointPose
+        {
+            JointPose rest;
+            if (i >= skin.boneHandles.size())
+            {
+                return rest;
+            }
+            const Entity bone{ skin.boneHandles[i] };
+            if (!valid(scene, bone) || !hasComponent<TransformComponent>(scene, bone))
+            {
+                return rest;
+            }
+            const TransformComponent& transform = getComponent<TransformComponent>(scene, bone);
+            rest.translation = transform.translation;
+            rest.rotation = glm::quat(transform.rotation);
+            rest.scale = transform.scale;
+            return rest;
+        }
+
+        // Drop every pose override on a rig's bones so they revert to the rest pose.
+        void clearOverrides(Scene& scene, const SkinnedMeshComponent& skin)
+        {
+            for (const entt::entity handle : skin.boneHandles)
+            {
+                if (handle != entt::null && scene.registry.valid(handle))
+                {
+                    scene.registry.remove<PoseOverrideComponent>(handle);
+                }
+            }
+        }
+
+        // Resolve (and cache) a clip Uuid to its loaded AnimClip. A broken asset is
+        // negative-cached as an empty clip so it is not re-read every frame.
+        auto loadClip(AnimationRuntime& runtime, const AssetCatalog& catalog, std::string_view assetRoot, Uuid clip)
+            -> const AnimClip*
+        {
+            if (clip.value == 0)
+            {
+                return nullptr;
+            }
+            if (auto it = runtime.clipCache.find(clip.value); it != runtime.clipCache.end())
+            {
+                return &it->second;
+            }
+            const AssetEntry* entry = findAsset(catalog, clip);
+            if (entry == nullptr || entry->type != AssetType::Animation)
+            {
+                return nullptr;
+            }
+            const std::string path = std::string(assetRoot) + "/" + entry->path;
+            auto loaded = loadAnimation(path);
+            if (!loaded)
+            {
+                logWarn(std::format("animation: clip {} failed to load ('{}'): {}", clip.value, path, loaded.error()));
+                return &runtime.clipCache.emplace(clip.value, AnimClip{}).first->second;
+            }
+            return &runtime.clipCache.emplace(clip.value, std::move(*loaded)).first->second;
+        }
+
+        // Advance the playhead by dt*speed under the wrap mode. Once clamps + stops at an
+        // end; Loop wraps; PingPong bounces and flips direction.
+        void advanceTime(AnimationPlayerComponent& player, f32 duration, f32 dt)
+        {
+            const f32 delta = dt * player.speed;
+            if (player.wrap == AnimationPlayerComponent::Wrap::PingPong)
+            {
+                player.time = player.time + (player.pingForward ? delta : -delta);
+                if (player.time >= duration)
+                {
+                    player.time = 2.0f * duration - player.time;
+                    player.pingForward = false;
+                }
+                if (player.time <= 0.0f)
+                {
+                    player.time = -player.time;
+                    player.pingForward = true;
+                }
+                player.time = glm::clamp(player.time, 0.0f, duration);
+                return;
+            }
+            player.time = player.time + delta;
+            if (player.wrap == AnimationPlayerComponent::Wrap::Loop)
+            {
+                player.time = std::fmod(player.time, duration);
+                if (player.time < 0.0f)
+                {
+                    player.time = player.time + duration;
+                }
+                return;
+            }
+            if (player.time >= duration)
+            {
+                player.time = duration;
+                player.playing = false;
+            }
+            else if (player.time < 0.0f)
+            {
+                player.time = 0.0f;
+                player.playing = false;
+            }
+        }
+
+        // Per-joint blend of the animated local pose with an external producer's pose
+        // (IK/physics). Inert in v1 (all weights 0); the seam phase 13 fills.
+        auto blendJoint(const JointPose& base, const JointPose& over, f32 weight) -> JointPose
+        {
+            JointPose out;
+            out.translation = glm::mix(base.translation, over.translation, weight);
+            out.rotation = glm::normalize(glm::slerp(base.rotation, over.rotation, weight));
+            out.scale = glm::mix(base.scale, over.scale, weight);
+            return out;
+        }
+
+        // sampleClip, but each track is bound to its joint by index when sound and re-resolved
+        // by the durable node name when the index is stale (out of range or names disagree).
+        void sampleClipResolved(const AnimClip& clip, f32 t, const std::vector<std::string>& boneNames,
+                                const std::unordered_map<std::string, i32>& nameToIndex, PoseBuffer& out)
+        {
+            const auto jointCount = static_cast<i32>(out.local.size());
+            for (const AnimTrack& track : clip.tracks)
+            {
+                i32 joint = track.joint;
+                const bool stale = joint < 0 || joint >= jointCount ||
+                                   (!track.jointName.empty() && static_cast<std::size_t>(joint) < boneNames.size() &&
+                                    boneNames[static_cast<std::size_t>(joint)] != track.jointName);
+                if (stale)
+                {
+                    auto it = nameToIndex.find(track.jointName);
+                    joint = it != nameToIndex.end() ? it->second : -1;
+                }
+                if (joint < 0 || joint >= jointCount)
+                {
+                    continue;
+                }
+                const glm::vec4 v = sampleTrack(track, t);
+                const auto j = static_cast<std::size_t>(joint);
+                switch (track.path)
+                {
+                case AnimTrack::Path::Translation:
+                    out.local[j].translation = glm::vec3(v);
+                    break;
+                case AnimTrack::Path::Rotation:
+                    out.local[j].rotation = asQuat(v);
+                    break;
+                case AnimTrack::Path::Scale:
+                    out.local[j].scale = glm::vec3(v);
+                    break;
+                }
+            }
         }
     }
 
@@ -160,6 +315,75 @@ namespace se
         }
     }
 
+    void tickAnimation(AnimationRuntime& runtime, Scene& scene, const AssetCatalog& catalog, std::string_view assetRoot,
+                       f32 dt, AnimMode mode)
+    {
+        forEach<AnimationPlayerComponent, SkinnedMeshComponent>(
+            scene,
+            [&](Entity, AnimationPlayerComponent& player, SkinnedMeshComponent& skin)
+            {
+                // Play animates every rig; Edit previews only the timeline-selected one.
+                const bool active = mode == AnimMode::Play || player.previewInEdit;
+                const AnimClip* clip = active ? loadClip(runtime, catalog, assetRoot, player.clip) : nullptr;
+                if (clip == nullptr)
+                {
+                    clearOverrides(scene, skin);
+                    return;
+                }
+                if (player.playing && clip->duration > 0.0f)
+                {
+                    advanceTime(player, clip->duration, dt);
+                }
+
+                // Seed the pose with each bone's rest local TRS so untracked joints (and
+                // untracked channels of a tracked joint) keep their authored value, and
+                // collect the name<->index maps for durable track resolution.
+                const std::size_t jointCount = skin.bones.size();
+                PoseBuffer pose;
+                pose.local.resize(jointCount);
+                std::vector<std::string> boneNames(jointCount);
+                std::unordered_map<std::string, i32> nameToIndex;
+                for (std::size_t i = 0; i < jointCount; i = i + 1)
+                {
+                    pose.local[i] = restPoseOf(scene, skin, i);
+                    if (i < skin.boneHandles.size())
+                    {
+                        const Entity bone{ skin.boneHandles[i] };
+                        if (valid(scene, bone) && hasComponent<NameComponent>(scene, bone))
+                        {
+                            boneNames[i] = getComponent<NameComponent>(scene, bone).name;
+                            nameToIndex.emplace(boneNames[i], static_cast<i32>(i));
+                        }
+                    }
+                }
+                sampleClipResolved(*clip, player.time, boneNames, nameToIndex, pose);
+
+                // Write the blended local pose onto each bone as a runtime override. The
+                // blend layer is inert in v1 (all weights 0 -> final == sampled local).
+                for (std::size_t i = 0; i < jointCount; i = i + 1)
+                {
+                    JointPose finalPose = pose.local[i];
+                    if (i < pose.weight.size() && i < pose.override_.size() && pose.weight[i] > 0.0f)
+                    {
+                        finalPose = blendJoint(pose.local[i], pose.override_[i], pose.weight[i]);
+                    }
+                    if (i >= skin.boneHandles.size())
+                    {
+                        continue;
+                    }
+                    const entt::entity handle = skin.boneHandles[i];
+                    if (handle == entt::null || !scene.registry.valid(handle))
+                    {
+                        continue;
+                    }
+                    PoseOverrideComponent& override_ = scene.registry.emplace_or_replace<PoseOverrideComponent>(handle);
+                    override_.translation = finalPose.translation;
+                    override_.rotation = finalPose.rotation;
+                    override_.scale = finalPose.scale;
+                }
+            });
+    }
+
     auto runAnimationSelfTest() -> Result<void>
     {
         u32 failures = 0;
@@ -286,6 +510,130 @@ namespace se
             expect(glm::distance(pose.local[0].scale, glm::vec3(1.0f)) < eps, "clip S step holds");
             expect(glm::distance(pose.local[1].translation, glm::vec3(7.0f, 8.0f, 9.0f)) < eps,
                    "untracked joint keeps rest");
+        }
+
+        // .sanim IO round-trip (Phase 2): a two-track clip survives save -> load exactly.
+        {
+            AnimClip clip;
+            clip.name = "io_roundtrip";
+            clip.duration = 1.0f;
+            AnimTrack rot;
+            rot.joint = 1;
+            rot.jointName = "Tip";
+            rot.path = AnimTrack::Path::Rotation;
+            rot.interp = AnimTrack::Interp::Linear;
+            rot.times = { 0.0f, 1.0f };
+            rot.values = { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+            clip.tracks.push_back(rot);
+            AnimTrack trans;
+            trans.joint = 0;
+            trans.jointName = "Root";
+            trans.path = AnimTrack::Path::Translation;
+            trans.interp = AnimTrack::Interp::Step;
+            trans.times = { 0.0f, 0.5f };
+            trans.values = { 0.0f, 0.0f, 0.0f, 1.0f, 2.0f, 3.0f };
+            clip.tracks.push_back(trans);
+
+            const std::string path = "/tmp/saffron_selftest.sanim";
+            auto saved = saveAnimation(clip, path);
+            expect(saved.has_value(), "sanim save");
+            if (saved)
+            {
+                auto loaded = loadAnimation(path);
+                expect(loaded.has_value(), "sanim load");
+                if (loaded)
+                {
+                    expect(loaded->name == clip.name, "sanim name");
+                    expect(glm::abs(loaded->duration - clip.duration) < eps, "sanim duration");
+                    expect(loaded->tracks.size() == clip.tracks.size(), "sanim track count");
+                    bool tracksMatch = loaded->tracks.size() == clip.tracks.size();
+                    for (std::size_t i = 0; i < clip.tracks.size() && i < loaded->tracks.size(); i = i + 1)
+                    {
+                        const AnimTrack& a = clip.tracks[i];
+                        const AnimTrack& b = loaded->tracks[i];
+                        tracksMatch = tracksMatch && a.joint == b.joint && a.jointName == b.jointName &&
+                                      a.path == b.path && a.interp == b.interp && a.times == b.times &&
+                                      a.values == b.values;
+                    }
+                    expect(tracksMatch, "sanim track fields");
+                }
+            }
+        }
+
+        // Evaluator (Phase 3): a previewInEdit rig writes a PoseOverrideComponent that
+        // animates the bone and shows through world composition, while the authored
+        // rest-pose TransformComponent stays put; clearing the preview reverts it.
+        {
+            const f32 s = std::sqrt(0.5f);
+            Scene scene;
+            Entity rootBone = createEntity(scene, "Root");
+            Entity tipBone = createEntity(scene, "Tip");
+            Entity meshEntity = createEntity(scene, "Rig");
+            SkinnedMeshComponent& skin = addComponent<SkinnedMeshComponent>(scene, meshEntity);
+            skin.bones = { getComponent<IdComponent>(scene, rootBone).id,
+                           getComponent<IdComponent>(scene, tipBone).id };
+            skin.boneHandles = { rootBone.handle, tipBone.handle };
+            AnimationPlayerComponent& player = addComponent<AnimationPlayerComponent>(scene, meshEntity);
+            player.clip = Uuid{ 1234 };
+            player.wrap = AnimationPlayerComponent::Wrap::Loop;
+
+            // Seed the clip cache directly (bypass the catalog/disk): joint 0 rotates 90 deg
+            // about Y over 1s, LINEAR.
+            AnimationRuntime runtime;
+            AnimClip clip;
+            clip.name = "spin";
+            clip.duration = 1.0f;
+            AnimTrack rot;
+            rot.joint = 0;
+            rot.jointName = "Root";
+            rot.path = AnimTrack::Path::Rotation;
+            rot.interp = AnimTrack::Interp::Linear;
+            rot.times = { 0.0f, 1.0f };
+            rot.values = { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, s, 0.0f, s };
+            clip.tracks.push_back(rot);
+            runtime.clipCache.emplace(player.clip.value, clip);
+            const AssetCatalog catalog;
+
+            const glm::quat q45 = glm::angleAxis(glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+            // Edit, no preview: nothing animates, no override appears.
+            tickAnimation(runtime, scene, catalog, "", 0.5f, AnimMode::Edit);
+            expect(!scene.registry.all_of<PoseOverrideComponent>(rootBone.handle), "edit without preview is inert");
+
+            // Edit + preview + playing: the bone is driven to the 45 deg midpoint.
+            player.previewInEdit = true;
+            player.playing = true;
+            player.time = 0.0f;
+            tickAnimation(runtime, scene, catalog, "", 0.5f, AnimMode::Edit);
+            expect(glm::abs(player.time - 0.5f) < eps, "edit preview advances the playhead");
+            const auto* over = scene.registry.try_get<PoseOverrideComponent>(rootBone.handle);
+            expect(over != nullptr, "preview writes a pose override");
+            if (over != nullptr)
+            {
+                expect(quatClose(over->rotation, q45), "override holds the sampled rotation");
+            }
+            // Rest pose untouched (non-destructive), so preview never dirties the project.
+            expect(glm::length(getComponent<TransformComponent>(scene, rootBone).rotation) < eps,
+                   "rest-pose TransformComponent stays at identity");
+            // World composition prefers the override.
+            updateWorldTransforms(scene);
+            expect(quatClose(worldRotation(scene, rootBone), q45), "world transform reflects the override");
+
+            // Clearing the preview reverts the bone to rest next tick.
+            player.previewInEdit = false;
+            tickAnimation(runtime, scene, catalog, "", 0.0f, AnimMode::Edit);
+            expect(!scene.registry.all_of<PoseOverrideComponent>(rootBone.handle),
+                   "clearing preview removes the override");
+            updateWorldTransforms(scene);
+            expect(quatClose(worldRotation(scene, rootBone), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)),
+                   "bone reverts to rest after preview clears");
+
+            // Play animates every rig regardless of previewInEdit.
+            player.previewInEdit = false;
+            player.playing = true;
+            player.time = 0.0f;
+            tickAnimation(runtime, scene, catalog, "", 0.5f, AnimMode::Play);
+            expect(scene.registry.all_of<PoseOverrideComponent>(rootBone.handle), "play animates without preview");
         }
 
         if (failures != 0)
