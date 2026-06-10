@@ -37,10 +37,7 @@ interface ManifestCommand {
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(dirname(scriptDir));
 const dtoFile = join(repoRoot, "engine/source/saffron/control/control_dto.cppm");
-const cppOut = join(
-  repoRoot,
-  "engine/source/saffron/control/control_dto_serde.generated.cpp",
-);
+const cppOut = join(repoRoot, "engine/source/saffron/control/control_dto_serde.generated.cpp");
 const sceneSerdeOut = join(
   repoRoot,
   "engine/source/saffron/scene/scene_component_serde.generated.cpp",
@@ -81,7 +78,10 @@ const enumWireNames = new Map<string, Record<string, string>>([
   ["GizmoOpDto", { Translate: "translate", Rotate: "rotate", Scale: "scale" }],
   ["GizmoSpaceDto", { World: "world", Local: "local" }],
   ["GizmoPointerPhase", { Hover: "hover", Begin: "begin", Drag: "drag", End: "end" }],
-  ["AaModeDto", { Off: "off", Fxaa: "fxaa", Taa: "taa", Msaa2: "msaa2", Msaa4: "msaa4", Msaa8: "msaa8" }],
+  [
+    "AaModeDto",
+    { Off: "off", Fxaa: "fxaa", Taa: "taa", Msaa2: "msaa2", Msaa4: "msaa4", Msaa8: "msaa8" },
+  ],
   ["GiModeDto", { Off: "off", Ddgi: "ddgi" }],
   ["AssetSlotDto", { Mesh: "mesh", Albedo: "albedo", MetallicRoughness: "metallic-roughness" }],
   ["ScreenshotTargetDto", { Viewport: "viewport", Window: "window" }],
@@ -96,7 +96,12 @@ const enumWireNames = new Map<string, Record<string, string>>([
 
 const commands: CommandDef[] = [
   { name: "ping", params: "PingParams", result: "PingResult", summary: "liveness + engine info" },
-  { name: "render-stats", params: "EmptyParams", result: "RenderStatsDto", summary: "last frame draw counters" },
+  {
+    name: "render-stats",
+    params: "EmptyParams",
+    result: "RenderStatsDto",
+    summary: "last frame draw counters",
+  },
   {
     name: "profiler.set-mode",
     params: "ProfilerSetModeParams",
@@ -157,10 +162,30 @@ const commands: CommandDef[] = [
     result: "ActiveAlarmsDto",
     summary: "currently firing perf alarms",
   },
-  { name: "set-aa", params: "SetAaParams", result: "SetAaResult", summary: "set anti-aliasing mode" },
-  { name: "set-clustered", params: "ToggleParams", result: "SetClusteredResult", summary: "toggle clustered lighting" },
-  { name: "set-ibl", params: "ToggleParams", result: "SetIblResult", summary: "toggle image-based lighting" },
-  { name: "set-ssao", params: "ToggleParams", result: "SetSsaoResult", summary: "toggle ambient occlusion" },
+  {
+    name: "set-aa",
+    params: "SetAaParams",
+    result: "SetAaResult",
+    summary: "set anti-aliasing mode",
+  },
+  {
+    name: "set-clustered",
+    params: "ToggleParams",
+    result: "SetClusteredResult",
+    summary: "toggle clustered lighting",
+  },
+  {
+    name: "set-ibl",
+    params: "ToggleParams",
+    result: "SetIblResult",
+    summary: "toggle image-based lighting",
+  },
+  {
+    name: "set-ssao",
+    params: "ToggleParams",
+    result: "SetSsaoResult",
+    summary: "toggle ambient occlusion",
+  },
   {
     name: "set-contact-shadows",
     params: "ToggleParams",
@@ -168,11 +193,31 @@ const commands: CommandDef[] = [
     summary: "toggle contact shadows",
   },
   { name: "set-ssgi", params: "ToggleParams", result: "SetSsgiResult", summary: "toggle SSGI" },
-  { name: "set-rt-shadows", params: "ToggleParams", result: "SetRtShadowsResult", summary: "toggle ray-traced shadows" },
-  { name: "set-restir", params: "ToggleParams", result: "SetRestirResult", summary: "toggle ReSTIR" },
+  {
+    name: "set-rt-shadows",
+    params: "ToggleParams",
+    result: "SetRtShadowsResult",
+    summary: "toggle ray-traced shadows",
+  },
+  {
+    name: "set-restir",
+    params: "ToggleParams",
+    result: "SetRestirResult",
+    summary: "toggle ReSTIR",
+  },
   { name: "set-gi", params: "SetGiParams", result: "SetGiResult", summary: "set GI mode" },
-  { name: "set-shadows", params: "ToggleParams", result: "SetShadowsResult", summary: "toggle shadows" },
-  { name: "set-skinning", params: "ToggleParams", result: "SetSkinningResult", summary: "toggle GPU skinning" },
+  {
+    name: "set-shadows",
+    params: "ToggleParams",
+    result: "SetShadowsResult",
+    summary: "toggle shadows",
+  },
+  {
+    name: "set-skinning",
+    params: "ToggleParams",
+    result: "SetSkinningResult",
+    summary: "toggle GPU skinning",
+  },
   {
     name: "set-depth-prepass",
     params: "ToggleParams",
@@ -191,7 +236,12 @@ const commands: CommandDef[] = [
     result: "SetViewportSizeResult",
     summary: "set the offscreen render size",
   },
-  { name: "list-entities", params: "EmptyParams", result: "EntityList", summary: "list all entities" },
+  {
+    name: "list-entities",
+    params: "EmptyParams",
+    result: "EntityList",
+    summary: "list all entities",
+  },
   {
     name: "list-components",
     params: "EmptyParams",
@@ -286,11 +336,36 @@ const commands: CommandDef[] = [
     summary: "get current selection",
   },
   { name: "deselect", params: "EmptyParams", result: "DeselectResult", summary: "clear selection" },
-  { name: "play", params: "EmptyParams", result: "PlayStateResult", summary: "enter or resume play mode" },
-  { name: "pause", params: "EmptyParams", result: "PlayStateResult", summary: "pause the running scene" },
-  { name: "step", params: "StepParams", result: "PlayStateResult", summary: "step {frames=1} while paused" },
-  { name: "stop", params: "EmptyParams", result: "PlayStateResult", summary: "stop play and restore the authored scene" },
-  { name: "get-play-state", params: "EmptyParams", result: "PlayStateResult", summary: "current play state" },
+  {
+    name: "play",
+    params: "EmptyParams",
+    result: "PlayStateResult",
+    summary: "enter or resume play mode",
+  },
+  {
+    name: "pause",
+    params: "EmptyParams",
+    result: "PlayStateResult",
+    summary: "pause the running scene",
+  },
+  {
+    name: "step",
+    params: "StepParams",
+    result: "PlayStateResult",
+    summary: "step {frames=1} while paused",
+  },
+  {
+    name: "stop",
+    params: "EmptyParams",
+    result: "PlayStateResult",
+    summary: "stop play and restore the authored scene",
+  },
+  {
+    name: "get-play-state",
+    params: "EmptyParams",
+    result: "PlayStateResult",
+    summary: "current play state",
+  },
   {
     name: "get-script-status",
     params: "EmptyParams",
@@ -366,6 +441,12 @@ const commands: CommandDef[] = [
     summary: "stream editor fly-cam input",
   },
   {
+    name: "script-input",
+    params: "ScriptInputParams",
+    result: "ScriptInputResult",
+    summary: "set Lua gameplay key state",
+  },
+  {
     name: "set-probes",
     params: "SetProbesParams",
     result: "SetProbesResult",
@@ -389,19 +470,54 @@ const commands: CommandDef[] = [
     result: "SetExposureResult",
     summary: "set-exposure {ev}",
   },
-  { name: "get-project", params: "EmptyParams", result: "ProjectInfoDto", summary: "active project metadata" },
-  { name: "new-project", params: "NewProjectParams", result: "ProjectInfoDto", summary: "new-project {name}" },
+  {
+    name: "get-project",
+    params: "EmptyParams",
+    result: "ProjectInfoDto",
+    summary: "active project metadata",
+  },
+  {
+    name: "new-project",
+    params: "NewProjectParams",
+    result: "ProjectInfoDto",
+    summary: "new-project {name}",
+  },
   {
     name: "create-script",
     params: "CreateScriptParams",
     result: "CreateScriptResult",
     summary: "boilerplate .lua under the project src/",
   },
-  { name: "open-project", params: "PathParams", result: "ProjectInfoDto", summary: "open-project {path}" },
-  { name: "import-model", params: "PathParams", result: "ImportModelResult", summary: "import-model {path}" },
-  { name: "import-texture", params: "PathParams", result: "ImportTextureResult", summary: "import-texture {path}" },
-  { name: "list-assets", params: "EmptyParams", result: "AssetList", summary: "list project asset catalog" },
-  { name: "rename-asset", params: "RenameAssetParams", result: "AssetRef", summary: "rename-asset {asset, name}" },
+  {
+    name: "open-project",
+    params: "PathParams",
+    result: "ProjectInfoDto",
+    summary: "open-project {path}",
+  },
+  {
+    name: "import-model",
+    params: "PathParams",
+    result: "ImportModelResult",
+    summary: "import-model {path}",
+  },
+  {
+    name: "import-texture",
+    params: "PathParams",
+    result: "ImportTextureResult",
+    summary: "import-texture {path}",
+  },
+  {
+    name: "list-assets",
+    params: "EmptyParams",
+    result: "AssetList",
+    summary: "list project asset catalog",
+  },
+  {
+    name: "rename-asset",
+    params: "RenameAssetParams",
+    result: "AssetRef",
+    summary: "rename-asset {asset, name}",
+  },
   {
     name: "create-asset-folder",
     params: "CreateAssetFolderParams",
@@ -420,7 +536,12 @@ const commands: CommandDef[] = [
     result: "AssetList",
     summary: "delete virtual asset folder",
   },
-  { name: "move-asset", params: "MoveAssetParams", result: "AssetRef", summary: "move asset to virtual folder" },
+  {
+    name: "move-asset",
+    params: "MoveAssetParams",
+    result: "AssetRef",
+    summary: "move asset to virtual folder",
+  },
   {
     name: "asset-usages",
     params: "AssetUsagesParams",
@@ -433,16 +554,56 @@ const commands: CommandDef[] = [
     result: "AssetMetadataDto",
     summary: "probe asset metadata (size, vertices, created)",
   },
-  { name: "delete-asset", params: "DeleteAssetParams", result: "DeleteAssetResult", summary: "delete asset" },
-  { name: "assign-asset", params: "AssignAssetParams", result: "AssignAssetResult", summary: "assign asset to entity" },
+  {
+    name: "delete-asset",
+    params: "DeleteAssetParams",
+    result: "DeleteAssetResult",
+    summary: "delete asset",
+  },
+  {
+    name: "assign-asset",
+    params: "AssignAssetParams",
+    result: "AssignAssetResult",
+    summary: "assign asset to entity",
+  },
   { name: "save-scene", params: "PathParams", result: "PathResult", summary: "save-scene {path}" },
   { name: "load-scene", params: "PathParams", result: "PathResult", summary: "load-scene {path}" },
-  { name: "save-project", params: "OptionalPathParams", result: "ProjectInfoDto", summary: "save active project" },
-  { name: "load-project", params: "OptionalPathParams", result: "ProjectInfoDto", summary: "load-project {path}" },
-  { name: "reload-project", params: "EmptyParams", result: "ProjectInfoDto", summary: "reload the active project" },
-  { name: "screenshot", params: "ScreenshotParams", result: "ScreenshotResult", summary: "capture screenshot" },
-  { name: "get-thumbnail", params: "ThumbnailParams", result: "ThumbnailResult", summary: "get asset thumbnail" },
-  { name: "view-asset", params: "ThumbnailParams", result: "ThumbnailResult", summary: "view asset thumbnail" },
+  {
+    name: "save-project",
+    params: "OptionalPathParams",
+    result: "ProjectInfoDto",
+    summary: "save active project",
+  },
+  {
+    name: "load-project",
+    params: "OptionalPathParams",
+    result: "ProjectInfoDto",
+    summary: "load-project {path}",
+  },
+  {
+    name: "reload-project",
+    params: "EmptyParams",
+    result: "ProjectInfoDto",
+    summary: "reload the active project",
+  },
+  {
+    name: "screenshot",
+    params: "ScreenshotParams",
+    result: "ScreenshotResult",
+    summary: "capture screenshot",
+  },
+  {
+    name: "get-thumbnail",
+    params: "ThumbnailParams",
+    result: "ThumbnailResult",
+    summary: "get asset thumbnail",
+  },
+  {
+    name: "view-asset",
+    params: "ThumbnailParams",
+    result: "ThumbnailResult",
+    summary: "view asset thumbnail",
+  },
   { name: "quit", params: "EmptyParams", result: "QuitResult", summary: "close the running app" },
 ];
 
@@ -511,6 +672,7 @@ const commandFixtures = new Map<string, string>([
   ["set-gizmo", "gizmo-rotate-local"],
   ["gizmo-pointer", "gizmo-hover"],
   ["fly-input", "fly-idle"],
+  ["script-input", "script-input-w"],
   ["set-viewport-size", "viewport-size"],
   ["set-probes", "toggle-on"],
   ["recapture-probes", "empty"],
@@ -598,7 +760,11 @@ function optionalInner(type: string): string | undefined {
   return /^std::optional<(.+)>$/.exec(type)?.[1].trim();
 }
 
-function validateType(type: string, structs: Map<string, StructDef>, enums: Map<string, EnumDef>): void {
+function validateType(
+  type: string,
+  structs: Map<string, StructDef>,
+  enums: Map<string, EnumDef>,
+): void {
   if (scalarTypes.has(type) || structs.has(type) || enums.has(type)) {
     return;
   }
@@ -754,7 +920,10 @@ function emitEnumHelpers(enums: Map<string, EnumDef>): string {
         })
         .join("\n");
       const writeCases = def.values
-        .map((value) => `            case ${def.name}::${value}: return ${JSON.stringify(names[value])};`)
+        .map(
+          (value) =>
+            `            case ${def.name}::${value}: return ${JSON.stringify(names[value])};`,
+        )
         .join("\n");
       return `        auto read${def.name}(const Json& value, std::string_view key) -> Result<${def.name}>
         {
@@ -777,8 +946,14 @@ ${writeCases}
 }
 
 function emitCpp(structs: Map<string, StructDef>, enums: Map<string, EnumDef>): string {
-  const parseNames = transitiveStructs(commands.map((command) => command.params), structs);
-  const toJsonNames = transitiveStructs([...commands.map((command) => command.result), "Vec3", "Vec4"], structs);
+  const parseNames = transitiveStructs(
+    commands.map((command) => command.params),
+    structs,
+  );
+  const toJsonNames = transitiveStructs(
+    [...commands.map((command) => command.result), "Vec3", "Vec4"],
+    structs,
+  );
   const parseDefs = requireStructs(structs, parseNames);
   const toJsonDefs = requireStructs(structs, toJsonNames);
   for (const def of [...parseDefs, ...toJsonDefs]) {
@@ -1243,6 +1418,8 @@ export interface Camera {
   near: number;
   far: number;
   primary: boolean;
+  showModel: boolean;
+  showFrustum: boolean;
 }
 
 export interface Material {
@@ -1358,8 +1535,12 @@ export type ComponentBody =
   | SkinnedMesh
   | Bone
   | Record<string, unknown>;`;
-  const paramsMap = commands.map((command) => `  ${JSON.stringify(command.name)}: ${command.params};`).join("\n");
-  const resultMap = commands.map((command) => `  ${JSON.stringify(command.name)}: ${command.result};`).join("\n");
+  const paramsMap = commands
+    .map((command) => `  ${JSON.stringify(command.name)}: ${command.params};`)
+    .join("\n");
+  const resultMap = commands
+    .map((command) => `  ${JSON.stringify(command.name)}: ${command.result};`)
+    .join("\n");
   return `/**
  * GENERATED - do not edit.
  *
@@ -1487,8 +1668,15 @@ function componentSchemas(): Record<string, unknown> {
     Camera: {
       type: "object",
       additionalProperties: false,
-      properties: { fov: { type: "number" }, near: { type: "number" }, far: { type: "number" }, primary: { type: "boolean" } },
-      required: ["fov", "near", "far", "primary"],
+      properties: {
+        fov: { type: "number" },
+        near: { type: "number" },
+        far: { type: "number" },
+        primary: { type: "boolean" },
+        showModel: { type: "boolean" },
+        showFrustum: { type: "boolean" },
+      },
+      required: ["fov", "near", "far", "primary", "showModel", "showFrustum"],
     },
     Material: {
       type: "object",
@@ -1503,7 +1691,16 @@ function componentSchemas(): Record<string, unknown> {
         emissiveStrength: { type: "number" },
         unlit: { type: "boolean" },
       },
-      required: ["baseColor", "albedoTexture", "metallicRoughnessTexture", "metallic", "roughness", "emissive", "emissiveStrength", "unlit"],
+      required: [
+        "baseColor",
+        "albedoTexture",
+        "metallicRoughnessTexture",
+        "metallic",
+        "roughness",
+        "emissive",
+        "emissiveStrength",
+        "unlit",
+      ],
     },
     MaterialSet: {
       type: "object",
@@ -1530,7 +1727,12 @@ function componentSchemas(): Record<string, unknown> {
     DirectionalLight: {
       type: "object",
       additionalProperties: false,
-      properties: { direction: vec3, color: vec3, intensity: { type: "number" }, ambient: { type: "number" } },
+      properties: {
+        direction: vec3,
+        color: vec3,
+        intensity: { type: "number" },
+        ambient: { type: "number" },
+      },
       required: ["direction", "color", "intensity", "ambient"],
     },
     PointLight: {
@@ -1622,9 +1824,13 @@ function componentSchemas(): Record<string, unknown> {
   schemas.Components = {
     type: "object",
     additionalProperties: false,
-    properties: Object.fromEntries(componentNames.map((name) => [name, { $ref: `#/components/schemas/${name}` }])),
+    properties: Object.fromEntries(
+      componentNames.map((name) => [name, { $ref: `#/components/schemas/${name}` }]),
+    ),
   };
-  schemas.ComponentBody = { oneOf: componentNames.map((name) => ({ $ref: `#/components/schemas/${name}` })) };
+  schemas.ComponentBody = {
+    oneOf: componentNames.map((name) => ({ $ref: `#/components/schemas/${name}` })),
+  };
   schemas.Environment = {
     type: "object",
     additionalProperties: false,
@@ -1678,7 +1884,10 @@ function emitOpenRpc(structs: Map<string, StructDef>): string {
       },
     })),
     components: {
-      schemas: { ...Object.fromEntries(schemaNames.map((name) => [name, schemaFor(structs.get(name)!)])), ...componentSchemas() },
+      schemas: {
+        ...Object.fromEntries(schemaNames.map((name) => [name, schemaFor(structs.get(name)!)])),
+        ...componentSchemas(),
+      },
     },
   };
   return `${JSON.stringify(doc, null, 2)}\n`;
@@ -1704,9 +1913,7 @@ function emitManifest(): string {
     {
       generatedBy: "tools/gen-control-dto/gen.ts",
       commands: manifestCommands,
-      skips: [
-        { name: "help", reason: "reflective registry" },
-      ],
+      skips: [{ name: "help", reason: "reflective registry" }],
     },
     null,
     2,
@@ -1855,7 +2062,8 @@ namespace se
     auto cameraComponentToJson(const CameraComponent& c) -> nlohmann::json
     {
         return nlohmann::json{ { "fov", c.fov }, { "near", c.nearPlane },
-                               { "far", c.farPlane }, { "primary", c.primary } };
+                               { "far", c.farPlane }, { "primary", c.primary },
+                               { "showModel", c.showModel }, { "showFrustum", c.showFrustum } };
     }
 
     auto cameraComponentFromJson(CameraComponent& c, const nlohmann::json& j) -> Result<void>
@@ -1864,6 +2072,8 @@ namespace se
         c.nearPlane = jsonF32Or(j, "near", 0.1f);
         c.farPlane = jsonF32Or(j, "far", 100.0f);
         c.primary = jsonBoolOr(j, "primary", true);
+        c.showModel = jsonBoolOr(j, "showModel", true);
+        c.showFrustum = jsonBoolOr(j, "showFrustum", true);
         return {};
     }
 

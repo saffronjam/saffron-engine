@@ -1176,6 +1176,24 @@
       }
     },
     {
+      "name": "script-input",
+      "summary": "set Lua gameplay key state",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/ScriptInputParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ScriptInputResult"
+        }
+      }
+    },
+    {
       "name": "set-probes",
       "summary": "toggle reflection-probe sampling",
       "params": [
@@ -3772,6 +3790,36 @@
           "defaultValue"
         ]
       },
+      "ScriptInputParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "ScriptInputResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
       "ScriptStatusResult": {
         "type": "object",
         "additionalProperties": false,
@@ -4736,13 +4784,21 @@
           },
           "primary": {
             "type": "boolean"
+          },
+          "showModel": {
+            "type": "boolean"
+          },
+          "showFrustum": {
+            "type": "boolean"
           }
         },
         "required": [
           "fov",
           "near",
           "far",
-          "primary"
+          "primary",
+          "showModel",
+          "showFrustum"
         ]
       },
       "Material": {

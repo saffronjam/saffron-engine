@@ -457,6 +457,13 @@
       "fixture": "fly-idle"
     },
     {
+      "name": "script-input",
+      "params": "ScriptInputParams",
+      "result": "ScriptInputResult",
+      "status": "typed",
+      "fixture": "script-input-w"
+    },
+    {
       "name": "set-probes",
       "params": "SetProbesParams",
       "result": "SetProbesResult",

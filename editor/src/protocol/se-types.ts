@@ -25,6 +25,8 @@ export interface Camera {
   near: number;
   far: number;
   primary: boolean;
+  showModel: boolean;
+  showFrustum: boolean;
 }
 
 export interface Material {
@@ -770,6 +772,14 @@ export interface FlyInputResult {
   active: boolean;
 }
 
+export interface ScriptInputParams {
+  keys: string[];
+}
+
+export interface ScriptInputResult {
+  keys: string[];
+}
+
 export interface SetProbesParams {
   enabled?: boolean;
 }
@@ -1041,6 +1051,7 @@ export interface CommandParamsMap {
   "set-gizmo": SetGizmoParams;
   "gizmo-pointer": GizmoPointerParams;
   "fly-input": FlyInputParams;
+  "script-input": ScriptInputParams;
   "set-probes": SetProbesParams;
   "recapture-probes": EmptyParams;
   "list-probes": EmptyParams;
@@ -1138,6 +1149,7 @@ export interface CommandResultMap {
   "set-gizmo": GizmoState;
   "gizmo-pointer": GizmoPointerResult;
   "fly-input": FlyInputResult;
+  "script-input": ScriptInputResult;
   "set-probes": SetProbesResult;
   "recapture-probes": RecaptureProbesResult;
   "list-probes": ListProbesResult;
