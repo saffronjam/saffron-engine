@@ -9,7 +9,7 @@ import { ArrowDown, ArrowUp, FileCode, FilePlus2, FolderOpen, RotateCcw, X } fro
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { client } from "../control/client";
-import { useEditorStore } from "../state/store";
+import { useEditorStore, withNativeDialog } from "../state/store";
 import { errorText, notifyError } from "../lib/flash";
 import { makeCoalescer, type Coalescer } from "../control/coalesce";
 import { humanizeFieldName } from "@/lib/humanize";
@@ -78,11 +78,14 @@ export function ScriptSlots({ entityId, scripts }: { entityId: string; scripts: 
 
   const onAssign = async (slotIndex?: number): Promise<void> => {
     const root = project?.root ?? "";
-    const picked = await open({
-      title: "Assign script",
-      filters: [{ name: "Lua scripts", extensions: ["lua"] }],
-      multiple: false,
-    });
+    const picked = await withNativeDialog(() =>
+      open({
+        title: "Assign script",
+        defaultPath: root ? `${root}/src` : undefined,
+        filters: [{ name: "Lua scripts", extensions: ["lua"] }],
+        multiple: false,
+      }),
+    );
     if (typeof picked !== "string") {
       return;
     }
