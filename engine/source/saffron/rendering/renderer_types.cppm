@@ -887,13 +887,18 @@ export namespace se
         glm::vec2 position;  // clip-space NDC ([-1,1])
         glm::vec4 color;
         glm::vec4 edge{ 0.0f, 0.0f, 0.0f, 0.0f };
+        f32 depth = 0.0f;  // NDC z ([0,1]); 0 = on the near plane (on top). Only the
+                           // depth-tested range uses it; on-top geometry leaves it 0.
     };
 
     // Per-frame editor overlay geometry, drawn into the post-tonemap scene color so it
-    // composites under present-only mode. Buffers grow on demand.
+    // composites under present-only mode. Buffers grow on demand. The list is laid out
+    // depth-tested range first ([0, depthTestedCount)) then the always-on-top range, so the
+    // overlay pass can draw each range with its own pipeline from one buffer.
     struct OverlayState
     {
         std::vector<OverlayVertex> vertices;
+        u32 depthTestedCount = 0;
         std::array<Ref<Buffer>, MaxFramesInFlight> buffers;
         std::array<u32, MaxFramesInFlight> capacity{};
     };
@@ -1098,7 +1103,8 @@ export namespace se
         Ref<Pipeline> restirResolve;  // ReSTIR resolve (1 shadow ray) + shade
         Ref<Pipeline> fxaa;           // compute FXAA post-process
         Ref<Pipeline> cull;           // compute light-cull (clustered forward)
-        Ref<Pipeline> overlay;        // screen-space editor overlay (gizmo + billboards)
+        Ref<Pipeline> overlay;        // screen-space editor overlay (gizmo + billboards), no depth test
+        Ref<Pipeline> overlayDepth;   // overlay variant that depth-tests against the scene depth
         std::unordered_map<std::string, Ref<Pipeline>> cache;
     };
 
@@ -1577,10 +1583,12 @@ export namespace se
 
     // The screen-space editor overlay pipeline (gizmo handles + entity billboards). Built
     // once in initDescriptorResources; the overlay pass draws the per-frame vertex list.
-    auto newOverlayPipeline(Renderer& renderer) -> Result<Ref<Pipeline>>;
-    // Stashes the editor overlay's screen-space triangle list for the current frame; the
-    // editor-overlay graph pass uploads + draws it over the tonemapped scene color.
-    void submitOverlay(Renderer& renderer, std::vector<OverlayVertex> vertices);
+    // `depthTest` builds the variant that reads the scene depth (write off, less-or-equal).
+    auto newOverlayPipeline(Renderer& renderer, bool depthTest) -> Result<Ref<Pipeline>>;
+    // Stashes the editor overlay triangle list for the current frame; the editor-overlay graph
+    // pass uploads + draws it over the tonemapped scene color. `depthTested` (camera frustums)
+    // is occluded by scene geometry; `onTop` (handles, billboards) always draws.
+    void submitOverlay(Renderer& renderer, std::vector<OverlayVertex> depthTested, std::vector<OverlayVertex> onTop);
 
     // The offscreen Viewport target the editor samples + displays in a panel.
     void setViewportDesiredSize(Renderer& renderer, u32 width, u32 height);

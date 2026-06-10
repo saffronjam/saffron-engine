@@ -55,8 +55,9 @@ export namespace se
 
     /// A color or depth attachment binding for a graphics pass. The write usage and
     /// the layout transition are derived; only the load/store/clear are declared here.
-    /// `resolve` (color only) is an MSAA resolve target: the multisampled attachment is
-    /// resolved into it at end-of-pass; the graph treats it as a second color write.
+    /// `resolve` is an MSAA resolve target: the multisampled attachment is resolved into it
+    /// at end-of-pass (color averaged, depth via sample 0); the graph treats it as a second
+    /// write of the matching kind.
     struct RgAttachment
     {
         RgResource resource;
@@ -591,6 +592,12 @@ namespace se
             {
                 applyAccess(graph.resources[pass.depth->resource.index], usageInfo(RgUsage::DepthWrite), imageBarriers,
                             memoryBarriers);
+                if (pass.depth->resolve)
+                {
+                    // The depth resolve target is written at end-of-pass — a second depth write.
+                    applyAccess(graph.resources[pass.depth->resolve->index], usageInfo(RgUsage::DepthWrite),
+                                imageBarriers, memoryBarriers);
+                }
             }
 
             if (!imageBarriers.empty() || !memoryBarriers.empty())
@@ -637,6 +644,14 @@ namespace se
                     depthInfo.loadOp = pass.depth->loadOp;
                     depthInfo.storeOp = pass.depth->storeOp;
                     depthInfo.clearValue = pass.depth->clearValue;
+                    if (pass.depth->resolve)
+                    {
+                        // Resolve the multisampled depth into a 1x target (sample 0 is enough
+                        // for editor occlusion and is always a supported resolve mode).
+                        depthInfo.resolveMode = vk::ResolveModeFlagBits::eSampleZero;
+                        depthInfo.resolveImageView = graph.resources[pass.depth->resolve->index].view;
+                        depthInfo.resolveImageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+                    }
                     rendering.setPDepthAttachment(&depthInfo);
                 }
                 cmd.beginRendering(rendering);

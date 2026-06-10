@@ -78,7 +78,7 @@ namespace se
     }
 
     void addLine(std::vector<se::OverlayVertex>& vertices, glm::vec2 aPx, glm::vec2 bPx, se::f32 thickness,
-                 glm::vec4 color, se::u32 width, se::u32 height)
+                 glm::vec4 color, se::u32 width, se::u32 height, se::f32 aDepth = 0.0f, se::f32 bDepth = 0.0f)
     {
         const glm::vec2 delta = bPx - aPx;
         const se::f32 len = glm::length(delta);
@@ -99,12 +99,12 @@ namespace se
         const glm::vec2 a1 = se::pixelToNdc(aPx - n, width, height);
         const glm::vec2 b0 = se::pixelToNdc(bPx + n, width, height);
         const glm::vec2 b1 = se::pixelToNdc(bPx - n, width, height);
-        vertices.push_back(se::OverlayVertex{ a0, color, edgePos });
-        vertices.push_back(se::OverlayVertex{ b0, color, edgePos });
-        vertices.push_back(se::OverlayVertex{ b1, color, edgeNeg });
-        vertices.push_back(se::OverlayVertex{ a0, color, edgePos });
-        vertices.push_back(se::OverlayVertex{ b1, color, edgeNeg });
-        vertices.push_back(se::OverlayVertex{ a1, color, edgeNeg });
+        vertices.push_back(se::OverlayVertex{ a0, color, edgePos, aDepth });
+        vertices.push_back(se::OverlayVertex{ b0, color, edgePos, bDepth });
+        vertices.push_back(se::OverlayVertex{ b1, color, edgeNeg, bDepth });
+        vertices.push_back(se::OverlayVertex{ a0, color, edgePos, aDepth });
+        vertices.push_back(se::OverlayVertex{ b1, color, edgeNeg, bDepth });
+        vertices.push_back(se::OverlayVertex{ a1, color, edgeNeg, aDepth });
     }
 
     // A filled quad from 4 pixel-space corners (a convex loop), feathered analytically in
@@ -437,8 +437,10 @@ namespace se
         {
             return;
         }
+        // After clipping, clip.z/clip.w is the Vulkan [0,1] NDC depth (GLM_FORCE_DEPTH_ZERO_TO_ONE);
+        // the rasterizer interpolates it screen-linearly across the quad, matching the depth buffer.
         addLine(vertices, clipToPixel(aClip, width, height), clipToPixel(bClip, width, height), thickness, color, width,
-                height);
+                height, aClip.z / aClip.w, bClip.z / bClip.w);
     }
 
     void buildSceneEditCameraFrustums(se::SceneEditContext& editor, const se::CameraView& cam, se::u32 width,
@@ -494,15 +496,17 @@ namespace se
             });
     }
 
-    // Builds the combined overlay (billboards/frustums first, gizmo on top) + submits it to the renderer.
+    // Builds the overlay and submits it: camera frustums are depth-tested against the scene
+    // (occluded by geometry); billboards and the active gizmo always draw on top.
     void submitNativeGizmo(se::SceneEditContext& editor, se::Renderer& renderer, const se::CameraView& cam,
                            se::u32 width, se::u32 height)
     {
-        std::vector<se::OverlayVertex> vertices;
-        buildSceneEditBillboards(editor, cam, width, height, vertices);
-        buildSceneEditCameraFrustums(editor, cam, width, height, vertices);
-        buildNativeGizmo(editor, cam, width, height, vertices);
-        se::submitOverlay(renderer, std::move(vertices));
+        std::vector<se::OverlayVertex> depthTested;
+        std::vector<se::OverlayVertex> onTop;
+        buildSceneEditCameraFrustums(editor, cam, width, height, depthTested);
+        buildSceneEditBillboards(editor, cam, width, height, onTop);
+        buildNativeGizmo(editor, cam, width, height, onTop);
+        se::submitOverlay(renderer, std::move(depthTested), std::move(onTop));
     }
 
 }

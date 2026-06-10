@@ -536,8 +536,9 @@ namespace se
         renderer.frame.sceneSubmissions.clear();
         renderer.frame.uiSubmissions.clear();
         renderer.defaultWhiteTexture.reset();
-        renderer.pipelines.cull.reset();     // RAII frees the compute pipeline + layout
-        renderer.pipelines.overlay.reset();  // editor gizmo + billboard PSO
+        renderer.pipelines.cull.reset();          // RAII frees the compute pipeline + layout
+        renderer.pipelines.overlay.reset();       // editor gizmo + billboard PSO
+        renderer.pipelines.overlayDepth.reset();  // depth-tested overlay PSO (frustums)
         renderer.pipelines.thumbnail.reset();
         renderer.pipelines.tonemap.reset();
         renderer.pipelines.fxaa.reset();
@@ -1962,13 +1963,17 @@ namespace se
             sceneColorAttachment = importImage(graph, renderer.targets.msaaColor.image, renderer.targets.msaaColor.view,
                                                vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
         }
-        Image* depthTarget = &depth;
+        // The 1x depth is always imported: it is the scene depth (no MSAA) or the resolve
+        // target the scene pass writes the multisampled depth into (MSAA). The post-tonemap
+        // editor overlay reads it to occlude camera frustums against scene geometry.
+        RgResource depth1x = importImage(graph, depth.image, depth.view, vk::ImageAspectFlagBits::eDepth,
+                                         vk::ImageLayout::eUndefined, nullptr);
+        RgResource sceneDepth = depth1x;
         if (msaa)
         {
-            depthTarget = &renderer.targets.msaaDepth;
+            sceneDepth = importImage(graph, renderer.targets.msaaDepth.image, renderer.targets.msaaDepth.view,
+                                     vk::ImageAspectFlagBits::eDepth, vk::ImageLayout::eUndefined, nullptr);
         }
-        RgResource sceneDepth = importImage(graph, depthTarget->image, depthTarget->view,
-                                            vk::ImageAspectFlagBits::eDepth, vk::ImageLayout::eUndefined, nullptr);
         renderer.graph.swapImage = importImage(graph, renderer.swapchain.images[renderer.frame.imageIndex],
                                                renderer.swapchain.imageViews[renderer.frame.imageIndex],
                                                vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
@@ -2636,8 +2641,16 @@ namespace se
         {
             depthLoad = vk::AttachmentLoadOp::eLoad;
         }
-        scene.depth = RgAttachment{ sceneDepth, depthLoad, vk::AttachmentStoreOp::eDontCare,
+        // Persist the 1x scene depth for the post-tonemap editor overlay: store it directly
+        // (no MSAA), or resolve the multisampled depth into the 1x target (MSAA samples are
+        // then discarded). Without this the scene depth would not survive the pass.
+        scene.depth = RgAttachment{ sceneDepth, depthLoad,
+                                    msaa ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore,
                                     vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
+        if (msaa)
+        {
+            scene.depth->resolve = depth1x;
+        }
         scene.renderArea = offscreen.extent;
         scene.execute = [&renderer](vk::CommandBuffer cmd)
         {
@@ -2769,9 +2782,14 @@ namespace se
             overlay.kind = RgPassKind::Graphics;
             overlay.colors.push_back(RgAttachment{
                 renderer.graph.sceneColor, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, {} });
+            // Read-only scene depth: the depth-tested range (camera frustums) is occluded by
+            // scene geometry; the on-top range ignores it. Bound for both so the PSOs, which
+            // declare the depth format, stay render-pass compatible.
+            overlay.depth = RgAttachment{ depth1x, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eDontCare, {} };
             overlay.renderArea = offscreen.extent;
             const u32 vertexCount = static_cast<u32>(renderer.overlay.vertices.size());
-            overlay.execute = [&renderer, vertexCount](vk::CommandBuffer cmd)
+            const u32 depthTestedCount = std::min(renderer.overlay.depthTestedCount, vertexCount);
+            overlay.execute = [&renderer, vertexCount, depthTestedCount](vk::CommandBuffer cmd)
             {
                 const u32 f = renderer.frame.index;
                 if (renderer.overlay.capacity[f] < vertexCount)
@@ -2803,10 +2821,20 @@ namespace se
                 viewport.maxDepth = 1.0f;
                 cmd.setViewport(0, viewport);
                 cmd.setScissor(0, vk::Rect2D{ vk::Offset2D{ 0, 0 }, renderer.targets.offscreen.extent });
-                cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.overlay->pipeline);
                 const vk::DeviceSize offset = 0;
                 cmd.bindVertexBuffers(0, buffer->buffer, offset);
-                cmd.draw(vertexCount, 1, 0, 0);
+                // Depth-tested range first (occluded by geometry), then the on-top range
+                // composited over it.
+                if (depthTestedCount > 0 && renderer.pipelines.overlayDepth)
+                {
+                    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.overlayDepth->pipeline);
+                    cmd.draw(depthTestedCount, 1, 0, 0);
+                }
+                if (vertexCount > depthTestedCount)
+                {
+                    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.overlay->pipeline);
+                    cmd.draw(vertexCount - depthTestedCount, 1, depthTestedCount, 0);
+                }
             };
             addPass(graph, std::move(overlay));
         }
@@ -2871,9 +2899,11 @@ namespace se
         return std::make_shared<Buffer>(std::move(buffer));
     }
 
-    void submitOverlay(Renderer& renderer, std::vector<OverlayVertex> vertices)
+    void submitOverlay(Renderer& renderer, std::vector<OverlayVertex> depthTested, std::vector<OverlayVertex> onTop)
     {
-        renderer.overlay.vertices = std::move(vertices);
+        renderer.overlay.depthTestedCount = static_cast<u32>(depthTested.size());
+        renderer.overlay.vertices = std::move(depthTested);
+        renderer.overlay.vertices.insert(renderer.overlay.vertices.end(), onTop.begin(), onTop.end());
     }
 
     // Native-viewport host: blit the post-processed offscreen color straight to the

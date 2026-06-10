@@ -5,6 +5,7 @@ struct VertexInput
     [[vk::location(2)]] float4 edge;  // xy: signed coords per feather direction (±1 at the
                                       // nominal edge), zw: half-extents in pixels; a
                                       // non-positive half-extent disables that direction
+    [[vk::location(3)]] float depth;  // NDC z ([0,1]); 0 on the near plane for on-top geometry
 };
 
 struct VertexOutput
@@ -18,7 +19,7 @@ struct VertexOutput
 VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
-    output.position = float4(input.position, 0.0, 1.0);
+    output.position = float4(input.position, input.depth, 1.0);
     output.color = input.color;
     output.edge = input.edge;
     return output;

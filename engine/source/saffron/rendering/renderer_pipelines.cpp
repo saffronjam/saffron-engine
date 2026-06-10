@@ -227,7 +227,7 @@ namespace se
         return static_cast<u32>(renderer.pipelines.cache.size());
     }
 
-    auto newOverlayPipeline(Renderer& renderer) -> Result<Ref<Pipeline>>
+    auto newOverlayPipeline(Renderer& renderer, bool depthTest) -> Result<Ref<Pipeline>>
     {
         auto moduleResult = loadShaderModule(renderer.context.device, assetPath("shaders/gizmo_overlay.spv"));
         if (!moduleResult)
@@ -248,11 +248,12 @@ namespace se
         binding.binding = 0;
         binding.stride = sizeof(OverlayVertex);
         binding.inputRate = vk::VertexInputRate::eVertex;
-        std::array<vk::VertexInputAttributeDescription, 3> attributes{
+        std::array<vk::VertexInputAttributeDescription, 4> attributes{
             vk::VertexInputAttributeDescription{ 0, 0, vk::Format::eR32G32Sfloat, offsetof(OverlayVertex, position) },
             vk::VertexInputAttributeDescription{ 1, 0, vk::Format::eR32G32B32A32Sfloat,
                                                  offsetof(OverlayVertex, color) },
-            vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(OverlayVertex, edge) }
+            vk::VertexInputAttributeDescription{ 2, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(OverlayVertex, edge) },
+            vk::VertexInputAttributeDescription{ 3, 0, vk::Format::eR32Sfloat, offsetof(OverlayVertex, depth) }
         };
         vk::PipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.setVertexBindingDescriptions(binding);
@@ -270,9 +271,12 @@ namespace se
         raster.lineWidth = 1.0f;
         vk::PipelineMultisampleStateCreateInfo multisample{};
         multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+        // The depth-tested variant occludes against the scene depth without touching it
+        // (eLessOrEqual matches the scene pass's compare; depth is Vulkan [0,1]).
         vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-        depthStencil.depthTestEnable = VK_FALSE;
+        depthStencil.depthTestEnable = depthTest ? VK_TRUE : VK_FALSE;
         depthStencil.depthWriteEnable = VK_FALSE;
+        depthStencil.depthCompareOp = vk::CompareOp::eLessOrEqual;
         vk::PipelineColorBlendAttachmentState blendAttachment{};
         blendAttachment.blendEnable = VK_TRUE;
         blendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
@@ -288,8 +292,11 @@ namespace se
         std::array<vk::DynamicState, 2> dynamicStates{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
         vk::PipelineDynamicStateCreateInfo dynamic{};
         dynamic.setDynamicStates(dynamicStates);
+        // Both variants run in the overlay pass, which binds a depth attachment; declare its
+        // format so the PSO is render-pass compatible even when depth testing is off.
         vk::PipelineRenderingCreateInfo renderingInfo{};
         renderingInfo.setColorAttachmentFormats(OffscreenColorFormat);
+        renderingInfo.setDepthAttachmentFormat(DepthFormat);
         vk::PipelineLayoutCreateInfo layoutInfo{};
         auto layoutResult =
             checked(renderer.context.device.createPipelineLayout(layoutInfo), "createPipelineLayout (overlay)");

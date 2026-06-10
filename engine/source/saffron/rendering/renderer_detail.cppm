@@ -3017,13 +3017,21 @@ export namespace se
         renderer.pipelines.pointShadow = *pointShadow;
 
         // Editor overlay: screen-space gizmo handles + entity billboards drawn over the
-        // tonemapped scene color (so they show under present-only mode).
-        Result<Ref<Pipeline>> overlay = newOverlayPipeline(renderer);
+        // tonemapped scene color (so they show under present-only mode). The depth variant
+        // occludes camera frustums against the scene depth; the plain one always draws on top.
+        Result<Ref<Pipeline>> overlay = newOverlayPipeline(renderer, false);
         if (!overlay)
         {
             return Err(overlay.error());
         }
         renderer.pipelines.overlay = *overlay;
+
+        Result<Ref<Pipeline>> overlayDepth = newOverlayPipeline(renderer, true);
+        if (!overlayDepth)
+        {
+            return Err(overlayDepth.error());
+        }
+        renderer.pipelines.overlayDepth = *overlayDepth;
 
         // IBL set (set 3 in the mesh pipeline): irradiance cube + prefiltered cube + BRDF
         // LUT, all sampled in the fragment. Created here so the mesh PSO layout + the bind
