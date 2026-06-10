@@ -50,6 +50,24 @@ During play (see `play`/`pause`/`stop`/`step`), scene commands address the *runn
 | `gizmo-pointer` | `{phase:hover\|begin\|drag\|end, x, y}` | drive the native overlay gizmo from NDC `x,y∈[-1,1]`; returns `{hovered, dragging}` |
 | `fly-input` | `{active, lookDx, lookDy, forward, back, left, right, up, down}` | stream editor fly-cam input; look deltas (pixels) accumulate until the engine drains them each frame |
 | `script-input` | `{keys:[...]}` | set the normalized key names visible to Lua through `se.is_key_pressed(key)` |
+
+## Animation commands
+
+Drive a rig's `AnimationPlayerComponent`. `play`/`seek` set `previewInEdit`, so they animate in Edit
+without entering Play; every mutation bumps `animationVersion` (carried on `get-animation-state`,
+`get-play-state`, and `get-selection`). The state result is `{clip, clipName, duration, time, playing,
+wrap, speed, animationVersion}`.
+
+| Command | Params | Effect |
+|---|---|---|
+| `list-clips` | `{entity}` | the animation clips in the project catalog `{id, name, duration}` |
+| `get-animation-state` | `{entity}` | the rig's playhead, clip, wrap, and speed (errors if no player) |
+| `play-animation` | `{entity, clip, speed=1, loop=true, blend=0}` | play a clip (previews in Edit); `blend>0` cross-fades/inertializes from the current clip |
+| `pause-animation` | `{entity}` | stop advancing time, keep the pose shown |
+| `seek-animation` | `{entity, time}` | set the playhead (previews in Edit; works in Play, Paused, and Edit) |
+| `set-animation-loop` | `{entity, wrap}` | set the wrap mode (`once` \| `loop` \| `pingpong`) |
+| `stop-preview` | `{entity}` | clear the Edit preview and stop, reverting the rig to its rest pose |
+
 ## Render commands
 *(`control_commands_render.cpp`)*
 

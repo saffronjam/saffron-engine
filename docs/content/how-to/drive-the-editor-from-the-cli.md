@@ -43,6 +43,22 @@ Script and inspect a running editor with the `se` CLI over its unix socket.
   ```
 - Editor panels update live as commands land.
 
+## Driving animation
+
+A rig imported from a glTF carries an animation player and its clips. Play one straight from the
+shell — it previews live in Edit, no need to enter play mode:
+
+```sh
+se list-clips <rig>                       # {id, name, duration} for each clip
+se play-animation <rig> Walk --loop       # previews in Edit; --blend 0.2 to cross-fade in
+se get-animation-state <rig>              # watch `time` advance, `playing:true`
+se seek-animation <rig> 0.5               # scrub the playhead (pauses-and-shows the pose)
+se set-animation-loop <rig> pingpong      # once | loop | pingpong
+se stop-preview <rig>                     # revert to the rest pose
+```
+
+`<rig>` is the skinned mesh entity (an id or its name); a clip is an id or its catalog name.
+
 ## In the code
 
 | What | File | Symbols |

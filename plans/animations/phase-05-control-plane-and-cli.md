@@ -1,6 +1,6 @@
 # Phase 5 — control plane + `se` CLI + e2e + `animationVersion`
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 
