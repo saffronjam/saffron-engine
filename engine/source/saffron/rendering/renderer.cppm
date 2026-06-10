@@ -1991,99 +1991,13 @@ namespace se
                                                renderer.swapchain.imageViews[renderer.frame.imageIndex],
                                                vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined, nullptr);
 
-        // Directional shadow: a depth-only pass renders the scene from the light's view
-        // into the shadow map; the scene pass then samples it. The graph derives the
-        // DepthWrite -> ShaderReadOnly transition (and the cross-frame WAR) from the usages.
-        const bool doShadow =
-            renderer.lighting.shadowPending && renderer.pipelines.shadowDepth && renderer.targets.shadowMap.image;
-        RgResource shadowRes{};
-        if (doShadow)
-        {
-            Image& shadowMap = renderer.targets.shadowMap;
-            shadowRes = importImage(graph, shadowMap.image, shadowMap.view, vk::ImageAspectFlagBits::eDepth,
-                                    shadowMap.layout, &shadowMap.layout);
-            RgPass shadowPass;
-            shadowPass.name = "shadow";
-            shadowPass.kind = RgPassKind::Graphics;
-            shadowPass.depth = RgAttachment{ shadowRes, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
-                                             vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
-            shadowPass.renderArea = shadowMap.extent;
-            const glm::mat4 lightViewProj = renderer.lighting.shadowViewProj;
-            shadowPass.execute = [&renderer, lightViewProj](vk::CommandBuffer cmd)
-            { recordShadowDepth(renderer, cmd, lightViewProj); };
-            addPass(graph, std::move(shadowPass));
-        }
-
-        // Spot shadow: the first shadow-casting spot light gets its own depth pass into the
-        // spot shadow map, with the spot's perspective light-space transform.
-        const bool doSpotShadow = renderer.lighting.spotShadowPending && renderer.pipelines.shadowDepth &&
-                                  renderer.targets.spotShadowMap.image;
-        RgResource spotShadowRes{};
-        if (doSpotShadow)
-        {
-            Image& spotMap = renderer.targets.spotShadowMap;
-            spotShadowRes = importImage(graph, spotMap.image, spotMap.view, vk::ImageAspectFlagBits::eDepth,
-                                        spotMap.layout, &spotMap.layout);
-            RgPass spotPass;
-            spotPass.name = "spot-shadow";
-            spotPass.kind = RgPassKind::Graphics;
-            spotPass.depth = RgAttachment{ spotShadowRes, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
-                                           vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
-            spotPass.renderArea = spotMap.extent;
-            const glm::mat4 spotViewProj = renderer.lighting.spotShadowViewProj;
-            spotPass.execute = [&renderer, spotViewProj](vk::CommandBuffer cmd)
-            { recordShadowDepth(renderer, cmd, spotViewProj); };
-            addPass(graph, std::move(spotPass));
-        }
-
-        // Point shadow: the omnidirectional distance cube can't be a graph attachment (its
-        // 6 layers exceed the graph's single-layer barrier), so it runs as a Compute-kind
-        // pass whose body opens its own 6 face rendering scopes + manages the cube's
-        // layout, ending ShaderReadOnly with a fragment-shader barrier for the scene sample.
-        const bool doPointShadow = renderer.lighting.pointShadowPending && renderer.pipelines.pointShadow &&
-                                   renderer.targets.pointShadowCube.image;
-        if (doPointShadow)
-        {
-            RgPass pointPass;
-            pointPass.name = "point-shadow";
-            pointPass.kind = RgPassKind::Compute;
-            const glm::vec3 lightPos = renderer.lighting.pointShadowPos;
-            const f32 farPlane = renderer.lighting.pointShadowFar;
-            pointPass.execute = [&renderer, lightPos, farPlane](vk::CommandBuffer cmd)
-            { recordPointShadow(renderer, cmd, lightPos, farPlane); };
-            addPass(graph, std::move(pointPass));
-        }
-
-        // Clustered forward: a compute pass culls the punctual lights into the froxel
-        // grid; the scene fragment reads the result (the graph emits the compute→
-        // fragment barrier from these declared usages).
-        RgResource clusterBuffer{};
-        if (doCull)
-        {
-            clusterBuffer = importBuffer(graph, renderer.lighting.clusterBuffers[f]->buffer);
-
-            RgPass cull;
-            cull.name = "light-cull";
-            cull.kind = RgPassKind::Compute;
-            cull.accesses = { RgAccess{ clusterBuffer, RgUsage::StorageWriteCompute } };
-            cull.execute = [&renderer, f](vk::CommandBuffer cmd)
-            {
-                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.cull->pipeline);
-                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.cull->layout, 0,
-                                       renderer.lighting.clusterSets[f], {});
-                const u32 groups = (ClusterCount + 63) / 64;
-                cmd.dispatch(groups, 1, 1);
-            };
-            addPass(graph, std::move(cull));
-        }
-
         // Compute skinning pre-pass: deform each skinned mesh-instance once into the frame's
-        // deformed-vertex buffer, which the scene pass then draws as a static stream. Placed
-        // here (right after light-cull, before any geometry pass) so later passes that read
-        // the deformed buffer also see it. The graph derives the compute-write→vertex-input
-        // barrier from the StorageWriteCompute here + the scene pass's VertexInputRead. The
-        // static/skin/palette reads need no barrier: the meshes were uploaded long ago, and
-        // the host-written palette is covered by the submit's implicit host-write dependency.
+        // deformed-vertex buffer. It runs before EVERY geometry pass (shadows, depth pre-pass,
+        // G-buffer, scene), which all read it as a static vertex stream — the deform-once win.
+        // The graph derives the compute-write→vertex-input barrier from the StorageWriteCompute
+        // here + each consumer's VertexInputRead. The static/skin/palette reads need no barrier:
+        // the meshes were uploaded long ago, and the host-written palette is covered by the
+        // submit's implicit host-write dependency.
         RgResource deformedBuffer{};
         const bool doSkin = !renderer.frame.sceneDrawList.skinDispatches.empty() && renderer.pipelines.skin &&
                             renderer.skinning.deformedBuffers[f];
@@ -2125,6 +2039,104 @@ namespace se
             addPass(graph, std::move(skinPass));
         }
 
+        // Directional shadow: a depth-only pass renders the scene from the light's view
+        // into the shadow map; the scene pass then samples it. The graph derives the
+        // DepthWrite -> ShaderReadOnly transition (and the cross-frame WAR) from the usages.
+        const bool doShadow =
+            renderer.lighting.shadowPending && renderer.pipelines.shadowDepth && renderer.targets.shadowMap.image;
+        RgResource shadowRes{};
+        if (doShadow)
+        {
+            Image& shadowMap = renderer.targets.shadowMap;
+            shadowRes = importImage(graph, shadowMap.image, shadowMap.view, vk::ImageAspectFlagBits::eDepth,
+                                    shadowMap.layout, &shadowMap.layout);
+            RgPass shadowPass;
+            shadowPass.name = "shadow";
+            shadowPass.kind = RgPassKind::Graphics;
+            shadowPass.depth = RgAttachment{ shadowRes, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+                                             vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
+            shadowPass.renderArea = shadowMap.extent;
+            const glm::mat4 lightViewProj = renderer.lighting.shadowViewProj;
+            shadowPass.execute = [&renderer, lightViewProj](vk::CommandBuffer cmd)
+            { recordShadowDepth(renderer, cmd, lightViewProj); };
+            if (doSkin)
+            {
+                shadowPass.accesses.push_back(RgAccess{ deformedBuffer, RgUsage::VertexInputRead });
+            }
+            addPass(graph, std::move(shadowPass));
+        }
+
+        // Spot shadow: the first shadow-casting spot light gets its own depth pass into the
+        // spot shadow map, with the spot's perspective light-space transform.
+        const bool doSpotShadow = renderer.lighting.spotShadowPending && renderer.pipelines.shadowDepth &&
+                                  renderer.targets.spotShadowMap.image;
+        RgResource spotShadowRes{};
+        if (doSpotShadow)
+        {
+            Image& spotMap = renderer.targets.spotShadowMap;
+            spotShadowRes = importImage(graph, spotMap.image, spotMap.view, vk::ImageAspectFlagBits::eDepth,
+                                        spotMap.layout, &spotMap.layout);
+            RgPass spotPass;
+            spotPass.name = "spot-shadow";
+            spotPass.kind = RgPassKind::Graphics;
+            spotPass.depth = RgAttachment{ spotShadowRes, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+                                           vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
+            spotPass.renderArea = spotMap.extent;
+            const glm::mat4 spotViewProj = renderer.lighting.spotShadowViewProj;
+            spotPass.execute = [&renderer, spotViewProj](vk::CommandBuffer cmd)
+            { recordShadowDepth(renderer, cmd, spotViewProj); };
+            if (doSkin)
+            {
+                spotPass.accesses.push_back(RgAccess{ deformedBuffer, RgUsage::VertexInputRead });
+            }
+            addPass(graph, std::move(spotPass));
+        }
+
+        // Point shadow: the omnidirectional distance cube can't be a graph attachment (its
+        // 6 layers exceed the graph's single-layer barrier), so it runs as a Compute-kind
+        // pass whose body opens its own 6 face rendering scopes + manages the cube's
+        // layout, ending ShaderReadOnly with a fragment-shader barrier for the scene sample.
+        const bool doPointShadow = renderer.lighting.pointShadowPending && renderer.pipelines.pointShadow &&
+                                   renderer.targets.pointShadowCube.image;
+        if (doPointShadow)
+        {
+            RgPass pointPass;
+            pointPass.name = "point-shadow";
+            pointPass.kind = RgPassKind::Compute;
+            const glm::vec3 lightPos = renderer.lighting.pointShadowPos;
+            const f32 farPlane = renderer.lighting.pointShadowFar;
+            pointPass.execute = [&renderer, lightPos, farPlane](vk::CommandBuffer cmd)
+            { recordPointShadow(renderer, cmd, lightPos, farPlane); };
+            if (doSkin)
+            {
+                pointPass.accesses.push_back(RgAccess{ deformedBuffer, RgUsage::VertexInputRead });
+            }
+            addPass(graph, std::move(pointPass));
+        }
+
+        // Clustered forward: a compute pass culls the punctual lights into the froxel
+        // grid; the scene fragment reads the result (the graph emits the compute→
+        // fragment barrier from these declared usages).
+        RgResource clusterBuffer{};
+        if (doCull)
+        {
+            clusterBuffer = importBuffer(graph, renderer.lighting.clusterBuffers[f]->buffer);
+
+            RgPass cull;
+            cull.name = "light-cull";
+            cull.kind = RgPassKind::Compute;
+            cull.accesses = { RgAccess{ clusterBuffer, RgUsage::StorageWriteCompute } };
+            cull.execute = [&renderer, f](vk::CommandBuffer cmd)
+            {
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, renderer.pipelines.cull->pipeline);
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, renderer.pipelines.cull->layout, 0,
+                                       renderer.lighting.clusterSets[f], {});
+                const u32 groups = (ClusterCount + 63) / 64;
+                cmd.dispatch(groups, 1, 1);
+            };
+            addPass(graph, std::move(cull));
+        }
+
         // Optional depth pre-pass: lay down scene depth first, so the scene pass loads it
         // and shades only the front-most fragments. The graph derives the depth WAW
         // barrier (pre-pass write → scene write) from the two declared depth usages.
@@ -2138,6 +2150,10 @@ namespace se
                                             vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
             depthPass.renderArea = offscreen.extent;
             depthPass.execute = [&renderer](vk::CommandBuffer cmd) { recordDepthPrepass(renderer, cmd); };
+            if (doSkin)
+            {
+                depthPass.accesses.push_back(RgAccess{ deformedBuffer, RgUsage::VertexInputRead });
+            }
             addPass(graph, std::move(depthPass));
         }
 
@@ -2180,6 +2196,10 @@ namespace se
                                         vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } } };
             gpass.renderArea = offscreen.extent;
             gpass.execute = [&renderer](vk::CommandBuffer cmd) { recordGbuffer(renderer, cmd); };
+            if (doSkin)
+            {
+                gpass.accesses.push_back(RgAccess{ deformedBuffer, RgUsage::VertexInputRead });
+            }
             addPass(graph, std::move(gpass));
 
             const glm::mat4 proj = renderer.ssao.projection;

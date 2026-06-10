@@ -55,6 +55,24 @@ namespace se
         }
     }
 
+    // Binds a batch's vertex + index streams on binding 0: the compute-deformed buffer for a
+    // skinned batch (its vertices start at deformedVertexOffset, applied in recordBatchSubmeshes),
+    // the static stream otherwise. Every geometry pass binds the same way, so a skinned mesh draws
+    // exactly like a static one in the depth, shadow, G-buffer, and scene passes.
+    void bindBatchVertices(Renderer& renderer, vk::CommandBuffer cmd, const DrawBatch& batch)
+    {
+        const vk::DeviceSize offset = 0;
+        if (batch.skinned && renderer.skinning.deformedBuffers[renderer.frame.index])
+        {
+            cmd.bindVertexBuffers(0, renderer.skinning.deformedBuffers[renderer.frame.index]->buffer, offset);
+        }
+        else
+        {
+            cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
+        }
+        cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+    }
+
     auto uploadMesh(Renderer& renderer, const Mesh& mesh) -> Result<Ref<GpuMesh>>
     {
         return uploadMesh(renderer, mesh, std::vector<VertexSkin>{});
@@ -703,13 +721,7 @@ namespace se
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &list.viewProj);
         for (const DrawBatch& batch : list.batches)
         {
-            if (batch.skinned)
-            {
-                continue;  // skinned draws render in the scene pass only (v1)
-            }
-            vk::DeviceSize offset = 0;
-            cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
-            cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+            bindBatchVertices(renderer, cmd, batch);
             recordBatchSubmeshes(cmd, batch);
         }
     }
@@ -730,13 +742,7 @@ namespace se
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &lightViewProj);
         for (const DrawBatch& batch : list.batches)
         {
-            if (batch.skinned)
-            {
-                continue;  // skinned draws render in the scene pass only (v1)
-            }
-            vk::DeviceSize offset = 0;
-            cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
-            cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+            bindBatchVertices(renderer, cmd, batch);
             recordBatchSubmeshes(cmd, batch);
         }
     }
@@ -761,13 +767,7 @@ namespace se
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(push), &push);
         for (const DrawBatch& batch : list.batches)
         {
-            if (batch.skinned)
-            {
-                continue;  // skinned draws render in the scene pass only (v1)
-            }
-            vk::DeviceSize offset = 0;
-            cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
-            cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+            bindBatchVertices(renderer, cmd, batch);
             recordBatchSubmeshes(cmd, batch);
         }
     }
@@ -897,13 +897,7 @@ namespace se
                               sizeof(push), &push);
             for (const DrawBatch& batch : list.batches)
             {
-                if (batch.skinned)
-                {
-                    continue;  // skinned draws render in the scene pass only (v1)
-                }
-                vk::DeviceSize offset = 0;
-                cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
-                cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
+                bindBatchVertices(renderer, cmd, batch);
                 recordBatchSubmeshes(cmd, batch);
             }
             cmd.endRendering();
