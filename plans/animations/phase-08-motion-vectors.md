@@ -1,6 +1,6 @@
 # Phase 8 — skinned motion vectors (palette double-buffer + `prevModel`)
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 
