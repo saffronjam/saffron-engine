@@ -346,6 +346,63 @@ namespace se
         return {};
     }
 
+    // The previous-frame sibling of ensureDeformedCapacity: a second deformed-vertex buffer the
+    // skin pre-pass writes from the previous palette, read by the motion pass as prev-position.
+    auto ensurePrevDeformedCapacity(Renderer& renderer, u32 frame, u32 vertexCount) -> Result<void>
+    {
+        if (renderer.skinning.prevDeformedBuffers[frame] &&
+            renderer.skinning.prevDeformedCapacity[frame] >= vertexCount)
+        {
+            return {};
+        }
+        u32 capacity = renderer.skinning.prevDeformedCapacity[frame];
+        if (capacity == 0)
+        {
+            capacity = 4096;
+        }
+        while (capacity < vertexCount)
+        {
+            capacity = capacity * 2;
+        }
+        Result<Ref<Buffer>> buffer =
+            makeDeviceVertexStorageBuffer(renderer, static_cast<vk::DeviceSize>(capacity) * sizeof(Vertex));
+        if (!buffer)
+        {
+            return Err(buffer.error());
+        }
+        renderer.skinning.prevDeformedBuffers[frame] = *buffer;
+        renderer.skinning.prevDeformedCapacity[frame] = capacity;
+        return {};
+    }
+
+    // The previous-frame sibling of ensureJointCapacity. Not bound to set 2 (only the current
+    // palette feeds the scene shader); the prev skin dispatch points at it directly.
+    auto ensurePrevJointCapacity(Renderer& renderer, u32 frame, u32 count) -> Result<void>
+    {
+        if (renderer.instancing.prevJointBuffers[frame] && renderer.instancing.prevJointCapacity[frame] >= count)
+        {
+            return {};
+        }
+        u32 capacity = renderer.instancing.prevJointCapacity[frame];
+        if (capacity == 0)
+        {
+            capacity = 128;
+        }
+        while (capacity < count)
+        {
+            capacity = capacity * 2;
+        }
+        Result<Ref<Buffer>> buffer =
+            makeMappedStorageBuffer(renderer, static_cast<vk::DeviceSize>(capacity) * sizeof(glm::mat4));
+        if (!buffer)
+        {
+            return Err(buffer.error());
+        }
+        renderer.instancing.prevJointBuffers[frame] = *buffer;
+        renderer.instancing.prevJointCapacity[frame] = capacity;
+        return {};
+    }
+
     void submitDrawList(Renderer& renderer, const glm::mat4& viewProj, const std::vector<DrawItem>& items)
     {
         submitDrawList(renderer, viewProj, items, std::vector<glm::mat4>{});
@@ -373,12 +430,18 @@ namespace se
             Ref<GpuMesh> mesh;
             bool skinned = false;
             u32 jointOffset = 0;  // skinned only: base of this instance's joints in the palette
+            u32 jointCount = 0;   // skinned only: matrices this instance contributes
+            u64 entity = 0;       // skinned only: source entity uuid for the prev-palette cache
             // Per logical instance: one InstanceData row per mesh submesh, in submesh order.
             std::vector<std::vector<InstanceData>> instances;
         };
         std::vector<Bucket> buckets;
         std::vector<Ref<GpuTexture>> liveTextures;
         const u32 defaultTextureIndex = renderer.defaultWhiteTexture ? renderer.defaultWhiteTexture->bindlessIndex : 0u;
+        // This frame's model matrices, keyed by entity, applied to the cache after the loop so a
+        // repeated entity reads the same previous value. A new entity (no cache hit) reprojects
+        // from its current model => zero object motion on its first frame.
+        std::unordered_map<u64, glm::mat4> modelUpdates;
         for (const DrawItem& item : items)
         {
             if (!item.mesh)
@@ -411,8 +474,21 @@ namespace se
             }
             if (bucket == nullptr)
             {
-                buckets.push_back(Bucket{ pipeline, item.mesh, item.skinned, item.jointOffset, {} });
+                buckets.push_back(
+                    Bucket{ pipeline, item.mesh, item.skinned, item.jointOffset, item.jointCount, item.entity, {} });
                 bucket = &buckets.back();
+            }
+            // This frame's previous model: the entity's cached last-frame world matrix, or the
+            // current one when the entity is new/uncached (=> no object-motion ghost on frame 1).
+            glm::mat4 prevModel = item.model;
+            if (item.entity != 0)
+            {
+                if (auto found = renderer.skinning.prevModelByEntity.find(item.entity);
+                    found != renderer.skinning.prevModelByEntity.end())
+                {
+                    prevModel = found->second;
+                }
+                modelUpdates[item.entity] = item.model;
             }
             // One row per submesh; a single material entry covers every submesh (clamped).
             const std::size_t submeshCount = std::max<std::size_t>(item.mesh->submeshes.size(), 1);
@@ -445,6 +521,7 @@ namespace se
                 InstanceData instance;
                 instance.model = item.model;
                 instance.normalMatrix = item.normalMatrix;
+                instance.prevModel = prevModel;
                 instance.baseColor = baseColor;
                 // .x = albedo bindless index, .y = joint-palette offset (skinned), .z = metallic-roughness.
                 instance.texture = glm::uvec4{ albedoIndex, item.jointOffset, mrIndex, 0 };
@@ -462,7 +539,13 @@ namespace se
         std::vector<InstanceData> instances;
         std::vector<DrawBatch> batches;
         std::vector<SkinDispatch> dispatches;
+        std::vector<SkinDispatch> prevDispatches;  // parallel: deform the previous pose for motion
         std::vector<Ref<GpuMesh>> dispatchMeshes;  // parallel to dispatches: the mesh each set binds
+        // Previous palette, laid out exactly like `joints`: a default copy of the current palette
+        // (uncached slots => zero deformation motion), with each skinned bucket's slice replaced
+        // by the entity's cached last-frame slice. The prev-palette cache is updated afterwards.
+        std::vector<glm::mat4> prevJoints = joints;
+        std::vector<std::pair<u64, std::vector<glm::mat4>>> paletteUpdates;
         u32 deformedCursor = 0;
         for (Bucket& bucket : buckets)
         {
@@ -482,8 +565,24 @@ namespace se
                 batch.deformedVertexOffset = deformedCursor;
                 dispatches.push_back(
                     SkinDispatch{ vk::DescriptorSet{}, bucket.mesh->vertexCount, bucket.jointOffset, deformedCursor });
+                prevDispatches.push_back(
+                    SkinDispatch{ vk::DescriptorSet{}, bucket.mesh->vertexCount, bucket.jointOffset, deformedCursor });
                 dispatchMeshes.push_back(bucket.mesh);
                 deformedCursor = deformedCursor + bucket.mesh->vertexCount;
+                // The current slice for this bucket's entity, and its cached previous slice (or
+                // the current one if uncached => no deformation-motion ghost on the first frame).
+                if (bucket.entity != 0 && bucket.jointCount > 0 &&
+                    bucket.jointOffset + bucket.jointCount <= joints.size())
+                {
+                    std::vector<glm::mat4> curSlice(joints.begin() + bucket.jointOffset,
+                                                    joints.begin() + bucket.jointOffset + bucket.jointCount);
+                    if (auto found = renderer.skinning.prevPaletteByEntity.find(bucket.entity);
+                        found != renderer.skinning.prevPaletteByEntity.end() && found->second.size() == curSlice.size())
+                    {
+                        std::copy(found->second.begin(), found->second.end(), prevJoints.begin() + bucket.jointOffset);
+                    }
+                    paletteUpdates.emplace_back(bucket.entity, std::move(curSlice));
+                }
             }
             for (u32 s = 0; s < submeshCount; s = s + 1)
             {
@@ -519,6 +618,15 @@ namespace se
             std::memcpy(renderer.instancing.jointBuffers[frame]->mapped, joints.data(), jointBytes);
             vmaFlushAllocation(renderer.context.allocator, renderer.instancing.jointBuffers[frame]->alloc, 0,
                                jointBytes);
+            // The previous palette (same length) feeds the prev skin dispatch for motion.
+            if (Result<void> ok = ensurePrevJointCapacity(renderer, frame, static_cast<u32>(prevJoints.size())); !ok)
+            {
+                logError(ok.error());
+                return;
+            }
+            std::memcpy(renderer.instancing.prevJointBuffers[frame]->mapped, prevJoints.data(), jointBytes);
+            vmaFlushAllocation(renderer.context.allocator, renderer.instancing.prevJointBuffers[frame]->alloc, 0,
+                               jointBytes);
         }
 
         // The compute skinning work: size the frame's deformed-vertex buffer to the
@@ -533,10 +641,16 @@ namespace se
             // dispatches so the skin pass is skipped (the batches then read undeformed bind pose).
             logWarn(std::string{ "skinning: skinned instances present but no joint palette uploaded; skipping" });
             dispatches.clear();
+            prevDispatches.clear();
         }
         if (!dispatches.empty())
         {
             if (Result<void> ok = ensureDeformedCapacity(renderer, frame, deformedCursor); !ok)
+            {
+                logError(ok.error());
+                return;
+            }
+            if (Result<void> ok = ensurePrevDeformedCapacity(renderer, frame, deformedCursor); !ok)
             {
                 logError(ok.error());
                 return;
@@ -546,6 +660,7 @@ namespace se
                 logWarn(std::format("skinning: {} skinned instances exceed the {}-set frame budget; clamping",
                                     dispatches.size(), SkinMaxSetsPerFrame));
                 dispatches.resize(SkinMaxSetsPerFrame);
+                prevDispatches.resize(SkinMaxSetsPerFrame);
                 dispatchMeshes.resize(SkinMaxSetsPerFrame);
             }
             static_cast<void>(renderer.context.device.resetDescriptorPool(renderer.skinning.pools[frame]));
@@ -553,7 +668,16 @@ namespace se
             const vk::DeviceSize paletteSize = renderer.instancing.jointBuffers[frame]->size;
             const vk::Buffer deformed = renderer.skinning.deformedBuffers[frame]->buffer;
             const vk::DeviceSize deformedSize = renderer.skinning.deformedBuffers[frame]->size;
-            for (std::size_t i = 0; i < dispatches.size(); i = i + 1)
+            const vk::Buffer prevPalette = renderer.instancing.prevJointBuffers[frame]->buffer;
+            const vk::DeviceSize prevPaletteSize = renderer.instancing.prevJointBuffers[frame]->size;
+            const vk::Buffer prevDeformed = renderer.skinning.prevDeformedBuffers[frame]->buffer;
+            const vk::DeviceSize prevDeformedSize = renderer.skinning.prevDeformedBuffers[frame]->size;
+            // One descriptor set per dispatch wiring {static vertices, skin, palette, deformed}.
+            // The current dispatch uses (current palette -> current deformed); its prev sibling
+            // uses (previous palette -> previous deformed), same static/skin streams + push.
+            auto wireSet = [&](SkinDispatch& d, const Ref<GpuMesh>& mesh, vk::Buffer paletteBuf,
+                               vk::DeviceSize paletteBytes, vk::Buffer deformedBuf,
+                               vk::DeviceSize deformedBytes) -> bool
             {
                 vk::DescriptorSetAllocateInfo setAlloc{};
                 setAlloc.descriptorPool = renderer.skinning.pools[frame];
@@ -562,26 +686,36 @@ namespace se
                 if (!allocated)
                 {
                     logError(allocated.error());
-                    dispatches.clear();
-                    break;
+                    return false;
                 }
-                const Ref<GpuMesh>& mesh = dispatchMeshes[i];
-                dispatches[i].set = (*allocated)[0];
+                d.set = (*allocated)[0];
                 std::array<vk::DescriptorBufferInfo, 4> infos{
                     vk::DescriptorBufferInfo{ mesh->vertexBuffer, 0, VK_WHOLE_SIZE },
                     vk::DescriptorBufferInfo{ mesh->skinBuffer, 0, VK_WHOLE_SIZE },
-                    vk::DescriptorBufferInfo{ palette, 0, paletteSize },
-                    vk::DescriptorBufferInfo{ deformed, 0, deformedSize }
+                    vk::DescriptorBufferInfo{ paletteBuf, 0, paletteBytes },
+                    vk::DescriptorBufferInfo{ deformedBuf, 0, deformedBytes }
                 };
                 std::array<vk::WriteDescriptorSet, 4> writes{};
                 for (u32 b = 0; b < writes.size(); b = b + 1)
                 {
-                    writes[b].dstSet = dispatches[i].set;
+                    writes[b].dstSet = d.set;
                     writes[b].dstBinding = b;
                     writes[b].descriptorType = vk::DescriptorType::eStorageBuffer;
                     writes[b].setBufferInfo(infos[b]);
                 }
                 renderer.context.device.updateDescriptorSets(writes, {});
+                return true;
+            };
+            for (std::size_t i = 0; i < dispatches.size(); i = i + 1)
+            {
+                const Ref<GpuMesh>& mesh = dispatchMeshes[i];
+                if (!wireSet(dispatches[i], mesh, palette, paletteSize, deformed, deformedSize) ||
+                    !wireSet(prevDispatches[i], mesh, prevPalette, prevPaletteSize, prevDeformed, prevDeformedSize))
+                {
+                    dispatches.clear();
+                    prevDispatches.clear();
+                    break;
+                }
             }
         }
 
@@ -604,10 +738,24 @@ namespace se
         renderer.stats.instances = drawnInstances;
         renderer.stats.triangles = triangles;
 
+        // Commit this frame's model + palette into the cross-frame caches AFTER the previous
+        // values were read above, so next frame reprojects from this frame's pose. The maps grow
+        // with the distinct entity set (acceptable for v1; despawned entities leave stale rows
+        // that are simply never read again).
+        for (auto& [entity, model] : modelUpdates)
+        {
+            renderer.skinning.prevModelByEntity[entity] = model;
+        }
+        for (auto& [entity, slice] : paletteUpdates)
+        {
+            renderer.skinning.prevPaletteByEntity[entity] = std::move(slice);
+        }
+
         SceneDrawList list;
         list.viewProj = viewProj;
         list.batches = std::move(batches);
         list.skinDispatches = std::move(dispatches);
+        list.prevSkinDispatches = std::move(prevDispatches);
         list.liveTextures = std::move(liveTextures);
         list.lightSet = renderer.lighting.lightSets[frame];
         list.instanceSet = renderer.instancing.sets[frame];
@@ -772,9 +920,11 @@ namespace se
         }
     }
 
-    // Records the motion-vector prepass: per-pixel screen motion from camera reprojection
-    // (cur vs prev viewProj). The push constant carries both, stored on the Ssao/Renderer
-    // state (viewProj this frame, prevViewProj last frame).
+    // Records the motion-vector prepass: per-pixel screen motion reprojecting BOTH camera and
+    // geometry. Binding 0 carries this frame's position (current deformed buffer for a skinned
+    // batch, the static stream otherwise); binding 1 the previous-frame position (previous
+    // deformed buffer for skinned, the same static stream otherwise so prevPosition == position
+    // and object motion comes from inst.prevModel). The push carries cur + prev camera viewProj.
     void recordMotion(Renderer& renderer, vk::CommandBuffer cmd)
     {
         SceneDrawList& list = renderer.frame.sceneDrawList;
@@ -782,6 +932,7 @@ namespace se
         {
             return;
         }
+        const u32 frame = renderer.frame.index;
         vk::PipelineLayout layout = renderer.pipelines.motion->layout;
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, renderer.pipelines.motion->pipeline);
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 2, list.instanceSet, {});
@@ -791,14 +942,21 @@ namespace se
             glm::mat4 prevViewProj;
         } push{ list.viewProj, renderer.prevViewProj };
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(push), &push);
+        const bool haveDeformed =
+            renderer.skinning.deformedBuffers[frame] && renderer.skinning.prevDeformedBuffers[frame];
         for (const DrawBatch& batch : list.batches)
         {
-            if (batch.skinned)
+            const vk::DeviceSize offset = 0;
+            if (batch.skinned && haveDeformed)
             {
-                continue;  // skinned draws render in the scene pass only (v1)
+                cmd.bindVertexBuffers(0, renderer.skinning.deformedBuffers[frame]->buffer, offset);
+                cmd.bindVertexBuffers(1, renderer.skinning.prevDeformedBuffers[frame]->buffer, offset);
             }
-            vk::DeviceSize offset = 0;
-            cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
+            else
+            {
+                cmd.bindVertexBuffers(0, batch.mesh->vertexBuffer, offset);
+                cmd.bindVertexBuffers(1, batch.mesh->vertexBuffer, offset);
+            }
             cmd.bindIndexBuffer(batch.mesh->indexBuffer, 0, vk::IndexType::eUint32);
             recordBatchSubmeshes(cmd, batch);
         }
