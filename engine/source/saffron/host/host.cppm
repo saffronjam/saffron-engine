@@ -332,6 +332,83 @@ namespace se
         }
     }
 
+    // Draws a line skeleton over the selected rig: a bone segment to each joint's parent,
+    // a screen-constant joint dot, and (when enabled) three short RGB axis lines per joint.
+    // Always on top (the overlay PSO has no depth test). Renders in Edit and Play, so a
+    // playing clip shows its bones move; scoped to the selected entity to bound vertex count.
+    void buildSkeletonOverlay(se::SceneEditContext& editor, const se::CameraView& cam, se::u32 width, se::u32 height,
+                              std::vector<se::OverlayVertex>& vertices)
+    {
+        if (!editor.skeletonOverlay.show || width == 0 || height == 0)
+        {
+            return;
+        }
+        if (editor.selected.handle == entt::null)
+        {
+            return;
+        }
+        se::Scene& scene = se::activeScene(editor);
+        if (!se::valid(scene, editor.selected) || !se::hasComponent<se::SkinnedMeshComponent>(scene, editor.selected))
+        {
+            return;
+        }
+        const se::SkinnedMeshComponent& skin = se::getComponent<se::SkinnedMeshComponent>(scene, editor.selected);
+        const glm::vec3 eye = se::cameraPosition(cam);
+        constexpr glm::vec4 BoneColor{ 0.55f, 0.78f, 1.0f, 0.95f };
+        constexpr glm::vec4 JointColor{ 1.0f, 0.78f, 0.18f, 1.0f };
+        constexpr se::f32 AxisLen = 0.08f;  // per-joint axis length in world units
+        const std::array<glm::vec4, 3> axisColors{ glm::vec4{ 1.0f, 0.32f, 0.32f, 0.95f },
+                                                   glm::vec4{ 0.40f, 0.90f, 0.40f, 0.95f },
+                                                   glm::vec4{ 0.42f, 0.62f, 1.0f, 0.95f } };
+
+        for (const entt::entity handle : skin.boneHandles)
+        {
+            if (handle == entt::null)
+            {
+                continue;
+            }
+            const se::Entity bone{ handle };
+            const glm::vec3 worldPos = se::worldTranslation(scene, bone);
+            const se::GizmoProjection joint = se::viewportProject(cam, width, height, worldPos);
+            if (!joint.visible)
+            {
+                continue;
+            }
+            // Bone segment to the parent, only when the parent is itself a joint.
+            const entt::entity parentHandle = se::getComponent<se::RelationshipComponent>(scene, bone).parentHandle;
+            if (parentHandle != entt::null && se::hasComponent<se::BoneComponent>(scene, se::Entity{ parentHandle }))
+            {
+                const se::GizmoProjection parent =
+                    se::viewportProject(cam, width, height, se::worldTranslation(scene, se::Entity{ parentHandle }));
+                if (parent.visible)
+                {
+                    addLine(vertices, parent.pixel, joint.pixel, 2.0f, BoneColor, width, height);
+                }
+            }
+            // Joint dot, radius held screen-constant so it never vanishes when zoomed out.
+            const se::f32 distance = glm::length(eye - worldPos);
+            const se::f32 radius = std::max(2.5f, distance * editor.skeletonOverlay.jointSize * 0.05f);
+            addCircleFill(vertices, joint.pixel, radius, JointColor, width, height);
+            // Optional per-joint RGB axes from the bone's world-rotation basis.
+            if (editor.skeletonOverlay.axes)
+            {
+                const glm::quat rotation = se::worldRotation(scene, bone);
+                const std::array<glm::vec3, 3> basis{ rotation * glm::vec3{ 1.0f, 0.0f, 0.0f },
+                                                      rotation * glm::vec3{ 0.0f, 1.0f, 0.0f },
+                                                      rotation * glm::vec3{ 0.0f, 0.0f, 1.0f } };
+                for (se::u32 axis = 0; axis < 3; axis = axis + 1)
+                {
+                    const se::GizmoProjection tip =
+                        se::viewportProject(cam, width, height, worldPos + basis[axis] * AxisLen);
+                    if (tip.visible)
+                    {
+                        addLine(vertices, joint.pixel, tip.pixel, 1.5f, axisColors[axis], width, height);
+                    }
+                }
+            }
+        }
+    }
+
     // Colored screen-space glyphs for meshless light/camera entities.
     void buildSceneEditBillboards(se::SceneEditContext& editor, const se::CameraView& cam, se::u32 width,
                                   se::u32 height, std::vector<se::OverlayVertex>& vertices)
@@ -496,16 +573,23 @@ namespace se
             });
     }
 
-    // Builds the overlay and submits it: camera frustums are depth-tested against the scene
-    // (occluded by geometry); billboards and the active gizmo always draw on top.
-    void submitNativeGizmo(se::SceneEditContext& editor, se::Renderer& renderer, const se::CameraView& cam,
-                           se::u32 width, se::u32 height)
+    // Builds the editor overlay and submits it once per frame: camera frustums are
+    // depth-tested against the scene (occluded by geometry); billboards, the active gizmo,
+    // and the skeleton overlay always draw on top. The gizmo + billboards + frustums are
+    // Edit-only editor chrome; the skeleton overlay (when shown) renders in every play
+    // state so a played clip shows its bones move. `editChrome` is false during play.
+    void submitSceneEditOverlay(se::SceneEditContext& editor, se::Renderer& renderer, const se::CameraView& cam,
+                                se::u32 width, se::u32 height, bool editChrome)
     {
         std::vector<se::OverlayVertex> depthTested;
         std::vector<se::OverlayVertex> onTop;
-        buildSceneEditCameraFrustums(editor, cam, width, height, depthTested);
-        buildSceneEditBillboards(editor, cam, width, height, onTop);
-        buildNativeGizmo(editor, cam, width, height, onTop);
+        if (editChrome)
+        {
+            buildSceneEditCameraFrustums(editor, cam, width, height, depthTested);
+            buildSceneEditBillboards(editor, cam, width, height, onTop);
+            buildNativeGizmo(editor, cam, width, height, onTop);
+        }
+        buildSkeletonOverlay(editor, cam, width, height, onTop);
         se::submitOverlay(renderer, std::move(depthTested), std::move(onTop));
     }
 
@@ -812,11 +896,10 @@ export namespace se
                     options.showEditorCameraModels = editor.playState == se::PlayState::Edit;
                     se::renderScene(app.renderer, live, state->assets, cam, options);
                     // The gizmo + billboards are editor chrome: hidden inside the game view,
-                    // and the gizmo would write transforms the play duplicate swallows.
-                    if (editor.playState == se::PlayState::Edit)
-                    {
-                        se::submitNativeGizmo(editor, app.renderer, cam, viewWidth, viewHeight);
-                    }
+                    // and the gizmo would write transforms the play duplicate swallows. The
+                    // skeleton overlay (when shown) still draws in Play so bones animate.
+                    const bool editChrome = editor.playState == se::PlayState::Edit;
+                    se::submitSceneEditOverlay(editor, app.renderer, cam, viewWidth, viewHeight, editChrome);
                 }
             };
             se::attachLayer(app, std::move(layer));
