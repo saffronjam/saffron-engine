@@ -513,9 +513,13 @@ export namespace se
         Ref<GpuTexture> normalTexture;     // tangent-space normal map (OpenGL +Y)
         Ref<GpuTexture> occlusionTexture;  // ambient occlusion (AO in R)
         Ref<GpuTexture> emissiveTexture;   // emissive map (modulates the emissive factor)
+        Ref<GpuTexture> heightTexture;     // height/displacement (R) for parallax occlusion mapping
         f32 normalStrength = 1.0f;
         glm::vec2 uvTiling{ 1.0f };
         glm::vec2 uvOffset{ 0.0f };
+        f32 heightScale = 0.05f;
+        bool alphaClip = false;  // masked: discard fragments below alphaCutoff
+        f32 alphaCutoff = 0.5f;
     };
 
     /// One renderable for the scene draw list: a mesh + its per-submesh materials +
