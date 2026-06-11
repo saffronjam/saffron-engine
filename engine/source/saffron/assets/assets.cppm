@@ -962,6 +962,28 @@ return {0}
         return materialAssetFromJson(j);
     }
 
+    // Overwrites an existing .smat in place (same id + path) — the edit path, vs saveMaterialAsset
+    // which mints a new asset.
+    auto updateMaterialAsset(AssetServer& assets, Uuid id, const MaterialAsset& mat) -> Result<void>
+    {
+        const AssetEntry* entry = findAsset(assets.catalog, id);
+        if (entry == nullptr || entry->type != AssetType::Material)
+        {
+            return Err(std::format("material asset {} not found", id.value));
+        }
+        std::ofstream out(assets.root + "/" + entry->path);
+        if (!out)
+        {
+            return Err(std::format("cannot write material '{}'", entry->path));
+        }
+        out << materialAssetToJson(mat).dump(2);
+        if (!out)
+        {
+            return Err(std::format("write failed for material '{}'", entry->path));
+        }
+        return {};
+    }
+
     // Detects a PBR map role from a texture filename's suffix tokens (case-insensitive). Returns one
     // of albedo|normal|orm|roughness|metallic|ao|height|emissive|gloss|opacity, or empty if
     // unrecognized. Most-specific tokens win (e.g. arm/orm before albedo).
