@@ -1385,7 +1385,8 @@ return {0}
     auto compileMaterialMeshShader(AssetServer& assets, const nlohmann::json& graph, Uuid id) -> Result<std::string>
     {
         const std::string slangc = findSlangc();
-        const std::string meshSrcPath = assetPath("shaders/mesh.slang");
+        const std::string shadersDir = assetPath("shaders");  // holds lighting.slang-module for `import lighting`
+        const std::string meshSrcPath = shadersDir + "/mesh.slang";
         std::ifstream in(meshSrcPath);
         if (!in)
         {
@@ -1418,8 +1419,8 @@ return {0}
         }
         const std::string cmd = "\"" + slangc + "\" \"" + slangPath +
                                 "\" -profile glsl_450 -target spirv -emit-spirv-directly -fvk-use-entrypoint-name "
-                                "-matrix-layout-column-major -o \"" +
-                                spvPath + "\" > /dev/null 2>&1";
+                                "-matrix-layout-column-major -I \"" +
+                                shadersDir + "\" -o \"" + spvPath + "\" > /dev/null 2>&1";
         const int rc = std::system(cmd.c_str());
         if (rc != 0 || !std::filesystem::exists(spvPath))
         {
