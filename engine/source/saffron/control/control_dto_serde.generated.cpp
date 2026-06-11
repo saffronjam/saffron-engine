@@ -2558,6 +2558,28 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<MaterialImportParams>) -> Result<MaterialImportParams>
+    {
+        MaterialImportParams out;
+
+        {
+            auto value = requiredField(params, "path", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readString(**value, "path");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.path = std::move(*parsed);
+        }
+
+        {
+            auto value = requiredField(params, "name", 1, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readString(**value, "name");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.name = std::move(*parsed);
+        }
+        return out;
+    }
+
     auto parseDto(const Json& params, DtoTag<OptionalPathParams>) -> Result<OptionalPathParams>
     {
         OptionalPathParams out;
@@ -3431,6 +3453,14 @@ namespace se
     {
         Json out = Json::object();
         out["material"] = dtoToJson(value.material);
+        return out;
+    }
+
+    auto dtoToJson(const MaterialImportResultDto& value) -> Json
+    {
+        Json out = Json::object();
+        out["id"] = dtoToJson(value.id);
+        out["roles"] = value.roles;
         return out;
     }
 
