@@ -1,7 +1,19 @@
-# Phase 11 — Studio IBL + material preview pass
+# Phase 11 — Material preview render
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (studio-lit preview; full-IBL WYSIWYG is a noted refinement)
 **Depends on:** 05
+
+> **Outcome / approach.** Rather than the full übershader out-of-band (which needs all 6–8 descriptor
+> sets — light globals, clusters, shadow maps, IBL/SSAO/DDGI — bound and correctly gated, high
+> descriptor-completeness risk), I built a **dedicated self-contained preview**: a new `preview.slang`
+> (set 0 = the shared bindless texture array + a 112-byte push constant of viewProj + the material's
+> texture indices/factors), a procedural unit UV sphere (`makePreviewSphere`), `newPreviewPipeline`, and
+> `renderMaterialPreview` — an out-of-band render+readback mirroring `renderMeshThumbnail`. Lighting is a
+> fixed studio key light + hemisphere ambient + a GGX-lite spec + tangent-from-derivatives normal mapping
+> + Reinhard tonemap (how DCC tools preview materials). Cached `previewSphere` + `pipelines.preview` on the
+> renderer, reset on teardown. Build clean (`slangc preview.slang -> preview.spv`). **Refinement noted:**
+> full forward+ übershader + baked studio-IBL preview (true WYSIWYG with clustered lights/GI) — deferred;
+> the studio-lit preview is the right v1 and unblocks the editor.
 
 ## Goal
 
