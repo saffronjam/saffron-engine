@@ -510,6 +510,12 @@ export namespace se
         f32 roughness = 1.0f;
         glm::vec3 emissive{ 0.0f };
         f32 emissiveStrength = 1.0f;
+        Ref<GpuTexture> normalTexture;     // tangent-space normal map (OpenGL +Y)
+        Ref<GpuTexture> occlusionTexture;  // ambient occlusion (AO in R)
+        Ref<GpuTexture> emissiveTexture;   // emissive map (modulates the emissive factor)
+        f32 normalStrength = 1.0f;
+        glm::vec2 uvTiling{ 1.0f };
+        glm::vec2 uvOffset{ 0.0f };
     };
 
     /// One renderable for the scene draw list: a mesh + its per-submesh materials +
