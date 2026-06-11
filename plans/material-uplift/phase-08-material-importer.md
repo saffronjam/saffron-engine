@@ -1,7 +1,15 @@
 # Phase 08 — Material importer (auto-detect)
 
-**Status:** COMPLETED (maps reach the GPU + validated; suffix folder importer is a follow-on)
+**Status:** COMPLETED (incl. the suffix folder importer)
 **Depends on:** 05, 07
+
+> **Follow-on done.** The suffix-detect **folder importer** landed: `detectMaterialRole(filename)` (the
+> suffix table: albedo/normal/orm/roughness/metallic/ao/height/emissive/gloss/opacity) + `importMaterialFolder`
+> (scans a dir, imports each texture with the right colorspace, assembles + saves a `.smat`, a packed ARM/ORM
+> also feeds occlusion) + a `material-import {path}` command returning `{ id, roles }`. e2e
+> `material_import.test.ts` writes a Poly-Haven-named PNG set and asserts albedo/normal/roughness/height are
+> detected. 115/115 contract checks. (DX→GL + gloss→rough bakes from phase 07 plug in when provenance is
+> tracked; the editor drag-drop wiring is phase 13.)
 
 > **Outcome.** This phase's real job was to get PBR maps onto the GPU and **validate phases 04-06's
 > previously-dormant shader code** — done. `assign-asset` gained **Normal / Occlusion / Emissive / Height**
