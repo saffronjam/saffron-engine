@@ -85,6 +85,90 @@ namespace se
         }
         return uploadTexture(renderer, rgba.data(), pixelSize, pixelSize, false);
     }
+
+    // Full mip chain length for a width x height image (down to 1x1).
+    static auto mipCount(u32 width, u32 height) -> u32
+    {
+        u32 levels = 1;
+        for (u32 d = (width > height ? width : height); d > 1; d >>= 1)
+        {
+            levels += 1;
+        }
+        return levels;
+    }
+
+    // One image-memory barrier on a single mip level (sync2).
+    static void mipBarrier(vk::CommandBuffer cmd, vk::Image image, u32 mip, vk::ImageLayout from, vk::ImageLayout to,
+                           vk::PipelineStageFlags2 srcStage, vk::AccessFlags2 srcAccess,
+                           vk::PipelineStageFlags2 dstStage, vk::AccessFlags2 dstAccess)
+    {
+        vk::ImageMemoryBarrier2 b{};
+        b.srcStageMask = srcStage;
+        b.srcAccessMask = srcAccess;
+        b.dstStageMask = dstStage;
+        b.dstAccessMask = dstAccess;
+        b.oldLayout = from;
+        b.newLayout = to;
+        b.image = image;
+        b.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, mip, 1, 0, 1 };
+        vk::DependencyInfo dep{};
+        dep.setImageMemoryBarriers(b);
+        cmd.pipelineBarrier2(dep);
+    }
+
+    // Generates mips 1..n-1 by blitting down the chain from mip 0 (which holds the uploaded image), then
+    // transitions every level to shader-read. On entry every level is in TransferDstOptimal.
+    static void recordMipChain(vk::CommandBuffer cmd, vk::Image image, u32 width, u32 height, u32 mipLevels)
+    {
+        i32 mw = static_cast<i32>(width);
+        i32 mh = static_cast<i32>(height);
+        for (u32 i = 1; i < mipLevels; i += 1)
+        {
+            mipBarrier(cmd, image, i - 1, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
+                       vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite,
+                       vk::PipelineStageFlagBits2::eBlit, vk::AccessFlagBits2::eTransferRead);
+            const i32 nw = mw > 1 ? mw / 2 : 1;
+            const i32 nh = mh > 1 ? mh / 2 : 1;
+            vk::ImageBlit blit{};
+            blit.srcSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, i - 1, 0, 1 };
+            blit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+            blit.srcOffsets[1] = vk::Offset3D{ mw, mh, 1 };
+            blit.dstSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, i, 0, 1 };
+            blit.dstOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+            blit.dstOffsets[1] = vk::Offset3D{ nw, nh, 1 };
+            cmd.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal,
+                          blit, vk::Filter::eLinear);
+            mw = nw;
+            mh = nh;
+        }
+        for (u32 i = 0; i < mipLevels; i += 1)
+        {
+            const bool last = i == mipLevels - 1;
+            mipBarrier(cmd, image, i,
+                       last ? vk::ImageLayout::eTransferDstOptimal : vk::ImageLayout::eTransferSrcOptimal,
+                       vk::ImageLayout::eShaderReadOnlyOptimal,
+                       last ? vk::PipelineStageFlagBits2::eCopy : vk::PipelineStageFlagBits2::eBlit,
+                       last ? vk::AccessFlagBits2::eTransferWrite : vk::AccessFlagBits2::eTransferRead,
+                       vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        }
+    }
+
+    // Reuses a reclaimed bindless slot when one is free, else grows the pool. The returned slot's texture
+    // must set GpuTexture::bindlessFreeList so the slot returns here when the texture is destroyed.
+    static auto claimBindlessSlot(Renderer& renderer) -> u32
+    {
+        std::vector<u32>& freeList = *renderer.descriptors.bindlessFreeList;
+        if (!freeList.empty())
+        {
+            const u32 slot = freeList.back();
+            freeList.pop_back();
+            return slot;
+        }
+        const u32 slot = renderer.descriptors.nextBindlessIndex;
+        renderer.descriptors.nextBindlessIndex += 1;
+        return slot;
+    }
+
     auto uploadTexture(Renderer& renderer, const u8* rgba, u32 width, u32 height, bool srgb) -> Result<Ref<GpuTexture>>
     {
         if (width == 0 || height == 0)
@@ -110,12 +194,13 @@ namespace se
         std::memcpy(stagingMapped.pMappedData, rgba, bytes);
         vmaFlushAllocation(renderer.context.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
 
+        const u32 mipLevels = mipCount(width, height);
         const vk::Format format = srgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm;
         VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
         imageInfo.format = static_cast<VkFormat>(format);
         imageInfo.extent = VkExtent3D{ width, height, 1 };
-        imageInfo.mipLevels = 1;
+        imageInfo.mipLevels = mipLevels;
         imageInfo.arrayLayers = 1;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -151,18 +236,26 @@ namespace se
         vk::CommandBufferBeginInfo begin{};
         begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         static_cast<void>(cmd.begin(begin));
-        transitionImage(cmd, vk::Image{ rawImage }, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
-                        vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite);
+        // All mips start TransferDst: mip 0 receives the copy, the rest receive blits down the chain.
+        {
+            vk::ImageMemoryBarrier2 toDst{};
+            toDst.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+            toDst.dstStageMask = vk::PipelineStageFlagBits2::eCopy;
+            toDst.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            toDst.oldLayout = vk::ImageLayout::eUndefined;
+            toDst.newLayout = vk::ImageLayout::eTransferDstOptimal;
+            toDst.image = vk::Image{ rawImage };
+            toDst.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0, 1 };
+            vk::DependencyInfo dep{};
+            dep.setImageMemoryBarriers(toDst);
+            cmd.pipelineBarrier2(dep);
+        }
         vk::BufferImageCopy region{};
         region.imageSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
         region.imageExtent = vk::Extent3D{ width, height, 1 };
         cmd.copyBufferToImage(vk::Buffer{ staging }, vk::Image{ rawImage }, vk::ImageLayout::eTransferDstOptimal,
                               region);
-        transitionImage(cmd, vk::Image{ rawImage }, vk::ImageLayout::eTransferDstOptimal,
-                        vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eCopy,
-                        vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader,
-                        vk::AccessFlagBits2::eShaderSampledRead);
+        recordMipChain(cmd, vk::Image{ rawImage }, width, height, mipLevels);
         static_cast<void>(cmd.end());
         vk::CommandBufferSubmitInfo cmdInfo{};
         cmdInfo.commandBuffer = cmd;
@@ -177,7 +270,7 @@ namespace se
         viewInfo.image = vk::Image{ rawImage };
         viewInfo.viewType = vk::ImageViewType::e2D;
         viewInfo.format = format;
-        viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+        viewInfo.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0, 1 };
         auto view = checked(renderer.context.device.createImageView(viewInfo), "uploadTexture: createImageView");
         if (!view)
         {
@@ -185,9 +278,8 @@ namespace se
             return Err(view.error());
         }
 
-        // Claim a bindless slot and write the texture into the global array.
-        const u32 index = renderer.descriptors.nextBindlessIndex;
-        renderer.descriptors.nextBindlessIndex = renderer.descriptors.nextBindlessIndex + 1;
+        // Claim a bindless slot (reusing a reclaimed one) and write the texture into the global array.
+        const u32 index = claimBindlessSlot(renderer);
         writeBindlessTexture(renderer, *view, index);
 
         GpuTexture texture;
@@ -199,6 +291,7 @@ namespace se
         texture.extent = vk::Extent2D{ width, height };
         texture.format = format;
         texture.bindlessIndex = index;
+        texture.bindlessFreeList = renderer.descriptors.bindlessFreeList;
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 
@@ -348,8 +441,7 @@ namespace se
             return Err(view.error());
         }
 
-        const u32 index = renderer.descriptors.nextBindlessIndex;
-        renderer.descriptors.nextBindlessIndex = renderer.descriptors.nextBindlessIndex + 1;
+        const u32 index = claimBindlessSlot(renderer);
         writeBindlessTexture(renderer, *view, index);
 
         GpuTexture texture;
@@ -361,6 +453,7 @@ namespace se
         texture.extent = vk::Extent2D{ width, height };
         texture.format = format;
         texture.bindlessIndex = index;
+        texture.bindlessFreeList = renderer.descriptors.bindlessFreeList;
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 }
