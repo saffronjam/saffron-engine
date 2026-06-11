@@ -1,7 +1,20 @@
 # Phase 18 — Slang codegen backend
 
-**Status:** IN PROGRESS — codegen core done (graph → Slang → slangc → SPIR-V); per-material PSO render-wiring remains
+**Status:** IN PROGRESS — codegen **renders** in the preview (graph → Slang → slangc → PSO → image); scene-path codegen + caching remain
 **Depends on:** 01, 17
+
+> **Render-wiring done (preview path).** `compileMaterialPreviewShader` emits a full preview shader
+> (matching `PreviewPush` + the sphere vertex layout) whose `evalSurface` is the graph (via
+> `emitGraphSurface`), slangc-compiles it to `materials/<id>_preview.spv`. `newPreviewPipeline` is now
+> parameterized by spv path; `renderMaterialPreview` takes an optional `shaderSpv` (a per-call codegen
+> pipeline). `preview-render` detects a **non-foldable** graph → codegens → renders the procedural surface.
+> e2e `material_codegen_render.test.ts` proves a multiply-graph material **renders** via codegen
+> (valid PNG, validation-clean). **The headline graph → Slang → slangc → PSO → rendered-image pipeline is
+> complete for the preview.** Remaining: (1) **scene-path codegen** (the übershader for actual entities,
+> not just the preview — splice the emitted `evalSurface` into a per-material mesh PSO via
+> `requestMeshPipeline` keyed on graph hash); (2) **per-graph pipeline caching** (currently per-call) +
+> editor async-compile/fallback; (3) render-context nodes (triplanar/noise/Fresnel/normal). Phases 20
+> (React Flow editor) + 21 (cook) follow.
 
 > **Done (codegen core).** `emitGraphSurface(graph)` lowers a node graph to a Slang `evalSurface` body
 > (constant / textureSlot / multiply / add nodes → statements in array order, then the `materialOutput`
