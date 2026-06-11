@@ -561,6 +561,9 @@ SurfaceData evalSurface(MaterialInput m)
     }
 
     SurfaceData s;
+    // Node-graph codegen replaces the block between the markers (see compileMaterialMeshShader); the
+    // default below is the fixed glTF metallic-roughness path. `mat`/`uv`/`m`/`albedoTextures` are in scope.
+    // @graph-begin
     float4 base = albedoTextures[NonUniformResourceIndex(mat.tex0.x)].Sample(uv);
     s.albedo = base.rgb * mat.baseColor.rgb;
     s.opacity = base.a * mat.baseColor.a;
@@ -593,6 +596,7 @@ SurfaceData evalSurface(MaterialInput m)
     {
         s.emissive *= albedoTextures[NonUniformResourceIndex(mat.tex0.w)].Sample(uv).rgb;
     }
+    // @graph-end
     return s;
 }
 
