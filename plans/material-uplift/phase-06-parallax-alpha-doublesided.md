@@ -1,7 +1,18 @@
 # Phase 06 — Parallax + alpha-clip + double-sided
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (parallax + alpha-clip; double-sided deferred to phase 09)
 **Depends on:** 05
+
+> **Outcome / scope note.** Landed **parallax (POM)** + **alpha-clip**, both dormant until a populator
+> (phase 08 imports the coast-rocks height map → the POM visual test happens there). Done: height slot
+> (`heightTexture` + `heightScale`) and alpha-clip (`alphaClip` + `alphaCutoff`) added to `SubmeshMaterial`
+> + `MaterialComponent` + `MaterialSlot`; `resolveEntityMaterials` loads them; the drawlist derives
+> `FEATURE_HEIGHT(8)` / `FEATURE_ALPHACLIP(16)` and packs `heightIndex`→`tex1.x`, `heightScale`→`emissive.w`,
+> `alphaCutoff`→`pbr.w`. `mesh.slang`: a 24-step `parallaxUv` POM marcher (uses a pre-parallax derivative
+> TBN computed once, reused for the normal map) gated by `FEATURE_HEIGHT`; an alpha-clip `discard` in
+> `fragmentMain`. **`doubleSided` deferred to phase 09** — flipping the hardcoded two-sided default to
+> back-face culling is a winding/regression risk with no populator to test, so it pairs with the `.smat`
+> resolve (which carries `doubleSided`). Build clean; 9/9 e2e (materials + render + rendering) no-regression.
 
 ## Goal
 
