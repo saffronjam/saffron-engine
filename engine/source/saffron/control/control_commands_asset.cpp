@@ -1079,7 +1079,22 @@ namespace se
                 }
                 const SubmeshMaterial sm = resolveMaterialAsset(ctx.assets, ctx.renderer, *loaded);
                 const u32 size = params.size.value_or(256u);
-                auto tex = renderMaterialPreview(ctx.renderer, sm, size);
+                // A non-foldable graph (procedural nodes) renders via a codegen'd preview shader; a
+                // foldable graph already folded into sm, so the default studio preview shows it.
+                std::string codegenSpv;
+                if (auto rawLoaded = loadMaterialAssetRaw(ctx.assets, (*resolved)->id);
+                    rawLoaded && rawLoaded->graph.is_object() && !rawLoaded->graph.empty())
+                {
+                    MaterialAsset probe = *rawLoaded;
+                    if (!lowerGraphToParams(rawLoaded->graph, probe))
+                    {
+                        if (auto spv = compileMaterialPreviewShader(ctx.assets, rawLoaded->graph, (*resolved)->id))
+                        {
+                            codegenSpv = *spv;
+                        }
+                    }
+                }
+                auto tex = renderMaterialPreview(ctx.renderer, sm, size, codegenSpv);
                 if (!tex)
                 {
                     return Err(tex.error());
