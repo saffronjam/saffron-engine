@@ -227,6 +227,16 @@ namespace se
         return static_cast<u32>(renderer.pipelines.cache.size());
     }
 
+    auto bindlessTextureCount(const Renderer& renderer) -> u32
+    {
+        return renderer.descriptors.nextBindlessIndex;
+    }
+
+    auto bindlessFreeCount(const Renderer& renderer) -> u32
+    {
+        return static_cast<u32>(renderer.descriptors.bindlessFreeList->size());
+    }
+
     auto newOverlayPipeline(Renderer& renderer, bool depthTest) -> Result<Ref<Pipeline>>
     {
         auto moduleResult = loadShaderModule(renderer.context.device, assetPath("shaders/gizmo_overlay.spv"));
