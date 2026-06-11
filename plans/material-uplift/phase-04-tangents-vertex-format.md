@@ -1,64 +1,73 @@
-# Phase 04 — Tangents + `.smesh` v3
+# Phase 04 — Tangent basis (derivative-based)
 
-**Status:** NOT STARTED
-**Depends on:** — (independent of 01–03; can run in parallel)
+**Status:** COMPLETED
+**Depends on:** — (independent of 01–03)
+
+> **Approach change (from the original "extend Vertex + .smesh v3" plan).** Growing the base
+> `Vertex` to 48 B ripples through the skinning compute pre-pass (which deforms a *base 32-byte
+> Vertex layout* into the deformed buffer), the previous-pose deformed buffer (motion vectors),
+> `.smesh` save/load, and glTF/OBJ import + tangent generation — a high-risk migration with two
+> code paths (static vs skinned). Instead we compute the **tangent basis per-fragment from screen-space
+> derivatives** of world position + UV (Schüler's cotangent-frame method). This is **one code path**,
+> **zero blast radius** (no `Vertex`/skinning/motion/import/save-load change), works identically for
+> static and skinned meshes, and is a production-proven technique. Trade-off: the basis is derived from
+> the interpolated geometry rather than a stored MikkTSpace tangent, so it can differ subtly from the
+> basis a normal map was baked against (worst on mirrored UVs / hard edges). If a future asset needs
+> exact MikkTSpace fidelity, a precomputed tangent **stream** (a second vertex binding, static meshes
+> only) can be layered on without disturbing this path.
 
 ## Goal
 
-Add a per-vertex **tangent** so tangent-space normal mapping is possible. Bump the `.smesh` format
-to v3, generate/import tangents, and plumb the tangent through the vertex shader to `VertexOutput`.
-Without this, normal maps (phase 05) cannot be applied correctly on arbitrary geometry.
+Make tangent-space normal mapping possible by adding a derivative-based cotangent-frame helper to
+`mesh.slang`, and carry the world position into `MaterialInput` so the helper has its inputs. The
+helper is consumed by the normal-mapping path in phase 05.
 
-## Why
+## The helper (in `mesh.slang`)
 
-Normal maps store directions in tangent space; converting them to world space needs a TBN basis
-(tangent, bitangent, normal) per fragment. The bitangent is reconstructed from N×T·sign, so we only
-store tangent `xyz` + handedness `w` (vec4). glTF often provides tangents; when absent (OBJ, some
-glTF), generate them from positions + UVs (MikkTSpace-style, or a simple per-triangle accumulate).
+```slang
+// Per-fragment tangent frame from screen-space derivatives (no stored tangents needed).
+float3x3 cotangentFrame(float3 N, float3 p, float2 uv)
+{
+    float3 dp1 = ddx(p);   float3 dp2 = ddy(p);
+    float2 duv1 = ddx(uv); float2 duv2 = ddy(uv);
+    float3 dp2perp = cross(dp2, N);
+    float3 dp1perp = cross(N, dp1);
+    float3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    float3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = rsqrt(max(dot(T, T), dot(B, B)));
+    return float3x3(T * invmax, B * invmax, N);
+}
 
-## Format change
-
-`SMeshHeader` is versioned (`magic 'SMSH'`, `version` 1=unskinned, 2=skinned). Add **v3**: the
-`Vertex` stream gains a `glm::vec4 tangent` (stride 32 → 48). Keep readers back-compatible: v1/v2
-meshes load with a zero tangent (or a generated one). `vertexStride` in the header already records
-the stride, so a v3 reader can branch on it.
-
-```cpp
-// geometry.cppm — Vertex grows:
-struct Vertex { glm::vec3 position; glm::vec3 normal; glm::vec2 uv0; glm::vec4 tangent; }; // stride 48
+// Perturb the geometric normal N by a tangent-space normal-map sample (xyz in [-1,1]).
+float3 perturbNormal(float3 N, float3 worldPos, float2 uv, float3 mapN)
+{
+    float3x3 tbn = cotangentFrame(N, worldPos, uv);
+    return normalize(mul(mapN, tbn));
+}
 ```
+
+`MaterialInput` gains `float3 worldPos`, populated in `fragmentMain` from `input.worldPos`. The helpers
+are defined this phase but not yet called (phase 05's normal path calls `perturbNormal`).
 
 ## Files to touch
 
-- `engine/source/saffron/geometry/geometry.cppm` — extend `Vertex`; bump `SMeshHeader.version`/stride
-  handling in `saveMesh`/`loadMesh` (v3 read + write, v1/v2 still load); add a `generateTangents(Mesh&)`
-  helper; in `extractGltf*`/the OBJ path, read glTF `TANGENT` accessor when present else generate.
-- `engine/source/saffron/assets/assets.cppm` — `importModel` bakes v3; `uploadMesh` passes tangents.
-- `engine/source/saffron/rendering/` — the mesh `VertexInputState`/attribute descriptions gain the
-  tangent attribute (location after uv0); `GpuMesh` upload keeps the new stride.
-- `engine/assets/shaders/mesh.slang` — `VertexInput`/`SkinnedVertexInput` gain `float4 tangent`;
-  `VertexOutput` gains `float3 worldTangent` + handedness; both `vertexMain`/`vertexMainSkinned`
-  transform the tangent by the model/normal matrix (and skin matrix for skinned).
+- `engine/assets/shaders/mesh.slang` — add `cotangentFrame` + `perturbNormal`; add `worldPos` to
+  `MaterialInput` and populate it in `fragmentMain`. No CPU-side change.
 
 ## Steps
 
-1. Extend `Vertex` + the vertex-input attribute descriptions; bump `.smesh` to v3 (write v3, read v1/v2/v3).
-2. Add `generateTangents` (accumulate per-triangle `(dPos, dUV)` → tangent, orthonormalize vs normal,
-   store handedness in `.w`). Use it when the source lacks tangents.
-3. Plumb tangent through `vertexMain`/`vertexMainSkinned` → `VertexOutput.worldTangent`.
-4. Re-import a known model; verify lit shading is unchanged (tangent unused until phase 05) and the
-   new stream round-trips (`saveMesh`→`loadMesh`).
+1. Add the two helpers above `evalSurface`.
+2. Add `float3 worldPos` to `MaterialInput`; set `mi.worldPos = input.worldPos` in `fragmentMain`.
+3. Rebuild shaders; confirm the existing material e2e still passes (the helpers are unused, so output
+   is unchanged).
 
 ## Gate / done
 
-- `make engine` clean; an existing scene with v1/v2 meshes still loads (back-compat path).
-- Re-importing a glTF produces a v3 `.smesh`; present-only smoke unchanged.
-- `make prepare-for-commit` clean.
+- `make engine` clean; material e2e unchanged (no behaviour change — helpers unused this phase).
+- `make prepare-for-commit` clean. No `se`/docs concept change (internal shader helper).
 
 ## Risks
 
-- **Back-compat:** existing project `.smesh` files are v1/v2. The loader must handle all three by the
-  `version`/`vertexStride` in the header, not assume v3. Test with a pre-existing mesh.
-- **Tangent generation quality:** a naive accumulate is fine for normal maps; mirrored UVs need the
-  handedness sign or seams flip. Store and use `.w`.
-- Stride change touches every place that assumes `sizeof(Vertex)==32`; grep for it.
+- **Derivative tangent vs baked basis** — documented above; acceptable for v1, refinement path noted.
+- `ddx`/`ddy` are fragment-only (fine — the helper is fragment-side). They require the fragment to have
+  valid derivatives (it does; this is the ordinary scene pass).
