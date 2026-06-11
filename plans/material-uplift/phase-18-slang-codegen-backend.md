@@ -1,7 +1,26 @@
 # Phase 18 — Slang codegen backend
 
-**Status:** IN PROGRESS — codegen **renders** in the preview (graph → Slang → slangc → PSO → image); scene-path codegen + caching remain
+**Status:** COMPLETED — codegen renders in the preview **and** on scene entities (graph → Slang → slangc → per-material PSO → lit render); per-graph PSO/spv caching + async compile are follow-on polish
 **Depends on:** 01, 17
+
+> **Scene-path done.** The emitter is now context-aware (`emitGraphSurface(graph, mesh)`): mesh mode
+> targets the übershader's `evalSurface(MaterialInput m)` — `m.mat`/`albedoTextures`/world normal +
+> occlusion/opacity, and honours the texture-slot prop. `mesh.slang`'s `evalSurface` body is bracketed by
+> `// @graph-begin`/`// @graph-end`; CMake copies the `.slang` sources next to the exe;
+> `compileMaterialMeshShader` reads the runtime `mesh.slang`, splices the mesh-context emit, and
+> slangc-compiles a per-material übershader variant to `assets/materials/<id>_mesh.spv`. `material-set-graph`
+> builds it on a non-foldable graph; `resolveEntityMaterials` points `Material.shader` at it (falling back
+> to the shared übershader when absent); `assetPath` passes absolute shader paths through so
+> `requestMeshPipeline`/`newMeshPipeline` build the per-graph PSO. e2e `material_scene_codegen.test.ts`
+> proves a multiply-graph material **compiles the variant on disk, renders on an entity, and binds
+> validation-clean**. The rendering suite (materials/normal/preview-codegen) still passes — the emitter
+> refactor and draw-path change are regression-free.
+>
+> **Follow-on polish (not blocking):** cache the compiled spv/PSO by graph hash (currently recompiled on
+> each set-graph), async compile with a visible fallback, and a graph-driven `normal` channel (the mesh
+> splice currently keeps the geometric normal). Lighting is *not* yet a separately-linked Slang module
+> (each variant recompiles the whole übershader); phase-21 cook-time baking + Slang module linking address
+> the "recompile the world" risk for shipping.
 
 > **Render-wiring done (preview path).** `compileMaterialPreviewShader` emits a full preview shader
 > (matching `PreviewPush` + the sphere vertex layout) whose `evalSurface` is the graph (via
