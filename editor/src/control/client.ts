@@ -385,6 +385,12 @@ export const client = {
       roughness?: number;
       emissive?: { x: number; y: number; z: number };
       emissiveStrength?: number;
+      normalStrength?: number;
+      albedoTexture?: string;
+      ormTexture?: string;
+      normalTexture?: string;
+      emissiveTexture?: string;
+      heightTexture?: string;
     },
   ): Promise<unknown> {
     return call("material-update", { material, ...patch });
