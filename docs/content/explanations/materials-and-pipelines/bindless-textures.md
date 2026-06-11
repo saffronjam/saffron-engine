@@ -87,6 +87,20 @@ struct Instance
 float4 tex = albedoTextures[NonUniformResourceIndex(input.textureIndex)].Sample(input.uv0);
 ```
 
+## Slot lifetime and mipmaps
+
+The 1024-slot array is finite, so slots are **reclaimed**. A shared free-list lives on `Descriptors` and is
+held (as a `Ref`) by every `GpuTexture`; when a texture is destroyed its slot returns to the list, and the
+next upload reuses a freed slot before growing `nextBindlessIndex`. This keeps a hot-reloaded or churny
+scene bounded instead of marching the high-water mark to the limit. Reclaim is frame-safe because the draw
+path holds live texture `Ref`s for the frame — textures die at cache-clear/teardown, never mid-frame — and
+the free-list outlives both the descriptors and the textures. `se render-stats` reports `bindlessTextures`
+(high-water) and `bindlessFree` (reclaimed).
+
+Uploads generate a full **mip chain** (`vkCmdBlitImage` down the levels, linear filter) and the bindless
+sampler is trilinear, so minified 4K material textures don't alias. A texture whose `Uuid` is missing from
+the catalog warns once and resolves to the default white slot — never a null descriptor or black surface.
+
 ## In the code
 
 | What | File | Symbols |
@@ -94,7 +108,8 @@ float4 tex = albedoTextures[NonUniformResourceIndex(input.textureIndex)].Sample(
 | Array binding (shader) | `mesh.slang` | `albedoTextures[1024]`, `NonUniformResourceIndex` |
 | Layout flags | `renderer_detail.cppm` | `albedoBinding`, `ePartiallyBound`, `eUpdateAfterBind` |
 | Device feature gate | `renderer.cppm` | `descriptorBindingPartiallyBound`, `…SampledImageUpdateAfterBind` |
-| Slot claim + upload | `renderer_textures.cpp` | `uploadTexture`, `nextBindlessIndex`, `GpuTexture::bindlessIndex` |
+| Slot claim + reclaim | `renderer_textures.cpp` | `claimBindlessSlot`, `bindlessFreeList`; `renderer_types.cppm` · `GpuTexture::reset` |
+| Mip generation | `renderer_textures.cpp` | `mipCount`, `recordMipChain` |
 | Descriptor write | `renderer_detail.cppm` | `writeBindlessTexture` |
 | Index in instance data | `mesh.slang` | `Instance::texture.x` |
 
