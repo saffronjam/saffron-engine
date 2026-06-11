@@ -84,6 +84,10 @@ export namespace se
         Uuid heightTexture;
         std::string normalConvention = "gl";  // gl | dx — baked to gl at import; recorded for provenance
         u32 features = 0;      // resolved feature bitset (populated from the PBR-slots phase)
+        // Optional node graph (the editable source of truth for a graph-authored material). When a
+        // foldable graph is present, the resolved factors/textures above are derived from it; a
+        // non-foldable graph (procedural nodes) is the codegen path. Null/empty = no graph.
+        nlohmann::json graph;
     };
 
     // The built-in default material: white albedo, fully rough, non-metallic. Returned by the
@@ -836,7 +840,8 @@ return {0}
                 { "ormOrMr", u(m.ormTexture) },
                 { "normal", u(m.normalTexture) },
                 { "emissive", u(m.emissiveTexture) },
-                { "height", u(m.heightTexture) } } }
+                { "height", u(m.heightTexture) } } },
+            { "graph", m.graph.is_null() ? nlohmann::json::object() : m.graph }
         };
     }
 
@@ -910,7 +915,140 @@ return {0}
                 m.heightTexture = uuid(*v);
             }
         }
+        if (auto v = j.find("graph"); v != j.end() && v->is_object() && !v->empty())
+        {
+            m.graph = *v;
+        }
         return m;
+    }
+
+    // Folds a node graph into the flat material params, when every materialOutput channel is driven
+    // by a constant or a texture node (no procedural/math nodes). Returns false if any channel needs
+    // codegen — the caller then keeps the stored params as a fallback. The graph json is
+    // { nodes: [{id,type,props}], edges: [{from:[node,pin], to:[node,pin]}] }.
+    auto lowerGraphToParams(const nlohmann::json& graph, MaterialAsset& m) -> bool
+    {
+        if (!graph.is_object())
+        {
+            return false;
+        }
+        const auto nodesIt = graph.find("nodes");
+        const auto edgesIt = graph.find("edges");
+        if (nodesIt == graph.end() || edgesIt == graph.end() || !nodesIt->is_array() || !edgesIt->is_array())
+        {
+            return false;
+        }
+        std::unordered_map<std::string, const nlohmann::json*> byId;
+        std::string outputId;
+        for (const nlohmann::json& n : *nodesIt)
+        {
+            byId[n.value("id", std::string{})] = &n;
+            if (n.value("type", std::string{}) == "materialOutput")
+            {
+                outputId = n.value("id", std::string{});
+            }
+        }
+        if (outputId.empty())
+        {
+            return false;
+        }
+        const auto uuidOf = [](const nlohmann::json& v) -> Uuid
+        {
+            if (v.is_string())
+            {
+                return Uuid{ std::strtoull(v.get<std::string>().c_str(), nullptr, 10) };
+            }
+            if (v.is_number_unsigned())
+            {
+                return Uuid{ v.get<u64>() };
+            }
+            return Uuid{ 0 };
+        };
+        const auto scalar = [](const nlohmann::json& v) -> f32
+        { return v.is_array() && !v.empty() ? v[0].get<f32>() : (v.is_number() ? v.get<f32>() : 0.0f); };
+        bool foldable = true;
+        for (const nlohmann::json& e : *edgesIt)
+        {
+            const auto to = e.find("to");
+            const auto from = e.find("from");
+            if (to == e.end() || from == e.end() || !to->is_array() || to->size() < 2 || !from->is_array() ||
+                from->empty() || (*to)[0].get<std::string>() != outputId)
+            {
+                continue;
+            }
+            const std::string channel = (*to)[1].get<std::string>();
+            const auto srcIt = byId.find((*from)[0].get<std::string>());
+            if (srcIt == byId.end())
+            {
+                foldable = false;
+                continue;
+            }
+            const nlohmann::json& src = *srcIt->second;
+            const std::string type = src.value("type", std::string{});
+            const nlohmann::json props = src.value("props", nlohmann::json::object());
+            if (type == "constant")
+            {
+                const nlohmann::json value = props.value("value", nlohmann::json::array());
+                if (channel == "baseColor" && value.is_array() && value.size() >= 4)
+                {
+                    m.baseColor = glm::vec4{ value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(),
+                                             value[3].get<f32>() };
+                }
+                else if (channel == "emissive" && value.is_array() && value.size() >= 3)
+                {
+                    m.emissive = glm::vec3{ value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>() };
+                }
+                else if (channel == "metallic")
+                {
+                    m.metallic = scalar(value);
+                }
+                else if (channel == "roughness")
+                {
+                    m.roughness = scalar(value);
+                }
+                else if (channel == "emissiveStrength")
+                {
+                    m.emissiveStrength = scalar(value);
+                }
+                else
+                {
+                    foldable = false;
+                }
+            }
+            else if (type == "texture")
+            {
+                const Uuid asset = uuidOf(props.value("asset", nlohmann::json{}));
+                if (channel == "baseColor")
+                {
+                    m.albedoTexture = asset;
+                }
+                else if (channel == "normal")
+                {
+                    m.normalTexture = asset;
+                }
+                else if (channel == "emissive")
+                {
+                    m.emissiveTexture = asset;
+                }
+                else if (channel == "roughness" || channel == "metallic")
+                {
+                    m.ormTexture = asset;
+                }
+                else if (channel == "height")
+                {
+                    m.heightTexture = asset;
+                }
+                else
+                {
+                    foldable = false;
+                }
+            }
+            else
+            {
+                foldable = false;  // procedural/math node -> needs the codegen path
+            }
+        }
+        return foldable;
     }
 
     // Writes a MaterialAsset to assets/materials/<uuid>.smat and registers a Material catalog
@@ -959,7 +1097,18 @@ return {0}
         {
             return Err(std::format("invalid material json '{}'", entry->path));
         }
-        return materialAssetFromJson(j);
+        MaterialAsset m = materialAssetFromJson(j);
+        // A foldable graph is the source of truth: derive the flat params from it. A non-foldable
+        // graph (procedural nodes) keeps the stored params as a fallback until codegen lands.
+        if (m.graph.is_object() && !m.graph.empty())
+        {
+            MaterialAsset folded = m;
+            if (lowerGraphToParams(m.graph, folded))
+            {
+                m = folded;
+            }
+        }
+        return m;
     }
 
     // Overwrites an existing .smat in place (same id + path) — the edit path, vs saveMaterialAsset
