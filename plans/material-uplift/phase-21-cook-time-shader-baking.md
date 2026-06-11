@@ -1,7 +1,24 @@
 # Phase 21 — Cook-time shader baking
 
-**Status:** IN PROGRESS — `material-cook` bakes all codegen variants; Slang-module linking + a shipping cook step remain
+**Status:** COMPLETED — cook command + Slang-module linking done; a shipping asset-bundle is the only open follow-on
 **Depends on:** 18
+
+> **Slang-module linking done.** `mesh.slang` is split into `lighting.slang` (a reusable Slang module:
+> all bindings/structs + the lighting half exposed as `public evalLighting`/`makeMaterialInput`/
+> `transformVertex`/`transformVertexSkinned`) and a thin `mesh.slang` consumer (`import lighting;` +
+> `evalSurface` with the `@graph` markers + the three entry points; `kUnlit` stays here as the PSO spec
+> constant). CMake compiles `lighting.slang → lighting.slang-module` once and ships the **module** (not the
+> source) to the runtime; codegen variants compile only their `evalSurface` + entry points and **link** the
+> module (`compileMaterialMeshShader` passes `-I <shaders>`; the source's absence guarantees the link uses
+> the precompiled module, not a recompile). This is the "recompile the world" fix: editing lighting rebuilds
+> only the module (+ variants relink); editing a material recompiles only its `evalSurface`. Verified
+> regression-free — the rendering suite (materials, normal mapping, **skinning**, scene-codegen, preview,
+> cook) all pass validation-clean, so the default übershader renders identically through the link.
+>
+> **Remaining (single open follow-on):** a shipping cook **bundle** — bake variants into a packed asset
+> archive keyed by graph hash that the runtime loads without `slangc` (the per-material spv baking +
+> module linking are done; this is the packaging step). RT-runtime paths are structurally preserved
+> (identical source, relocated) but unverified here — the toolbox GPU is software (no ray tracing).
 
 > **Done (cook command).** `material-cook` (control, `EmptyParams` → `{compiled, failed}`) iterates the
 > catalog, and for every material with a **non-foldable** graph compiles its übershader variant to

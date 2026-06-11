@@ -1,6 +1,6 @@
 # Material uplift
 
-**Status:** IN PROGRESS (phases 01–14, 16, 17, **18 [codegen complete — preview + scene-path]**, 19 [emitter nodes], 20 [React-Flow editor v1] + thumbnails/texture-edit; remaining: 15 hardening, 20 interactive polish, 21 cook + Slang-module linking)
+**Status:** COMPLETED — all phases done (01–21). Native material assets + params buffer + PBR slots; importer; entity assignment + instances; CRUD commands; thumbnails + live texture editing; the node-graph data model + foldable lowering; Slang codegen rendering in the preview **and** on scene entities; the node library; the React Flow editor; engine hardening (bindless reclamation + mipmaps); `material-cook` + Slang-module linking. Sole open follow-on: a shipping cook **bundle** (packaging baked variants for slangc-free runtime). RT-runtime paths are unverified locally (software GPU, no ray tracing).
 
 A native, editable material system for SaffronEngine: import full PBR texture sets,
 manage materials as first-class assets, assign them to entities, edit them in a
