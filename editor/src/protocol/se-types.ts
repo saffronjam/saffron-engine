@@ -1119,6 +1119,7 @@ export interface MaterialGetResult {
   normalTexture: WireUuid;
   emissiveTexture: WireUuid;
   heightTexture: WireUuid;
+  graph: unknown;
 }
 
 export interface MaterialUpdateParams {
