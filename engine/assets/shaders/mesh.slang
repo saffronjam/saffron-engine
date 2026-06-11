@@ -482,12 +482,14 @@ struct MaterialInput
     float3 worldPos;
     float3 worldNormal;
     float2 uv0;
-    float4 baseColor;
-    uint albedoIndex;
-    uint mrTextureIndex;
-    float2 mrFactor;   // x = metallic factor, y = roughness factor
-    float3 emissive;
+    MaterialParams mat;
 };
+
+// Material feature bits (MaterialParams.tex1.w). Optional samples are taken only when set, so a
+// material without the map pays nothing (a uniform, wave-coherent branch).
+static const uint FEATURE_NORMAL = 1u;
+static const uint FEATURE_EMISSIVE_TEX = 2u;
+static const uint FEATURE_OCCLUSION = 4u;
 
 // Per-fragment tangent frame from screen-space derivatives (no stored tangents needed). Schüler's
 // method: solve for the tangent/bitangent that map the UV gradients onto the world-position gradients.
@@ -514,18 +516,44 @@ float3 perturbNormal(float3 N, float3 worldPos, float2 uv, float3 mapN)
 
 SurfaceData evalSurface(MaterialInput m)
 {
+    MaterialParams mat = m.mat;
+    uint features = mat.tex1.w;
+    float2 uv = m.uv0 * mat.uv.xy + mat.uv.zw;
+
     SurfaceData s;
-    float4 tex = albedoTextures[NonUniformResourceIndex(m.albedoIndex)].Sample(m.uv0);
-    s.albedo = tex.rgb * m.baseColor.rgb;
-    s.opacity = tex.a * m.baseColor.a;
-    // glTF metallic-roughness map: roughness in G, metalness in B; modulates the factors.
-    // The default white texture (when a material has none) leaves the factors unchanged.
-    float4 mrSample = albedoTextures[NonUniformResourceIndex(m.mrTextureIndex)].Sample(m.uv0);
-    s.metallic = saturate(m.mrFactor.x * mrSample.b);
-    s.roughness = clamp(m.mrFactor.y * mrSample.g, 0.045, 1.0);
-    s.normal = normalize(m.worldNormal);
-    s.emissive = m.emissive;
+    float4 base = albedoTextures[NonUniformResourceIndex(mat.tex0.x)].Sample(uv);
+    s.albedo = base.rgb * mat.baseColor.rgb;
+    s.opacity = base.a * mat.baseColor.a;
+
+    // metallic-roughness / ORM (roughness in G, metalness in B); modulates the factors. The
+    // default white texture (when a material has none) leaves the factors unchanged.
+    float4 mr = albedoTextures[NonUniformResourceIndex(mat.tex0.y)].Sample(uv);
+    s.metallic = saturate(mat.pbr.x * mr.b);
+    s.roughness = clamp(mat.pbr.y * mr.g, 0.045, 1.0);
+
+    // Ambient occlusion (AO in R), only when a map is present.
     s.occlusion = 1.0;
+    if (features & FEATURE_OCCLUSION)
+    {
+        s.occlusion = albedoTextures[NonUniformResourceIndex(mat.tex1.y)].Sample(uv).r;
+    }
+
+    // Tangent-space normal map, perturbing the geometric normal via the derivative TBN.
+    float3 n = normalize(m.worldNormal);
+    if (features & FEATURE_NORMAL)
+    {
+        float3 mapN = albedoTextures[NonUniformResourceIndex(mat.tex0.z)].Sample(uv).xyz * 2.0 - 1.0;
+        mapN.xy *= mat.pbr.z;  // normalStrength
+        n = perturbNormal(n, m.worldPos, uv, mapN);
+    }
+    s.normal = n;
+
+    // Emissive: factor radiance, modulated by the emissive map when present.
+    s.emissive = mat.emissive.rgb;
+    if (features & FEATURE_EMISSIVE_TEX)
+    {
+        s.emissive *= albedoTextures[NonUniformResourceIndex(mat.tex0.w)].Sample(uv).rgb;
+    }
     return s;
 }
 
@@ -537,11 +565,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     mi.worldPos = input.worldPos;
     mi.worldNormal = input.worldNormal;
     mi.uv0 = input.uv0;
-    mi.baseColor = mp.baseColor;
-    mi.albedoIndex = mp.tex0.x;
-    mi.mrTextureIndex = mp.tex0.y;
-    mi.mrFactor = mp.pbr.xy;
-    mi.emissive = mp.emissive.rgb;
+    mi.mat = mp;
     SurfaceData surf = evalSurface(mi);
 
     float3 n = surf.normal;
