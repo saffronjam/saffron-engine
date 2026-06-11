@@ -6,9 +6,14 @@ import { X } from "lucide-react";
 import { useEditorStore, type RightTool } from "../state/store";
 import { RenderStatsPanel } from "./RenderStatsPanel";
 import { ProfilerPanel } from "./ProfilerPanel";
+import { MaterialEditorPanel } from "./MaterialEditorPanel";
 import { cn } from "@/lib/utils";
 
-const TOOL_LABEL: Record<RightTool, string> = { stats: "Stats", profiler: "Profiler" };
+const TOOL_LABEL: Record<RightTool, string> = {
+  stats: "Stats",
+  profiler: "Profiler",
+  material: "Material",
+};
 
 export function RightSidebar() {
   const rightTools = useEditorStore((s) => s.rightTools);
@@ -67,6 +72,8 @@ export function RightSidebar() {
           <RenderStatsPanel />
         ) : active === "profiler" ? (
           <ProfilerPanel />
+        ) : active === "material" ? (
+          <MaterialEditorPanel />
         ) : null}
       </div>
     </div>
