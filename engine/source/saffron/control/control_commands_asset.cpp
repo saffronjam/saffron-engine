@@ -898,6 +898,21 @@ namespace se
                 return MaterialImportResultDto{ WireUuid{ result->material.value }, result->roles };
             });
 
+        registerCommand<EmptyParams, MaterialListResult>(
+            reg, "material-list", "material-list",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<MaterialListResult>
+            {
+                MaterialListResult out;
+                for (const AssetEntry& entry : ctx.assets.catalog.entries)
+                {
+                    if (entry.type == AssetType::Material)
+                    {
+                        out.materials.push_back(MaterialRefDto{ WireUuid{ entry.id.value }, entry.name, entry.folder });
+                    }
+                }
+                return out;
+            });
+
         registerCommand<PathParams, PathResult>(reg, "save-scene", "save-scene {path}",
                                                 [](EngineContext& ctx, const PathParams& params) -> Result<PathResult>
                                                 {
