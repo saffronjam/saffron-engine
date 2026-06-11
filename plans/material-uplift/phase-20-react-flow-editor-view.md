@@ -1,7 +1,24 @@
 # Phase 20 — React Flow editor view
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS — v1 built (canvas + palette + live preview + auto-apply); needs interactive polish
 **Depends on:** 19
+
+> **Done (v1, build-validated).** `@xyflow/react` added. `editor/src/materials/graph.ts` holds the shared
+> graph model + `NODE_SPECS` palette (kept in sync with the engine emitter) + `graphToFlow`/`flowToGraph`
+> conversion (canvas position rides in `props.editorPos`, which the engine ignores).
+> `editor/src/panels/MaterialGraphEditor.tsx` is a full-screen overlay: a React Flow canvas with custom
+> `SaffronNode` cards (per-pin input/output handles, inline editors for `constant`/`textureSlot`), a
+> categorized node palette, drag-to-connect, **debounced auto-apply** (`material-set-graph` →
+> `preview-render`) so the studio-lit sphere morphs as you edit, and a **Compile** button
+> (`material-compile-graph`). Launched by the "Graph" button in `MaterialEditorPanel`. Engine plumbing:
+> `material-get` now returns the stored graph (e2e `material_graph_roundtrip.test.ts`); client wrappers
+> `materialSetGraph`/`materialCompileGraph`. `bun run check` + `lint` clean, `bun run build` green.
+>
+> **Remaining (needs a live Wayland session to iterate):** interactive polish — handle-alignment for
+> many-pin nodes, edge-validation (type/pin compatibility), node deletion UX, fit/zoom defaults,
+> per-node compile-error attribution surfaced on the card, and richer inline editors (color swatch for
+> `constant`, an asset-picker for `textureSlot`). A scene-path codegen (phase-18 follow-on) would let the
+> editor preview reflect the same shader the scene uses.
 
 ## Goal
 
