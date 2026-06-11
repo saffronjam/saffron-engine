@@ -16,8 +16,11 @@
 > **not parse `std::optional<EntitySelector>`** — so `material-create`'s "snapshot from current entity"
 > (`from`) was dropped; revisit with a string selector or explicit factor fields.
 >
-> **Deferred to phase 13 (editor):** `material.list` / `material.get` / `material.update` (the browser +
-> live-edit commands) and the `material-create` snapshot-from-entity, both consumed by the editor UI.
+> **Read CRUD added (later in-session):** `material-list` → `{ materials: [{id,name,folder}] }` (the browser
+> enumeration) and `material-get {id|name}` → the material's blend/unlit/factors/texture-ids (the inspector
+> read). Both e2e-covered (`material_list.test.ts`, `material_get.test.ts`). **Still deferred to phase 13
+> (editor):** `material.update` (live edit — the editor panel writes through it) and the `material-create`
+> snapshot-from-entity (`from`), both consumed by the editor UI.
 
 ## Goal
 
