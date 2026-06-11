@@ -479,6 +479,7 @@ struct SurfaceData
 
 struct MaterialInput
 {
+    float3 worldPos;
     float3 worldNormal;
     float2 uv0;
     float4 baseColor;
@@ -487,6 +488,29 @@ struct MaterialInput
     float2 mrFactor;   // x = metallic factor, y = roughness factor
     float3 emissive;
 };
+
+// Per-fragment tangent frame from screen-space derivatives (no stored tangents needed). Schüler's
+// method: solve for the tangent/bitangent that map the UV gradients onto the world-position gradients.
+float3x3 cotangentFrame(float3 N, float3 p, float2 uv)
+{
+    float3 dp1 = ddx(p);
+    float3 dp2 = ddy(p);
+    float2 duv1 = ddx(uv);
+    float2 duv2 = ddy(uv);
+    float3 dp2perp = cross(dp2, N);
+    float3 dp1perp = cross(N, dp1);
+    float3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    float3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = rsqrt(max(dot(T, T), dot(B, B)));
+    return float3x3(T * invmax, B * invmax, N);
+}
+
+// Perturb the geometric normal N by a tangent-space normal-map sample (xyz in [-1, 1]).
+float3 perturbNormal(float3 N, float3 worldPos, float2 uv, float3 mapN)
+{
+    float3x3 tbn = cotangentFrame(N, worldPos, uv);
+    return normalize(mul(mapN, tbn));
+}
 
 SurfaceData evalSurface(MaterialInput m)
 {
@@ -510,6 +534,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target
 {
     MaterialParams mp = materialParams[input.materialIndex];
     MaterialInput mi;
+    mi.worldPos = input.worldPos;
     mi.worldNormal = input.worldNormal;
     mi.uv0 = input.uv0;
     mi.baseColor = mp.baseColor;
