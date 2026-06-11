@@ -2387,7 +2387,11 @@
             "enum": [
               "mesh",
               "albedo",
-              "metallic-roughness"
+              "metallic-roughness",
+              "normal",
+              "occlusion",
+              "emissive",
+              "height"
             ]
           },
           "asset": {
@@ -2422,7 +2426,11 @@
             "enum": [
               "mesh",
               "albedo",
-              "metallic-roughness"
+              "metallic-roughness",
+              "normal",
+              "occlusion",
+              "emissive",
+              "height"
             ]
           }
         },
