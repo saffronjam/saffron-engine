@@ -1,7 +1,16 @@
 # Phase 20 — React Flow editor view
 
-**Status:** IN PROGRESS — v1 built (canvas + palette + live preview + auto-apply); needs interactive polish
+**Status:** COMPLETED — v1 + polish (canvas, palette, live preview, auto-apply, edge validation, typed slot/color editors)
 **Depends on:** 19
+
+> **Polish done.** On top of the v1 canvas: `onConnect` rejects self-loops and enforces **one source per
+> input pin** (matching the emitter), with `isValidConnection` giving drag-time feedback; the `textureSlot`
+> node now picks from the valid `TEXTURE_SLOTS` (a `<select>`, so a graph can't name an unknown slot) and
+> the `constant` node shows a color swatch beside its RGBA fields. Node deletion (Backspace) and `fitView`
+> come from React Flow. `bun run check`/`lint`/`build` clean. (Per-node *compile-error* attribution was
+> dropped as low-value: the emitter always produces valid Slang for a valid graph, so a compile failure is
+> an emitter bug surfaced by the e2e, not user input. Deeper visual refinement is open-ended and best done
+> against a live Wayland session.)
 
 > **Done (v1, build-validated).** `@xyflow/react` added. `editor/src/materials/graph.ts` holds the shared
 > graph model + `NODE_SPECS` palette (kept in sync with the engine emitter) + `graphToFlow`/`flowToGraph`
