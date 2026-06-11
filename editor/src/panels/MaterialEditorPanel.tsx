@@ -19,7 +19,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const FACTOR_FIELDS = ["baseColor", "metallic", "roughness", "emissive", "emissiveStrength"] as const;
+const FACTOR_FIELDS = [
+  "baseColor",
+  "metallic",
+  "roughness",
+  "emissive",
+  "emissiveStrength",
+] as const;
 const TEXTURE_FIELDS = [
   "albedoTexture",
   "ormTexture",

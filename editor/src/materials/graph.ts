@@ -38,19 +38,75 @@ export interface NodeSpec {
 /// The palette: every node type the engine codegen emitter understands, with its pins. Keep this in
 /// sync with emitGraphSurface in engine/source/saffron/assets/assets.cppm.
 export const NODE_SPECS: Record<string, NodeSpec> = {
-  constant: { type: "constant", label: "Constant", category: "input", inputs: [], outputs: ["rgba"], defaultProps: { value: [1, 1, 1, 1] } },
-  textureSlot: { type: "textureSlot", label: "Texture Slot", category: "input", inputs: [], outputs: ["rgba"], defaultProps: { slot: "albedo" } },
+  constant: {
+    type: "constant",
+    label: "Constant",
+    category: "input",
+    inputs: [],
+    outputs: ["rgba"],
+    defaultProps: { value: [1, 1, 1, 1] },
+  },
+  textureSlot: {
+    type: "textureSlot",
+    label: "Texture Slot",
+    category: "input",
+    inputs: [],
+    outputs: ["rgba"],
+    defaultProps: { slot: "albedo" },
+  },
   uv: { type: "uv", label: "UV", category: "input", inputs: [], outputs: ["out"] },
-  multiply: { type: "multiply", label: "Multiply", category: "math", inputs: ["a", "b"], outputs: ["rgba"] },
+  multiply: {
+    type: "multiply",
+    label: "Multiply",
+    category: "math",
+    inputs: ["a", "b"],
+    outputs: ["rgba"],
+  },
   add: { type: "add", label: "Add", category: "math", inputs: ["a", "b"], outputs: ["rgba"] },
-  subtract: { type: "subtract", label: "Subtract", category: "math", inputs: ["a", "b"], outputs: ["rgba"] },
-  divide: { type: "divide", label: "Divide", category: "math", inputs: ["a", "b"], outputs: ["rgba"] },
-  lerp: { type: "lerp", label: "Lerp", category: "math", inputs: ["a", "b", "t"], outputs: ["rgba"] },
-  smoothstep: { type: "smoothstep", label: "Smoothstep", category: "math", inputs: ["a", "b", "t"], outputs: ["rgba"] },
+  subtract: {
+    type: "subtract",
+    label: "Subtract",
+    category: "math",
+    inputs: ["a", "b"],
+    outputs: ["rgba"],
+  },
+  divide: {
+    type: "divide",
+    label: "Divide",
+    category: "math",
+    inputs: ["a", "b"],
+    outputs: ["rgba"],
+  },
+  lerp: {
+    type: "lerp",
+    label: "Lerp",
+    category: "math",
+    inputs: ["a", "b", "t"],
+    outputs: ["rgba"],
+  },
+  smoothstep: {
+    type: "smoothstep",
+    label: "Smoothstep",
+    category: "math",
+    inputs: ["a", "b", "t"],
+    outputs: ["rgba"],
+  },
   step: { type: "step", label: "Step", category: "math", inputs: ["a", "b"], outputs: ["rgba"] },
   dot: { type: "dot", label: "Dot", category: "math", inputs: ["a", "b"], outputs: ["rgba"] },
-  saturate: { type: "saturate", label: "Saturate", category: "math", inputs: ["a"], outputs: ["rgba"] },
-  oneMinus: { type: "oneMinus", label: "One Minus", category: "math", inputs: ["a"], outputs: ["rgba"] },
+  saturate: {
+    type: "saturate",
+    label: "Saturate",
+    category: "math",
+    inputs: ["a"],
+    outputs: ["rgba"],
+  },
+  oneMinus: {
+    type: "oneMinus",
+    label: "One Minus",
+    category: "math",
+    inputs: ["a"],
+    outputs: ["rgba"],
+  },
   sin: { type: "sin", label: "Sin", category: "math", inputs: ["a"], outputs: ["rgba"] },
   cos: { type: "cos", label: "Cos", category: "math", inputs: ["a"], outputs: ["rgba"] },
   frac: { type: "frac", label: "Frac", category: "math", inputs: ["a"], outputs: ["rgba"] },
@@ -70,7 +126,10 @@ export interface SaffronNodeData extends Record<string, unknown> {
 
 export type FlowNode = Node<SaffronNodeData, "saffron">;
 
-function posOf(props: Record<string, unknown> | undefined, fallbackIndex: number): { x: number; y: number } {
+function posOf(
+  props: Record<string, unknown> | undefined,
+  fallbackIndex: number,
+): { x: number; y: number } {
   const p = props?.editorPos;
   if (Array.isArray(p) && typeof p[0] === "number" && typeof p[1] === "number") {
     return { x: p[0], y: p[1] };
@@ -80,7 +139,10 @@ function posOf(props: Record<string, unknown> | undefined, fallbackIndex: number
 }
 
 /// Wire graph -> React Flow nodes/edges. Unknown node types fall back to a bare spec so they still show.
-export function graphToFlow(graph: MaterialGraph | undefined): { nodes: FlowNode[]; edges: Edge[] } {
+export function graphToFlow(graph: MaterialGraph | undefined): {
+  nodes: FlowNode[];
+  edges: Edge[];
+} {
   const nodes: FlowNode[] = (graph?.nodes ?? []).map((n, i) => {
     const spec = NODE_SPECS[n.type] ?? {
       type: n.type,

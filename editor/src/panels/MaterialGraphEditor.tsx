@@ -3,7 +3,15 @@
 /// auto-applies changes (debounced) via material-set-graph — re-rendering the studio-lit preview
 /// sphere so the surface morphs as you edit. "Compile" forces codegen (material-compile-graph) for
 /// procedural graphs that don't fold to params. Node types mirror the engine emitter (materials/graph.ts).
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   addEdge,
   Background,
@@ -127,7 +135,9 @@ function GraphCanvas({ materialId, onClose }: { materialId: string; onClose: () 
     void (async () => {
       try {
         const material = await client.materialGet(materialId);
-        const { nodes: n, edges: e } = graphToFlow(material.graph as Parameters<typeof graphToFlow>[0]);
+        const { nodes: n, edges: e } = graphToFlow(
+          material.graph as Parameters<typeof graphToFlow>[0],
+        );
         setNodes(n);
         setEdges(e);
         const result = await client.previewRender(materialId, 256);
@@ -145,9 +155,7 @@ function GraphCanvas({ materialId, onClose }: { materialId: string; onClose: () 
 
   const updateProps = useCallback(
     (id: string, props: Record<string, unknown>) => {
-      setNodes((ns) =>
-        ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, props } } : n)),
-      );
+      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, props } } : n)));
     },
     [setNodes],
   );
@@ -282,7 +290,13 @@ function GraphCanvas({ materialId, onClose }: { materialId: string; onClose: () 
 }
 
 /// Full-screen overlay host. Paints opaque so the viewport subsurface stays covered while open.
-export function MaterialGraphEditor({ materialId, onClose }: { materialId: string; onClose: () => void }) {
+export function MaterialGraphEditor({
+  materialId,
+  onClose,
+}: {
+  materialId: string;
+  onClose: () => void;
+}) {
   return (
     <div className="fixed inset-0 z-50 bg-neutral-950">
       <ReactFlowProvider>
