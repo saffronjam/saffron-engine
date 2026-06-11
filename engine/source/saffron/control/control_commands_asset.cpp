@@ -82,6 +82,14 @@ namespace se
                 return "albedo";
             case AssetSlotDto::MetallicRoughness:
                 return "metallic-roughness";
+            case AssetSlotDto::Normal:
+                return "normal";
+            case AssetSlotDto::Occlusion:
+                return "occlusion";
+            case AssetSlotDto::Emissive:
+                return "emissive";
+            case AssetSlotDto::Height:
+                return "height";
             case AssetSlotDto::Mesh:
                 return "mesh";
             }
@@ -792,6 +800,38 @@ namespace se
                         addComponent<MaterialComponent>(scene, *entity);
                     }
                     getComponent<MaterialComponent>(scene, *entity).metallicRoughnessTexture = assignId;
+                }
+                else if (params.slot == AssetSlotDto::Normal)
+                {
+                    if (!hasComponent<MaterialComponent>(scene, *entity))
+                    {
+                        addComponent<MaterialComponent>(scene, *entity);
+                    }
+                    getComponent<MaterialComponent>(scene, *entity).normalTexture = assignId;
+                }
+                else if (params.slot == AssetSlotDto::Occlusion)
+                {
+                    if (!hasComponent<MaterialComponent>(scene, *entity))
+                    {
+                        addComponent<MaterialComponent>(scene, *entity);
+                    }
+                    getComponent<MaterialComponent>(scene, *entity).occlusionTexture = assignId;
+                }
+                else if (params.slot == AssetSlotDto::Emissive)
+                {
+                    if (!hasComponent<MaterialComponent>(scene, *entity))
+                    {
+                        addComponent<MaterialComponent>(scene, *entity);
+                    }
+                    getComponent<MaterialComponent>(scene, *entity).emissiveTexture = assignId;
+                }
+                else if (params.slot == AssetSlotDto::Height)
+                {
+                    if (!hasComponent<MaterialComponent>(scene, *entity))
+                    {
+                        addComponent<MaterialComponent>(scene, *entity);
+                    }
+                    getComponent<MaterialComponent>(scene, *entity).heightTexture = assignId;
                 }
                 ctx.sceneEdit.sceneVersion += 1;
                 return AssignAssetResult{ WireUuid{ assignId.value }, assignName, params.slot };
