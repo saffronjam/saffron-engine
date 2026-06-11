@@ -988,6 +988,16 @@ namespace se
                 r.normalTexture = WireUuid{ m.normalTexture.value };
                 r.emissiveTexture = WireUuid{ m.emissiveTexture.value };
                 r.heightTexture = WireUuid{ m.heightTexture.value };
+                // The stored (unfolded) graph is the editor's source of truth; loadMaterialAsset folds it,
+                // so read raw. Empty object when the material has no graph.
+                if (auto raw = loadMaterialAssetRaw(ctx.assets, (*resolved)->id); raw && raw->graph.is_object())
+                {
+                    r.graph = raw->graph;
+                }
+                else
+                {
+                    r.graph = nlohmann::json::object();
+                }
                 return r;
             });
 
