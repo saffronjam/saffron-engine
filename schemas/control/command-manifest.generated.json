@@ -702,6 +702,13 @@
       "skip": "needs a created material asset"
     },
     {
+      "name": "material-import",
+      "params": "MaterialImportParams",
+      "result": "MaterialImportResultDto",
+      "status": "typed",
+      "skip": "requires an external texture folder"
+    },
+    {
       "name": "save-scene",
       "params": "PathParams",
       "result": "PathResult",

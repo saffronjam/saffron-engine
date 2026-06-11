@@ -1806,6 +1806,24 @@
       }
     },
     {
+      "name": "material-import",
+      "summary": "material-import {path} [name]",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MaterialImportParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MaterialImportResultDto"
+        }
+      }
+    },
+    {
       "name": "save-scene",
       "summary": "save-scene {path}",
       "params": [
@@ -3425,6 +3443,38 @@
         "required": [
           "id",
           "name"
+        ]
+      },
+      "MaterialImportParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name"
+        ]
+      },
+      "MaterialImportResultDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "roles"
         ]
       },
       "MoveAssetParams": {
