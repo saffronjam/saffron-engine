@@ -550,15 +550,25 @@ namespace se
             {
                 u32 albedoIndex = defaultTextureIndex;
                 u32 mrIndex = defaultTextureIndex;  // white default → metallic*1, roughness*1
+                u32 normalIndex = defaultTextureIndex;
+                u32 occlusionIndex = defaultTextureIndex;
+                u32 emissiveIndex = defaultTextureIndex;
                 glm::vec4 baseColor{ 1.0f };
                 glm::vec2 metallicRoughness{ 0.0f, 1.0f };
                 glm::vec3 emissive{ 0.0f };
+                f32 normalStrength = 1.0f;
+                glm::vec2 uvTiling{ 1.0f };
+                glm::vec2 uvOffset{ 0.0f };
+                u32 features = 0u;  // FEATURE_NORMAL=1, FEATURE_EMISSIVE_TEX=2, FEATURE_OCCLUSION=4
                 if (!item.submeshMaterials.empty())
                 {
                     const SubmeshMaterial& mat = item.submeshMaterials[std::min(s, item.submeshMaterials.size() - 1)];
                     baseColor = mat.baseColor;
                     metallicRoughness = glm::vec2{ mat.metallic, mat.roughness };
                     emissive = mat.emissive * mat.emissiveStrength;
+                    normalStrength = mat.normalStrength;
+                    uvTiling = mat.uvTiling;
+                    uvOffset = mat.uvOffset;
                     if (mat.albedoTexture && mat.albedoTexture->image)
                     {
                         albedoIndex = mat.albedoTexture->bindlessIndex;
@@ -569,14 +579,32 @@ namespace se
                         mrIndex = mat.metallicRoughnessTexture->bindlessIndex;
                         liveTextures.push_back(mat.metallicRoughnessTexture);
                     }
+                    if (mat.normalTexture && mat.normalTexture->image)
+                    {
+                        normalIndex = mat.normalTexture->bindlessIndex;
+                        liveTextures.push_back(mat.normalTexture);
+                        features |= 1u;
+                    }
+                    if (mat.emissiveTexture && mat.emissiveTexture->image)
+                    {
+                        emissiveIndex = mat.emissiveTexture->bindlessIndex;
+                        liveTextures.push_back(mat.emissiveTexture);
+                        features |= 2u;
+                    }
+                    if (mat.occlusionTexture && mat.occlusionTexture->image)
+                    {
+                        occlusionIndex = mat.occlusionTexture->bindlessIndex;
+                        liveTextures.push_back(mat.occlusionTexture);
+                        features |= 4u;
+                    }
                 }
                 MaterialParamsData mp;
                 mp.baseColor = baseColor;
-                mp.pbr = glm::vec4{ metallicRoughness.x, metallicRoughness.y, 1.0f, 0.5f };
+                mp.pbr = glm::vec4{ metallicRoughness.x, metallicRoughness.y, normalStrength, 0.5f };
                 mp.emissive = glm::vec4{ emissive, 0.0f };
-                mp.uv = glm::vec4{ 1.0f, 1.0f, 0.0f, 0.0f };
-                mp.tex0 = glm::uvec4{ albedoIndex, mrIndex, 0u, 0u };
-                mp.tex1 = glm::uvec4{ 0u };
+                mp.uv = glm::vec4{ uvTiling.x, uvTiling.y, uvOffset.x, uvOffset.y };
+                mp.tex0 = glm::uvec4{ albedoIndex, mrIndex, normalIndex, emissiveIndex };
+                mp.tex1 = glm::uvec4{ 0u, occlusionIndex, 0u, features };
                 const u32 materialIndex = internMaterial(mp);
 
                 InstanceData instance;
