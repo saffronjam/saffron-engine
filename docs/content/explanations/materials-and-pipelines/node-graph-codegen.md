@@ -60,8 +60,17 @@ Two render targets are wired end to end:
 
 Both produce validation-clean images — the full `graph → Slang → slangc → PSO → pixels` pipeline.
 
+A scene variant does **not** recompile the whole übershader. `mesh.slang` is split into a `lighting`
+Slang **module** (the bindings + the lighting half, `evalLighting`/`makeMaterialInput`/`transformVertex`)
+and a thin consumer (`import lighting;` + `evalSurface` + the entry points). The module compiles once;
+`compileMaterialMeshShader` compiles only the variant's `evalSurface` + entry points and **links** the
+precompiled module (`-I <shaders>` resolves `import lighting` to `lighting.slang-module`). So editing
+lighting rebuilds only the module (+ variants relink) and editing a material recompiles only its
+`evalSurface` — linear PSO/compile cost, not "recompile the world."
+
 > [!NOTE]
-> Runtime `slangc` is an **editor** capability. Shipped builds bake material SPIR-V at cook time (planned); the runtime-compile path stays behind the editor. Each scene variant currently recompiles the whole übershader — compiling the lighting half as a linked Slang module (so only `evalSurface` recompiles) is the next step.
+> Runtime `slangc` is an **editor** capability. `material-cook` bakes every codegen variant's spv to disk;
+> a shipping asset-bundle that the runtime loads without `slangc` is the remaining packaging step.
 
 ## The node library
 
@@ -79,6 +88,7 @@ The React Flow view (`MaterialGraphEditor`) is a full-screen canvas over the liv
 | Slang emitter | `assets.cppm` | `emitGraphSurface` |
 | Compile + locate slangc | `assets.cppm` | `compileMaterialGraph`, `compileMaterialPreviewShader`, `findSlangc` |
 | Scene-path splice + PSO | `assets.cppm`; `mesh.slang` | `compileMaterialMeshShader`, `resolveEntityMaterials`; `@graph-begin`/`@graph-end` |
+| Shared lighting module | `lighting.slang`; `CompileShaders.cmake` | `module lighting`, `evalLighting`, `transformVertex`; `lighting.slang-module` |
 | Preview render-wiring | `renderer_thumbnail.cpp` | `renderMaterialPreview`, `newPreviewPipeline` |
 | Control commands | `control_commands_asset.cpp` | `material-set-graph`, `material-compile-graph`, `preview-render` |
 | Editor model + palette | `editor/src/materials/graph.ts` | `NODE_SPECS`, `graphToFlow`, `flowToGraph` |
