@@ -481,6 +481,7 @@ struct MaterialInput
 {
     float3 worldPos;
     float3 worldNormal;
+    float3 viewDir;   // world-space, toward the eye (for parallax)
     float2 uv0;
     MaterialParams mat;
 };
@@ -490,6 +491,8 @@ struct MaterialInput
 static const uint FEATURE_NORMAL = 1u;
 static const uint FEATURE_EMISSIVE_TEX = 2u;
 static const uint FEATURE_OCCLUSION = 4u;
+static const uint FEATURE_HEIGHT = 8u;
+static const uint FEATURE_ALPHACLIP = 16u;
 
 // Per-fragment tangent frame from screen-space derivatives (no stored tangents needed). Schüler's
 // method: solve for the tangent/bitangent that map the UV gradients onto the world-position gradients.
@@ -514,11 +517,48 @@ float3 perturbNormal(float3 N, float3 worldPos, float2 uv, float3 mapN)
     return normalize(mul(mapN, tbn));
 }
 
+// Parallax occlusion mapping: march the tangent-space view ray through the height field and
+// return the offset UV. Height map: white = high; vt = tangent-space view dir (toward eye).
+float2 parallaxUv(float2 uv, float3 vt, uint heightIndex, float scale)
+{
+    const int steps = 24;
+    float layerDepth = 1.0 / float(steps);
+    float2 delta = (vt.xy / max(abs(vt.z), 0.1)) * scale / float(steps);
+    float curDepth = 0.0;
+    float2 cur = uv;
+    float h = 1.0 - albedoTextures[NonUniformResourceIndex(heightIndex)].SampleLevel(cur, 0.0).r;
+    for (int i = 0; i < steps; i = i + 1)
+    {
+        if (curDepth >= h)
+        {
+            break;
+        }
+        cur = cur - delta;
+        h = 1.0 - albedoTextures[NonUniformResourceIndex(heightIndex)].SampleLevel(cur, 0.0).r;
+        curDepth = curDepth + layerDepth;
+    }
+    float2 prev = cur + delta;
+    float afterH = h - curDepth;
+    float beforeH = (1.0 - albedoTextures[NonUniformResourceIndex(heightIndex)].SampleLevel(prev, 0.0).r) - curDepth + layerDepth;
+    float w = afterH / (afterH - beforeH);
+    return lerp(cur, prev, w);
+}
+
 SurfaceData evalSurface(MaterialInput m)
 {
     MaterialParams mat = m.mat;
     uint features = mat.tex1.w;
     float2 uv = m.uv0 * mat.uv.xy + mat.uv.zw;
+    float3 n = normalize(m.worldNormal);
+    float3x3 tbn = cotangentFrame(n, m.worldPos, uv);
+
+    // Parallax occlusion mapping offsets the UV (in the pre-parallax tangent frame) before every
+    // other sample, so the whole surface reads from the displaced texel.
+    if (features & FEATURE_HEIGHT)
+    {
+        float3 vt = mul(tbn, m.viewDir);
+        uv = parallaxUv(uv, vt, mat.tex1.x, mat.emissive.w);  // heightScale = emissive.w
+    }
 
     SurfaceData s;
     float4 base = albedoTextures[NonUniformResourceIndex(mat.tex0.x)].Sample(uv);
@@ -538,13 +578,12 @@ SurfaceData evalSurface(MaterialInput m)
         s.occlusion = albedoTextures[NonUniformResourceIndex(mat.tex1.y)].Sample(uv).r;
     }
 
-    // Tangent-space normal map, perturbing the geometric normal via the derivative TBN.
-    float3 n = normalize(m.worldNormal);
+    // Tangent-space normal map: perturb the geometric normal with the pre-parallax frame.
     if (features & FEATURE_NORMAL)
     {
         float3 mapN = albedoTextures[NonUniformResourceIndex(mat.tex0.z)].Sample(uv).xyz * 2.0 - 1.0;
         mapN.xy *= mat.pbr.z;  // normalStrength
-        n = perturbNormal(n, m.worldPos, uv, mapN);
+        n = normalize(mul(mapN, tbn));
     }
     s.normal = n;
 
@@ -564,9 +603,14 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     MaterialInput mi;
     mi.worldPos = input.worldPos;
     mi.worldNormal = input.worldNormal;
+    mi.viewDir = normalize(globals.eyePosition.xyz - input.worldPos);
     mi.uv0 = input.uv0;
     mi.mat = mp;
     SurfaceData surf = evalSurface(mi);
+    if (((mp.tex1.w & FEATURE_ALPHACLIP) != 0u) && (surf.opacity < mp.pbr.w))
+    {
+        discard;
+    }
 
     float3 n = surf.normal;
     float3 albedo = surf.albedo;
