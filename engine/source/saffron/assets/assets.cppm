@@ -1804,6 +1804,10 @@ return {0}
         const AssetEntry* entry = findAsset(assets.catalog, id);
         if (entry == nullptr || entry->type != AssetType::Texture)
         {
+            // Dangling reference: a material/scene names a texture not in the catalog. Warn once
+            // (negative-cache), and let the draw path fall back to the default white texture.
+            logWarn(std::format("texture {} not in catalog; using default", id.value));
+            assets.textureRefByUuid[id.value] = nullptr;
             return nullptr;
         }
         const std::string fullPath = assets.root + "/" + entry->path;
