@@ -2658,6 +2658,30 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<PreviewRenderParams>) -> Result<PreviewRenderParams>
+    {
+        PreviewRenderParams out;
+
+        {
+            auto value = requiredField(params, "material", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readAssetSelector(**value, "material");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.material = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "size", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readU32(*value, "size");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.size = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
     auto parseDto(const Json& params, DtoTag<OptionalPathParams>) -> Result<OptionalPathParams>
     {
         OptionalPathParams out;
@@ -3591,6 +3615,13 @@ namespace se
     {
         Json out = Json::object();
         out["id"] = dtoToJson(value.id);
+        return out;
+    }
+
+    auto dtoToJson(const PreviewRenderResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["png"] = value.png;
         return out;
     }
 

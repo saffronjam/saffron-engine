@@ -1878,6 +1878,24 @@
       }
     },
     {
+      "name": "preview-render",
+      "summary": "preview-render {material} [size]",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/PreviewRenderParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PreviewRenderResult"
+        }
+      }
+    },
+    {
       "name": "save-scene",
       "summary": "save-scene {path}",
       "params": [
@@ -3974,6 +3992,40 @@
           "animationVersion"
         ]
       },
+      "PreviewRenderParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "material": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "material"
+        ]
+      },
+      "PreviewRenderResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "png": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "png"
+        ]
+      },
       "ProbeRef": {
         "type": "object",
         "additionalProperties": false,
@@ -5750,6 +5802,30 @@
           },
           "unlit": {
             "type": "boolean"
+          },
+          "normalTexture": {
+            "type": "string"
+          },
+          "occlusionTexture": {
+            "type": "string"
+          },
+          "emissiveTexture": {
+            "type": "string"
+          },
+          "heightTexture": {
+            "type": "string"
+          },
+          "normalStrength": {
+            "type": "number"
+          },
+          "heightScale": {
+            "type": "number"
+          },
+          "alphaClip": {
+            "type": "boolean"
+          },
+          "alphaCutoff": {
+            "type": "number"
           }
         },
         "required": [
@@ -5760,7 +5836,15 @@
           "roughness",
           "emissive",
           "emissiveStrength",
-          "unlit"
+          "unlit",
+          "normalTexture",
+          "occlusionTexture",
+          "emissiveTexture",
+          "heightTexture",
+          "normalStrength",
+          "heightScale",
+          "alphaClip",
+          "alphaCutoff"
         ]
       },
       "MaterialSet": {
