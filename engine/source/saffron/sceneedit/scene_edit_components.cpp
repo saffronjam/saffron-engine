@@ -4,6 +4,7 @@ module;
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
 #include <string>
 
 module Saffron.SceneEdit;
@@ -33,6 +34,27 @@ namespace se
 
         registerComponent<MaterialSetComponent>(
             reg, "MaterialSet", [](Scene&, Entity) {}, materialSetComponentToJson, materialSetComponentFromJson, true);
+
+        registerComponent<MaterialAssetComponent>(
+            reg, "MaterialAsset", [](Scene&, Entity) {},
+            [](const MaterialAssetComponent& c) -> nlohmann::json
+            { return nlohmann::json{ { "material", std::to_string(c.material.value) } }; },
+            [](MaterialAssetComponent& c, const nlohmann::json& j) -> Result<void>
+            {
+                if (auto it = j.find("material"); it != j.end())
+                {
+                    if (it->is_string())
+                    {
+                        c.material = Uuid{ std::strtoull(it->get<std::string>().c_str(), nullptr, 10) };
+                    }
+                    else if (it->is_number_unsigned())
+                    {
+                        c.material = Uuid{ it->get<u64>() };
+                    }
+                }
+                return {};
+            },
+            true);
 
         registerComponent<ScriptComponent>(
             reg, "Script", [](Scene&, Entity) {}, scriptComponentToJson, scriptComponentFromJson, true);
