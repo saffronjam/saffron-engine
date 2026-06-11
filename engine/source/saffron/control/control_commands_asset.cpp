@@ -1022,6 +1022,38 @@ namespace se
                 return PreviewRenderResult{ base64Encode(*png) };
             });
 
+        registerCommand<MaterialSetGraphParams, MaterialSetGraphResult>(
+            reg, "material-set-graph", "material-set-graph {material, graph}",
+            [](EngineContext& ctx, const MaterialSetGraphParams& params) -> Result<MaterialSetGraphResult>
+            {
+                auto resolved = resolveAsset(ctx, params.material);
+                if (!resolved)
+                {
+                    return Err(resolved.error());
+                }
+                auto loaded = loadMaterialAsset(ctx.assets, (*resolved)->id);
+                if (!loaded)
+                {
+                    return Err(loaded.error());
+                }
+                MaterialAsset m = *loaded;
+                m.graph = params.graph;
+                // Fold the graph into the params (the source of truth) when it has no codegen-only node;
+                // report foldability so the editor knows whether the codegen path will be needed.
+                MaterialAsset folded = m;
+                const bool foldable = lowerGraphToParams(m.graph, folded);
+                if (foldable)
+                {
+                    m = folded;
+                }
+                if (auto ok = updateMaterialAsset(ctx.assets, (*resolved)->id, m); !ok)
+                {
+                    return Err(ok.error());
+                }
+                ctx.sceneEdit.sceneVersion += 1;
+                return MaterialSetGraphResult{ WireUuid{ (*resolved)->id.value }, foldable };
+            });
+
         registerCommand<PathParams, PathResult>(reg, "save-scene", "save-scene {path}",
                                                 [](EngineContext& ctx, const PathParams& params) -> Result<PathResult>
                                                 {
