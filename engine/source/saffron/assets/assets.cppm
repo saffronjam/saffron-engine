@@ -1067,10 +1067,26 @@ return {0}
     // generated body runs in a shader with `Sampler2D textures[1024]`, a `Mat { float4 baseColor;
     // uint4 tex; }` push constant, and a `float2 uv`. This is the codegen the foldable lowering
     // can't handle (procedural/math nodes).
-    auto emitGraphSurface(const nlohmann::json& graph) -> std::string
+    // Lowers a node graph to a Slang evalSurface body. mesh=false targets the self-contained preview/shell
+    // shader (a `Mat mat` push + `textures[]` + `uv` param, 5-field SurfaceData); mesh=true targets the
+    // übershader's evalSurface(MaterialInput m) — `m.mat` (MaterialParams), `albedoTextures[]`, a `uv`
+    // local the splice template provides, and the 7-field SurfaceData (world normal + occlusion/opacity).
+    auto emitGraphSurface(const nlohmann::json& graph, bool mesh = false) -> std::string
     {
-        std::string body = "    s.albedo = mat.baseColor.rgb;\n    s.metallic = 0.0;\n    s.roughness = 1.0;\n"
-                           "    s.normal = float3(0.0, 0.0, 1.0);\n    s.emissive = float3(0.0);\n";
+        const std::string baseColor = mesh ? "m.mat.baseColor" : "mat.baseColor";
+        std::string body = std::format("    s.albedo = {}.rgb;\n    s.metallic = 0.0;\n    s.roughness = 1.0;\n"
+                                       "    s.emissive = float3(0.0);\n",
+                                       baseColor);
+        if (mesh)
+        {
+            body += std::format("    s.normal = normalize(m.worldNormal);\n    s.occlusion = 1.0;\n"
+                                "    s.opacity = {}.a;\n",
+                                baseColor);
+        }
+        else
+        {
+            body += "    s.normal = float3(0.0, 0.0, 1.0);\n";
+        }
         if (!graph.is_object())
         {
             return body;
@@ -1104,7 +1120,56 @@ return {0}
             }
             else if (type == "textureSlot")
             {
-                body += std::format("    float4 n_{} = textures[NonUniformResourceIndex(mat.tex.x)].Sample(uv);\n", id);
+                const std::string slot = props.value("slot", std::string{ "albedo" });
+                const std::string arr = mesh ? "albedoTextures" : "textures";
+                std::string idx;
+                if (mesh)
+                {
+                    if (slot == "metallicRoughness" || slot == "mr")
+                    {
+                        idx = "m.mat.tex0.y";
+                    }
+                    else if (slot == "normal")
+                    {
+                        idx = "m.mat.tex0.z";
+                    }
+                    else if (slot == "emissive")
+                    {
+                        idx = "m.mat.tex0.w";
+                    }
+                    else if (slot == "height")
+                    {
+                        idx = "m.mat.tex1.x";
+                    }
+                    else if (slot == "occlusion")
+                    {
+                        idx = "m.mat.tex1.y";
+                    }
+                    else
+                    {
+                        idx = "m.mat.tex0.x";
+                    }
+                }
+                else
+                {
+                    if (slot == "metallicRoughness" || slot == "mr")
+                    {
+                        idx = "mat.tex.y";
+                    }
+                    else if (slot == "normal")
+                    {
+                        idx = "mat.tex.z";
+                    }
+                    else if (slot == "emissive")
+                    {
+                        idx = "mat.tex.w";
+                    }
+                    else
+                    {
+                        idx = "mat.tex.x";
+                    }
+                }
+                body += std::format("    float4 n_{} = {}[NonUniformResourceIndex({})].Sample(uv);\n", id, arr, idx);
             }
             else
             {
@@ -1309,6 +1374,56 @@ return {0}
         if (rc != 0 || !std::filesystem::exists(spvPath))
         {
             return Err(std::format("slangc failed (rc={}) compiling preview shader {}", rc, id.value));
+        }
+        return spvPath;
+    }
+
+    // Scene-path codegen: splice the graph's evalSurface into the real übershader (mesh.slang) so a
+    // codegen material renders on actual entities with full lighting. Reads the runtime mesh.slang,
+    // replaces the body between the @graph markers with the mesh-context emit, and slangc-compiles a
+    // per-material übershader variant. Returns the .spv path; set it as the material's Material.shader.
+    auto compileMaterialMeshShader(AssetServer& assets, const nlohmann::json& graph, Uuid id) -> Result<std::string>
+    {
+        const std::string slangc = findSlangc();
+        const std::string meshSrcPath = assetPath("shaders/mesh.slang");
+        std::ifstream in(meshSrcPath);
+        if (!in)
+        {
+            return Err(
+                std::format("cannot read übershader source '{}' (is the .slang copied to bin/shaders?)", meshSrcPath));
+        }
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const std::string beginMark = "// @graph-begin";
+        const std::string endMark = "// @graph-end";
+        const auto b = src.find(beginMark);
+        const auto e = src.find(endMark);
+        if (b == std::string::npos || e == std::string::npos || e < b)
+        {
+            return Err(std::string{ "übershader source is missing the @graph markers" });
+        }
+        const auto bodyStart = src.find('\n', b);  // keep the begin-marker line, drop the default body
+        const std::string emitted = emitGraphSurface(graph, /*mesh=*/true);
+        const std::string spliced = src.substr(0, bodyStart + 1) + emitted + "    " + src.substr(e);
+
+        ensureAssetDirectories(assets);
+        const std::string slangPath = assets.root + "/materials/" + std::to_string(id.value) + "_mesh.slang";
+        const std::string spvPath = assets.root + "/materials/" + std::to_string(id.value) + "_mesh.spv";
+        {
+            std::ofstream out(slangPath);
+            if (!out)
+            {
+                return Err(std::format("cannot write generated übershader '{}'", slangPath));
+            }
+            out << spliced;
+        }
+        const std::string cmd = "\"" + slangc + "\" \"" + slangPath +
+                                "\" -profile glsl_450 -target spirv -emit-spirv-directly -fvk-use-entrypoint-name "
+                                "-matrix-layout-column-major -o \"" +
+                                spvPath + "\" > /dev/null 2>&1";
+        const int rc = std::system(cmd.c_str());
+        if (rc != 0 || !std::filesystem::exists(spvPath))
+        {
+            return Err(std::format("slangc failed (rc={}) compiling übershader variant {}", rc, id.value));
         }
         return spvPath;
     }
@@ -2069,6 +2184,7 @@ return {0}
         std::vector<SubmeshMaterial> submeshes;
         bool unlit = false;
         glm::vec3 proxyAlbedo{ 1.0f };
+        std::string shader = "shaders/mesh.spv";  // codegen materials point this at their übershader variant
     };
 
     // Resolves a loaded MaterialAsset (.smat) to a render-ready SubmeshMaterial, loading its
@@ -2169,6 +2285,21 @@ return {0}
                 const MaterialAsset mat = loaded ? *loaded : defaultMaterialAsset();
                 out.unlit = mat.unlit;
                 out.proxyAlbedo = glm::vec3(mat.baseColor);
+                // A non-foldable graph renders via its compiled übershader variant (built at
+                // material-set-graph time). Fall back to the shared übershader if it isn't on disk yet.
+                if (auto raw = loadMaterialAssetRaw(assets, matId);
+                    raw && raw->graph.is_object() && !raw->graph.empty())
+                {
+                    MaterialAsset probe = *raw;
+                    if (!lowerGraphToParams(raw->graph, probe))
+                    {
+                        const std::string spv = assets.root + "/materials/" + std::to_string(matId.value) + "_mesh.spv";
+                        if (std::filesystem::exists(spv))
+                        {
+                            out.shader = spv;
+                        }
+                    }
+                }
                 const SubmeshMaterial sm = resolveMaterialAsset(assets, renderer, mat);
                 out.submeshes.assign(std::max<std::size_t>(meshRef->submeshes.size(), std::size_t{ 1 }), sm);
                 return out;
@@ -2454,6 +2585,7 @@ return {0}
                 item.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(model))));
                 item.submeshMaterials = std::move(materials.submeshes);
                 item.material.unlit = materials.unlit;
+                item.material.shader = materials.shader;
                 item.entity =
                     hasComponent<IdComponent>(scene, entity) ? getComponent<IdComponent>(scene, entity).id.value : 0;
                 items.push_back(std::move(item));
@@ -2513,6 +2645,7 @@ return {0}
                     item.jointCount = static_cast<u32>(palette.size());
                     item.submeshMaterials = std::move(materials.submeshes);
                     item.material.unlit = materials.unlit;
+                    item.material.shader = materials.shader;
                     // model stays identity: the joint matrices (worldBone * inverseBind) already
                     // place the vertices in world space, so entity movement rides inside the
                     // palette. Deformation motion (prev palette vs current) thus covers both bone
