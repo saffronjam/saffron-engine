@@ -1950,6 +1950,24 @@
       }
     },
     {
+      "name": "material-compile-graph",
+      "summary": "material-compile-graph {material}",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MaterialCompileParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MaterialCompileResult"
+        }
+      }
+    },
+    {
       "name": "save-scene",
       "summary": "save-scene {path}",
       "params": [
@@ -3541,6 +3559,41 @@
         },
         "required": [
           "material"
+        ]
+      },
+      "MaterialCompileParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "material": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "material"
+        ]
+      },
+      "MaterialCompileResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "ok"
         ]
       },
       "MaterialCreateInstanceParams": {
