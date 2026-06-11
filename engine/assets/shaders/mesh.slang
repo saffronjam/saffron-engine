@@ -35,11 +35,7 @@ struct VertexOutput
     float3 worldPos : POSITION0;
     float3 worldNormal : NORMAL;
     float2 uv0 : TEXCOORD0;
-    float4 baseColor : COLOR0;
-    nointerpolation uint textureIndex : TEXCOORD1;
-    nointerpolation float2 mr : TEXCOORD2;        // x = metallic, y = roughness (factors)
-    nointerpolation float3 emissive : TEXCOORD3;  // emissive radiance (strength baked in)
-    nointerpolation uint mrTextureIndex : TEXCOORD4;  // metallic-roughness map (rough=G, metal=B)
+    nointerpolation uint materialIndex : TEXCOORD1;  // index into materialParams (set 2, binding 2)
 };
 
 struct Camera
@@ -152,6 +148,20 @@ struct Instance
 // The frame's joint palette (worldBone * inverseBind per joint); a skinned instance
 // indexes it at texture.y + vertex joint index.
 [[vk::binding(1, 2)]] StructuredBuffer<float4x4> jointMatrices;
+
+// Set 2, binding 2: deduplicated per-material params, indexed by Instance.texture.w (the
+// material index). Many instances of one material share one entry; the fragment reads its
+// texture indices + factors from here. Layout mirrors MaterialParamsData (renderer_types.cppm).
+struct MaterialParams
+{
+    float4 baseColor;
+    float4 pbr;       // x = metallic, y = roughness, z = normalStrength, w = alphaCutoff
+    float4 emissive;  // rgb = radiance, w = heightScale
+    float4 uv;        // tiling.xy, offset.xy
+    uint4 tex0;       // albedo, orm/mr, normal, emissive (bindless indices)
+    uint4 tex1;       // height, reserved, reserved, featureBits
+};
+[[vk::binding(2, 2)]] StructuredBuffer<MaterialParams> materialParams;
 
 // Set 3: image-based lighting — diffuse irradiance cube, prefiltered specular cube, and
 // the split-sum BRDF LUT. Sampled for the ambient term when globals.counts.z != 0.
@@ -315,11 +325,7 @@ VertexOutput vertexMain(VertexInput input, uint instanceIndex : SV_VulkanInstanc
     output.position = mul(camera.viewProj, worldPos);
     output.worldNormal = mul((float3x3)inst.normalMatrix, input.normal);
     output.uv0 = input.uv0;
-    output.baseColor = inst.baseColor;
-    output.textureIndex = inst.texture.x;
-    output.mrTextureIndex = inst.texture.z;
-    output.mr = inst.pbr.xy;
-    output.emissive = inst.emissive.rgb;
+    output.materialIndex = inst.texture.w;
     return output;
 }
 
@@ -344,11 +350,7 @@ VertexOutput vertexMainSkinned(SkinnedVertexInput input, uint instanceIndex : SV
     output.position = mul(camera.viewProj, worldPos);
     output.worldNormal = normalize(mul((float3x3)inst.normalMatrix, skinnedNormal));
     output.uv0 = input.uv0;
-    output.baseColor = inst.baseColor;
-    output.textureIndex = inst.texture.x;
-    output.mrTextureIndex = inst.texture.z;
-    output.mr = inst.pbr.xy;
-    output.emissive = inst.emissive.rgb;
+    output.materialIndex = inst.texture.w;
     return output;
 }
 
@@ -506,14 +508,15 @@ SurfaceData evalSurface(MaterialInput m)
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target
 {
+    MaterialParams mp = materialParams[input.materialIndex];
     MaterialInput mi;
     mi.worldNormal = input.worldNormal;
     mi.uv0 = input.uv0;
-    mi.baseColor = input.baseColor;
-    mi.albedoIndex = input.textureIndex;
-    mi.mrTextureIndex = input.mrTextureIndex;
-    mi.mrFactor = input.mr;
-    mi.emissive = input.emissive;
+    mi.baseColor = mp.baseColor;
+    mi.albedoIndex = mp.tex0.x;
+    mi.mrTextureIndex = mp.tex0.y;
+    mi.mrFactor = mp.pbr.xy;
+    mi.emissive = mp.emissive.rgb;
     SurfaceData surf = evalSurface(mi);
 
     float3 n = surf.normal;
