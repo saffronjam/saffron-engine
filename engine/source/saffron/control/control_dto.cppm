@@ -854,6 +854,24 @@ export namespace se
         bool foldable;  // true if the graph folded entirely to params (no codegen-only node)
     };
 
+    struct MaterialCreateInstanceParams
+    {
+        AssetSelector parent;
+        std::string name;
+    };
+
+    struct MaterialSetOverrideParams
+    {
+        AssetSelector material;
+        std::string field;  // baseColor|metallic|roughness|emissive|emissiveStrength|normalStrength|*Texture
+        Json value;
+    };
+
+    struct MaterialSetOverrideResult
+    {
+        WireUuid id;
+    };
+
     struct AssignAssetResult
     {
         WireUuid id;
@@ -1415,6 +1433,7 @@ export namespace se
     auto dtoToJson(const MaterialUpdateResult& value) -> Json;
     auto dtoToJson(const PreviewRenderResult& value) -> Json;
     auto dtoToJson(const MaterialSetGraphResult& value) -> Json;
+    auto dtoToJson(const MaterialSetOverrideResult& value) -> Json;
     auto dtoToJson(const PathResult& value) -> Json;
     auto dtoToJson(const ScreenshotResult& value) -> Json;
     auto dtoToJson(const ThumbnailResult& value) -> Json;
@@ -1486,6 +1505,8 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<MaterialUpdateParams>) -> Result<MaterialUpdateParams>;
     auto parseDto(const Json& params, DtoTag<PreviewRenderParams>) -> Result<PreviewRenderParams>;
     auto parseDto(const Json& params, DtoTag<MaterialSetGraphParams>) -> Result<MaterialSetGraphParams>;
+    auto parseDto(const Json& params, DtoTag<MaterialCreateInstanceParams>) -> Result<MaterialCreateInstanceParams>;
+    auto parseDto(const Json& params, DtoTag<MaterialSetOverrideParams>) -> Result<MaterialSetOverrideParams>;
     auto parseDto(const Json& params, DtoTag<ScreenshotParams>) -> Result<ScreenshotParams>;
     auto parseDto(const Json& params, DtoTag<ThumbnailParams>) -> Result<ThumbnailParams>;
     auto parseDto(const Json& params, DtoTag<CreateEntityParams>) -> Result<CreateEntityParams>;
