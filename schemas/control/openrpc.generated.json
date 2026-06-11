@@ -1914,6 +1914,42 @@
       }
     },
     {
+      "name": "material-create-instance",
+      "summary": "material-create-instance {parent} [name]",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MaterialCreateInstanceParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MaterialCreateResult"
+        }
+      }
+    },
+    {
+      "name": "material-set-override",
+      "summary": "material-set-override {material, field, value}",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MaterialSetOverrideParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MaterialSetOverrideResult"
+        }
+      }
+    },
+    {
       "name": "save-scene",
       "summary": "save-scene {path}",
       "params": [
@@ -3507,6 +3543,29 @@
           "material"
         ]
       },
+      "MaterialCreateInstanceParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "parent": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent",
+          "name"
+        ]
+      },
       "MaterialCreateParams": {
         "type": "object",
         "additionalProperties": false,
@@ -3716,6 +3775,43 @@
         "required": [
           "id",
           "foldable"
+        ]
+      },
+      "MaterialSetOverrideParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "material": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "field": {
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "material",
+          "field",
+          "value"
+        ]
+      },
+      "MaterialSetOverrideResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ]
       },
       "MaterialUpdateParams": {
