@@ -104,6 +104,31 @@ namespace se
             return out;
         }
 
+        auto footIkState(const FootIkComponent& ik) -> FootIkResult
+        {
+            FootIkResult out;
+            out.enabled = ik.enabled;
+            out.groundHeight = ik.groundHeight;
+            out.chains = static_cast<i32>(ik.chains.size());
+            return out;
+        }
+
+        // Resolve the entity and fetch its foot-IK config, attaching a default one if absent.
+        auto footIkOf(EngineContext& ctx, const EntitySelector& selector) -> Result<FootIkComponent*>
+        {
+            auto entity = resolveEntity(ctx, json{ { "entity", selector.value } });
+            if (!entity)
+            {
+                return Err(entity.error());
+            }
+            Scene& scene = activeScene(ctx.sceneEdit);
+            if (!hasComponent<FootIkComponent>(scene, *entity))
+            {
+                addComponent<FootIkComponent>(scene, *entity);
+            }
+            return &getComponent<FootIkComponent>(scene, *entity);
+        }
+
         auto stateOf(EngineContext& ctx, const AnimationPlayerComponent& player) -> AnimationStateResult
         {
             AnimationStateResult out;
@@ -275,6 +300,40 @@ namespace se
                     opts.jointSize = std::max(0.5f, *params.jointSize);
                 }
                 return skeletonOverlayState(opts);
+            });
+
+        registerCommand<GetFootIkParams, FootIkResult>(
+            reg, "get-foot-ik", "get-foot-ik {entity} — the rig's foot-IK enable, ground height, and chain count",
+            [](EngineContext& ctx, const GetFootIkParams& params) -> Result<FootIkResult>
+            {
+                auto ik = footIkOf(ctx, params.entity);
+                if (!ik)
+                {
+                    return Err(ik.error());
+                }
+                return footIkState(**ik);
+            });
+
+        registerCommand<SetFootIkParams, FootIkResult>(
+            reg, "set-foot-ik", "set-foot-ik {entity, enabled?, groundHeight?} — toggle kinematic foot IK on a rig",
+            [](EngineContext& ctx, const SetFootIkParams& params) -> Result<FootIkResult>
+            {
+                auto ik = footIkOf(ctx, params.entity);
+                if (!ik)
+                {
+                    return Err(ik.error());
+                }
+                FootIkComponent& c = **ik;
+                if (params.enabled)
+                {
+                    c.enabled = *params.enabled;
+                }
+                if (params.groundHeight)
+                {
+                    c.groundHeight = *params.groundHeight;
+                }
+                ctx.sceneEdit.animationVersion += 1;
+                return footIkState(c);
             });
     }
 }
