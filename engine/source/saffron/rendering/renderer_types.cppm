@@ -1737,8 +1737,8 @@ export namespace se
         glm::vec4 pbr{ 0.0f, 1.0f, 1.0f, 0.5f };  // metallic, roughness, normalStrength, alphaCutoff
         glm::vec4 emissive{ 0.0f };               // rgb = radiance, w = heightScale
         glm::vec4 uv{ 1.0f, 1.0f, 0.0f, 0.0f };   // tiling.xy, offset.xy
-        glm::uvec4 tex0{ 0u };                     // albedo, orm/mr, normal, emissive (bindless indices)
-        glm::uvec4 tex1{ 0u };                     // height, reserved, reserved, featureBits
+        glm::uvec4 tex0{ 0u };                    // albedo, orm/mr, normal, emissive (bindless indices)
+        glm::uvec4 tex1{ 0u };                    // height, reserved, reserved, featureBits
     };
     static_assert(sizeof(MaterialParamsData) == 96, "MaterialParams must match the std430 shader layout");
 

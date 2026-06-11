@@ -627,11 +627,10 @@ namespace se
         cmd.setViewport(0, viewport);
         cmd.setScissor(0, vk::Rect2D{ vk::Offset2D{ 0, 0 }, vk::Extent2D{ size, size } });
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline->layout, 0,
-                               renderer.descriptors.bindlessSet, {});
-        cmd.pushConstants(pipeline->layout,
-                          vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(push),
-                          &push);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline->layout, 0, renderer.descriptors.bindlessSet,
+                               {});
+        cmd.pushConstants(pipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
+                          sizeof(push), &push);
         vk::DeviceSize offset = 0;
         cmd.bindVertexBuffers(0, renderer.previewSphere->vertexBuffer, offset);
         cmd.bindIndexBuffer(renderer.previewSphere->indexBuffer, 0, vk::IndexType::eUint32);
