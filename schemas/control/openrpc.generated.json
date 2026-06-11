@@ -1968,6 +1968,24 @@
       }
     },
     {
+      "name": "material-cook",
+      "summary": "material-cook",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MaterialCookResult"
+        }
+      }
+    },
+    {
       "name": "save-scene",
       "summary": "save-scene {path}",
       "params": [
@@ -3594,6 +3612,22 @@
         "required": [
           "id",
           "ok"
+        ]
+      },
+      "MaterialCookResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "compiled": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "compiled",
+          "failed"
         ]
       },
       "MaterialCreateInstanceParams": {

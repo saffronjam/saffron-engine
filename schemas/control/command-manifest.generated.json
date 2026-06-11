@@ -765,6 +765,13 @@
       "skip": "needs a created material with a graph"
     },
     {
+      "name": "material-cook",
+      "params": "EmptyParams",
+      "result": "MaterialCookResult",
+      "status": "typed",
+      "skip": "compiles all codegen materials; side-effecting, exercised by e2e"
+    },
+    {
       "name": "save-scene",
       "params": "PathParams",
       "result": "PathResult",
