@@ -2886,7 +2886,7 @@ export namespace se
         // Binding 0 is the per-instance array; binding 1 the frame's joint palette for
         // skinned draws. Unskinned shaders never statically use binding 1, so it may
         // stay unwritten until the first skinned draw uploads it.
-        std::array<vk::DescriptorSetLayoutBinding, 2> instanceBindings{};
+        std::array<vk::DescriptorSetLayoutBinding, 3> instanceBindings{};
         instanceBindings[0].binding = 0;
         instanceBindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         instanceBindings[0].descriptorCount = 1;
@@ -2895,6 +2895,12 @@ export namespace se
         instanceBindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
         instanceBindings[1].descriptorCount = 1;
         instanceBindings[1].stageFlags = vk::ShaderStageFlagBits::eVertex;
+        // Binding 2: per-distinct-material params, read in the fragment stage. Unwritten until
+        // the first scene draw uploads it (no pipeline statically uses it before then).
+        instanceBindings[2].binding = 2;
+        instanceBindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+        instanceBindings[2].descriptorCount = 1;
+        instanceBindings[2].stageFlags = vk::ShaderStageFlagBits::eFragment;
         vk::DescriptorSetLayoutCreateInfo instanceLayoutInfo{};
         instanceLayoutInfo.setBindings(instanceBindings);
         auto instanceLayout =
