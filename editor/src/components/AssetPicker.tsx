@@ -24,7 +24,7 @@ const NONE_UUID = "0";
 
 /// The catalog `type` an `AssetKind` field picks from. (Mesh fields show meshes;
 /// albedo/sky/texture fields show textures.)
-export type PickerAssetKind = "mesh" | "texture";
+export type PickerAssetKind = "mesh" | "texture" | "material";
 
 /// A small thumbnail swatch fetched at 64 px and shown at the given CSS size; falls
 /// back to a lucide type icon while loading or on failure. Seeds from the shared

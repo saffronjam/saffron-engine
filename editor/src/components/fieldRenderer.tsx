@@ -32,7 +32,7 @@ export type FieldKind =
   | "uuid";
 
 /// Asset kind a `uuid` field references (phase-7's AssetPicker filters by this).
-export type AssetKind = "mesh" | "texture";
+export type AssetKind = "mesh" | "texture" | "material";
 
 export interface FieldHint {
   kind: FieldKind;
@@ -59,6 +59,7 @@ export const FIELD_HINTS: Record<string, FieldHint> = {
   "Transform.rotation": { kind: "vec3", step: 0.5, unit: "deg", convertRadians: true },
 
   "Mesh.mesh": { kind: "uuid", asset: "mesh" },
+  "MaterialAsset.material": { kind: "uuid", asset: "material" },
 
   "Camera.fov": { kind: "number", min: 1, max: 179, step: 0.5 },
   "Camera.near": { kind: "number", min: 0.001, step: 0.01 },
