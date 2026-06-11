@@ -650,6 +650,12 @@ const commands: CommandDef[] = [
     result: "MaterialAssignResult",
     summary: "material-assign {entity, material}",
   },
+  {
+    name: "material-import",
+    params: "MaterialImportParams",
+    result: "MaterialImportResultDto",
+    summary: "material-import {path} [name]",
+  },
   { name: "save-scene", params: "PathParams", result: "PathResult", summary: "save-scene {path}" },
   { name: "load-scene", params: "PathParams", result: "PathResult", summary: "load-scene {path}" },
   {
@@ -793,6 +799,7 @@ const commandSkips = new Map<string, string>([
   ["save-scene", "writes a scene file"],
   ["material-create", "writes a .smat material file"],
   ["material-assign", "needs a created material asset"],
+  ["material-import", "requires an external texture folder"],
   ["load-scene", "loads and replaces the scene from a file"],
   ["reload-project", "reloads and replaces the active project's scene and catalog"],
   ["screenshot", "writes an image file and can be deferred"],
