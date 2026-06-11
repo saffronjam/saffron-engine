@@ -19,6 +19,13 @@ import {
 } from "@/components/ui/select";
 
 const FACTOR_FIELDS = ["baseColor", "metallic", "roughness", "emissive", "emissiveStrength"] as const;
+const TEXTURE_FIELDS = [
+  "albedoTexture",
+  "ormTexture",
+  "normalTexture",
+  "emissiveTexture",
+  "heightTexture",
+] as const;
 
 interface MaterialRef {
   id: string;
@@ -153,6 +160,15 @@ export function MaterialEditorPanel() {
         ? FACTOR_FIELDS.map((field) => (
             <div key={field} className="flex flex-col gap-1">
               <Label className="text-[11px] capitalize text-neutral-400">{field}</Label>
+              {renderField("Material", field, fields[field], (next) => editField(field, next), ctx)}
+            </div>
+          ))
+        : null}
+
+      {fields
+        ? TEXTURE_FIELDS.map((field) => (
+            <div key={field} className="flex flex-col gap-1">
+              <Label className="text-[11px] text-neutral-400">{field}</Label>
               {renderField("Material", field, fields[field], (next) => editField(field, next), ctx)}
             </div>
           ))
