@@ -794,6 +794,28 @@ export namespace se
         std::vector<MaterialRefDto> materials;
     };
 
+    struct MaterialGetParams
+    {
+        AssetSelector material;
+    };
+
+    struct MaterialGetResult
+    {
+        WireUuid id;
+        std::string blend;
+        bool unlit;
+        Vec4 baseColor;
+        f32 metallic;
+        f32 roughness;
+        Vec3 emissive;
+        f32 emissiveStrength;
+        WireUuid albedoTexture;
+        WireUuid ormTexture;
+        WireUuid normalTexture;
+        WireUuid emissiveTexture;
+        WireUuid heightTexture;
+    };
+
     struct AssignAssetResult
     {
         WireUuid id;
@@ -1351,6 +1373,7 @@ export namespace se
     auto dtoToJson(const MaterialImportResultDto& value) -> Json;
     auto dtoToJson(const MaterialRefDto& value) -> Json;
     auto dtoToJson(const MaterialListResult& value) -> Json;
+    auto dtoToJson(const MaterialGetResult& value) -> Json;
     auto dtoToJson(const PathResult& value) -> Json;
     auto dtoToJson(const ScreenshotResult& value) -> Json;
     auto dtoToJson(const ThumbnailResult& value) -> Json;
@@ -1418,6 +1441,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<MaterialCreateParams>) -> Result<MaterialCreateParams>;
     auto parseDto(const Json& params, DtoTag<MaterialAssignParams>) -> Result<MaterialAssignParams>;
     auto parseDto(const Json& params, DtoTag<MaterialImportParams>) -> Result<MaterialImportParams>;
+    auto parseDto(const Json& params, DtoTag<MaterialGetParams>) -> Result<MaterialGetParams>;
     auto parseDto(const Json& params, DtoTag<ScreenshotParams>) -> Result<ScreenshotParams>;
     auto parseDto(const Json& params, DtoTag<ThumbnailParams>) -> Result<ThumbnailParams>;
     auto parseDto(const Json& params, DtoTag<CreateEntityParams>) -> Result<CreateEntityParams>;
