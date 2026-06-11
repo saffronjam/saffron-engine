@@ -53,10 +53,15 @@ This is the cost model: editing a *constant* is a buffer write; changing graph *
 
 `emitGraphSurface` walks the nodes in array order (inputs precede consumers), emitting one typed Slang statement per node — `float4 n_<id> = …` — then assigns the `materialOutput` channels. The supported set is the [node library](#the-node-library). `compileMaterialGraph` / `compileMaterialPreviewShader` splice that body into a self-contained shader (the preview variant matches `PreviewPush` and the sphere vertex layout), then shell out to `slangc` (`findSlangc` locates it via `SAFFRON_SLANGC`, the prebuilt cache, or `PATH`). The result is a per-graph `.spv`.
 
-The preview path is wired end to end: `preview-render` detects a non-foldable graph, codegens its shader, builds a per-graph pipeline (`newPreviewPipeline` is parameterized by spv path), and renders the procedural surface on the sphere. Running it produces a validation-clean image — the full `graph → Slang → slangc → PSO → pixels` pipeline.
+Two render targets are wired end to end:
+
+- **Preview.** `preview-render` detects a non-foldable graph, codegens a self-contained preview shader, builds a per-graph pipeline (`newPreviewPipeline` takes the spv path), and renders the procedural surface on the sphere.
+- **Scene.** The emitter also targets the real übershader (`emitGraphSurface(graph, mesh=true)` uses `m.mat`/`albedoTextures`/world normal). `compileMaterialMeshShader` splices that body between `mesh.slang`'s `// @graph-begin`/`@graph-end` markers and compiles a per-material übershader variant; `material-set-graph` builds it, `resolveEntityMaterials` points `Material.shader` at it (falling back to the shared übershader if absent), and `assetPath` passes the absolute path through to `requestMeshPipeline`. So a codegen material renders on actual entities with full PBR lighting — not just the preview.
+
+Both produce validation-clean images — the full `graph → Slang → slangc → PSO → pixels` pipeline.
 
 > [!NOTE]
-> Runtime `slangc` is an **editor** capability. Shipped builds bake material SPIR-V at cook time (planned); the runtime-compile path stays behind the editor.
+> Runtime `slangc` is an **editor** capability. Shipped builds bake material SPIR-V at cook time (planned); the runtime-compile path stays behind the editor. Each scene variant currently recompiles the whole übershader — compiling the lighting half as a linked Slang module (so only `evalSurface` recompiles) is the next step.
 
 ## The node library
 
@@ -73,6 +78,7 @@ The React Flow view (`MaterialGraphEditor`) is a full-screen canvas over the liv
 | Fold vs codegen | `assets.cppm` | `lowerGraphToParams` |
 | Slang emitter | `assets.cppm` | `emitGraphSurface` |
 | Compile + locate slangc | `assets.cppm` | `compileMaterialGraph`, `compileMaterialPreviewShader`, `findSlangc` |
+| Scene-path splice + PSO | `assets.cppm`; `mesh.slang` | `compileMaterialMeshShader`, `resolveEntityMaterials`; `@graph-begin`/`@graph-end` |
 | Preview render-wiring | `renderer_thumbnail.cpp` | `renderMaterialPreview`, `newPreviewPipeline` |
 | Control commands | `control_commands_asset.cpp` | `material-set-graph`, `material-compile-graph`, `preview-render` |
 | Editor model + palette | `editor/src/materials/graph.ts` | `NODE_SPECS`, `graphToFlow`, `flowToGraph` |
