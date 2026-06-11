@@ -1362,6 +1362,21 @@ return {0}
             {
                 sm.metallicRoughnessTexture = loadTextureAsset(assets, renderer, slot.metallicRoughnessTexture);
             }
+            sm.normalStrength = slot.normalStrength;
+            sm.uvTiling = slot.uvTiling;
+            sm.uvOffset = slot.uvOffset;
+            if (slot.normalTexture.value != 0)
+            {
+                sm.normalTexture = loadTextureAsset(assets, renderer, slot.normalTexture);
+            }
+            if (slot.occlusionTexture.value != 0)
+            {
+                sm.occlusionTexture = loadTextureAsset(assets, renderer, slot.occlusionTexture);
+            }
+            if (slot.emissiveTexture.value != 0)
+            {
+                sm.emissiveTexture = loadTextureAsset(assets, renderer, slot.emissiveTexture);
+            }
             return sm;
         };
         if (hasComponent<MaterialSetComponent>(scene, entity))
@@ -1393,6 +1408,12 @@ return {0}
             slot.roughness = material.roughness;
             slot.emissive = material.emissive;
             slot.emissiveStrength = material.emissiveStrength;
+            slot.normalTexture = material.normalTexture;
+            slot.occlusionTexture = material.occlusionTexture;
+            slot.emissiveTexture = material.emissiveTexture;
+            slot.normalStrength = material.normalStrength;
+            slot.uvTiling = material.uvTiling;
+            slot.uvOffset = material.uvOffset;
             out.submeshes.push_back(lower(slot));
         }
         return out;
