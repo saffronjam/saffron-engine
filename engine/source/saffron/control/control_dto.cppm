@@ -814,6 +814,7 @@ export namespace se
         WireUuid normalTexture;
         WireUuid emissiveTexture;
         WireUuid heightTexture;
+        Json graph;  // the material's node graph ({} when none) — the source the editor loads to edit
     };
 
     struct MaterialUpdateParams
