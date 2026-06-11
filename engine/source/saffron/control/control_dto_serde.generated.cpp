@@ -2816,6 +2816,20 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<MaterialCompileParams>) -> Result<MaterialCompileParams>
+    {
+        MaterialCompileParams out;
+
+        {
+            auto value = requiredField(params, "material", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readAssetSelector(**value, "material");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.material = std::move(*parsed);
+        }
+        return out;
+    }
+
     auto parseDto(const Json& params, DtoTag<OptionalPathParams>) -> Result<OptionalPathParams>
     {
         OptionalPathParams out;
@@ -3771,6 +3785,14 @@ namespace se
     {
         Json out = Json::object();
         out["id"] = dtoToJson(value.id);
+        return out;
+    }
+
+    auto dtoToJson(const MaterialCompileResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["id"] = dtoToJson(value.id);
+        out["ok"] = value.ok;
         return out;
     }
 
