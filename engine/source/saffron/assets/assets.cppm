@@ -1107,12 +1107,53 @@ return {0}
             {
                 body += std::format("    float4 n_{} = textures[NonUniformResourceIndex(mat.tex.x)].Sample(uv);\n", id);
             }
-            else if (type == "multiply" || type == "add")
+            else
             {
-                const std::string a = inputFrom.count(id + ":a") != 0 ? inputFrom[id + ":a"] : std::string{};
-                const std::string b = inputFrom.count(id + ":b") != 0 ? inputFrom[id + ":b"] : std::string{};
-                const char* op = type == "multiply" ? "*" : "+";
-                body += std::format("    float4 n_{} = n_{} {} n_{};\n", id, a, op, b);
+                // Math / utility nodes. Inputs wired by pin name (a/b/t); all values are float4.
+                const auto in = [&](const char* pin) -> std::string
+                {
+                    const auto it = inputFrom.find(id + ":" + pin);
+                    return it != inputFrom.end() ? it->second : std::string{};
+                };
+                const std::string a = in("a");
+                const std::string b = in("b");
+                const std::string t = in("t");
+                if (type == "multiply")
+                {
+                    body += std::format("    float4 n_{} = n_{} * n_{};\n", id, a, b);
+                }
+                else if (type == "add")
+                {
+                    body += std::format("    float4 n_{} = n_{} + n_{};\n", id, a, b);
+                }
+                else if (type == "subtract")
+                {
+                    body += std::format("    float4 n_{} = n_{} - n_{};\n", id, a, b);
+                }
+                else if (type == "divide")
+                {
+                    body += std::format("    float4 n_{} = n_{} / max(n_{}, float4(1e-5));\n", id, a, b);
+                }
+                else if (type == "lerp")
+                {
+                    body += std::format("    float4 n_{} = lerp(n_{}, n_{}, n_{});\n", id, a, b, t);
+                }
+                else if (type == "saturate" || type == "clamp")
+                {
+                    body += std::format("    float4 n_{} = saturate(n_{});\n", id, a);
+                }
+                else if (type == "oneMinus")
+                {
+                    body += std::format("    float4 n_{} = 1.0 - n_{};\n", id, a);
+                }
+                else if (type == "dot")
+                {
+                    body += std::format("    float4 n_{} = float4(dot(n_{}.rgb, n_{}.rgb));\n", id, a, b);
+                }
+                else
+                {
+                    body += std::format("    float4 n_{} = float4(0.0);  // unknown node '{}'\n", id, type);
+                }
             }
         }
         const auto srcFor = [&](const char* pin) -> std::string
