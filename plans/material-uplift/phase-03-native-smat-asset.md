@@ -1,7 +1,16 @@
 # Phase 03 — Native `.smat` material asset
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 **Depends on:** 02
+
+> **Outcome:** `AssetType::Material` added (+ `assetTypeName`/`assetTypeFromName`); `newUuid` now
+> reserves ids `< 1024` for built-ins; `ensureAssetDirectories` creates `materials/`. In
+> `Saffron.Assets`: a `MaterialAsset` struct (reference-only property bag), `materialAssetToJson`/
+> `materialAssetFromJson` (texture refs as decimal-string Uuids, factors + textures objects),
+> `saveMaterialAsset` (writes `materials/<uuid>.smat`, registers a deduped Material catalog entry) and
+> `loadMaterialAsset` (parses it; the reserved `DefaultMaterialId{1}` returns the built-in
+> `defaultMaterialAsset()`). Build clean; assets + materials e2e 7/7 (no regression). Functional
+> save/load round-trip is exercised over the wire in phase 10 (no caller exists yet this phase).
 
 ## Goal
 
