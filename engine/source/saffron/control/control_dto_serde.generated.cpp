@@ -3746,6 +3746,7 @@ namespace se
         out["normalTexture"] = dtoToJson(value.normalTexture);
         out["emissiveTexture"] = dtoToJson(value.emissiveTexture);
         out["heightTexture"] = dtoToJson(value.heightTexture);
+        out["graph"] = value.graph;
         return out;
     }
 
