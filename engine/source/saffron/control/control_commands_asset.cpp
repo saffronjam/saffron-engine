@@ -945,6 +945,54 @@ namespace se
                 return r;
             });
 
+        registerCommand<MaterialUpdateParams, MaterialUpdateResult>(
+            reg, "material-update", "material-update {id} [baseColor metallic roughness emissive emissiveStrength]",
+            [](EngineContext& ctx, const MaterialUpdateParams& params) -> Result<MaterialUpdateResult>
+            {
+                auto resolved = resolveAsset(ctx, params.material);
+                if (!resolved)
+                {
+                    return Err(resolved.error());
+                }
+                auto loaded = loadMaterialAsset(ctx.assets, (*resolved)->id);
+                if (!loaded)
+                {
+                    return Err(loaded.error());
+                }
+                MaterialAsset m = *loaded;
+                if (params.baseColor)
+                {
+                    m.baseColor.x = params.baseColor->x;
+                    m.baseColor.y = params.baseColor->y;
+                    m.baseColor.z = params.baseColor->z;
+                    m.baseColor.w = params.baseColor->w;
+                }
+                if (params.metallic)
+                {
+                    m.metallic = *params.metallic;
+                }
+                if (params.roughness)
+                {
+                    m.roughness = *params.roughness;
+                }
+                if (params.emissive)
+                {
+                    m.emissive.x = params.emissive->x;
+                    m.emissive.y = params.emissive->y;
+                    m.emissive.z = params.emissive->z;
+                }
+                if (params.emissiveStrength)
+                {
+                    m.emissiveStrength = *params.emissiveStrength;
+                }
+                if (auto ok = updateMaterialAsset(ctx.assets, (*resolved)->id, m); !ok)
+                {
+                    return Err(ok.error());
+                }
+                ctx.sceneEdit.sceneVersion += 1;
+                return MaterialUpdateResult{ WireUuid{ (*resolved)->id.value } };
+            });
+
         registerCommand<PathParams, PathResult>(reg, "save-scene", "save-scene {path}",
                                                 [](EngineContext& ctx, const PathParams& params) -> Result<PathResult>
                                                 {
