@@ -37,6 +37,7 @@ import {
   graphToFlow,
   NODE_SPECS,
   type SaffronNodeData,
+  TEXTURE_SLOTS,
 } from "../materials/graph";
 import { Button } from "@/components/ui/button";
 
@@ -85,35 +86,50 @@ function SaffronNode({ id, data }: NodeProps<FlowNode>) {
           />
         ))}
 
-        {spec.type === "constant" ? (
-          <div className="mt-1 grid grid-cols-4 gap-1">
-            {[0, 1, 2, 3].map((c) => {
+        {spec.type === "constant"
+          ? (() => {
               const value = (props.value as number[] | undefined) ?? [1, 1, 1, 1];
+              // Swatch clamps to [0,1] for display; the inputs keep the real (possibly HDR) values.
+              const ch = (i: number) => Math.round(Math.min(1, Math.max(0, value[i] ?? 0)) * 255);
               return (
-                <input
-                  key={c}
-                  type="number"
-                  step={0.1}
-                  value={value[c] ?? 0}
-                  onChange={(e) => {
-                    const next = [...value];
-                    next[c] = Number(e.target.value);
-                    updateProps(id, { ...props, value: next });
-                  }}
-                  className="w-full rounded border border-neutral-600 bg-neutral-900 px-1 text-[10px]"
-                />
+                <div className="mt-1 flex items-center gap-1">
+                  <div
+                    className="h-5 w-5 shrink-0 rounded border border-neutral-600"
+                    style={{ backgroundColor: `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})` }}
+                  />
+                  <div className="grid grid-cols-4 gap-1">
+                    {[0, 1, 2, 3].map((c) => (
+                      <input
+                        key={c}
+                        type="number"
+                        step={0.1}
+                        value={value[c] ?? 0}
+                        onChange={(e) => {
+                          const next = [...value];
+                          next[c] = Number(e.target.value);
+                          updateProps(id, { ...props, value: next });
+                        }}
+                        className="w-full rounded border border-neutral-600 bg-neutral-900 px-1 text-[10px]"
+                      />
+                    ))}
+                  </div>
+                </div>
               );
-            })}
-          </div>
-        ) : null}
+            })()
+          : null}
 
         {spec.type === "textureSlot" ? (
-          <input
-            type="text"
+          <select
             value={(props.slot as string | undefined) ?? "albedo"}
             onChange={(e) => updateProps(id, { ...props, slot: e.target.value })}
             className="mt-1 w-full rounded border border-neutral-600 bg-neutral-900 px-1 text-[10px]"
-          />
+          >
+            {TEXTURE_SLOTS.map((slot) => (
+              <option key={slot} value={slot}>
+                {slot}
+              </option>
+            ))}
+          </select>
         ) : null}
       </div>
     </div>
@@ -171,6 +187,8 @@ function GraphCanvas({ materialId, onClose }: { materialId: string; onClose: () 
     [setNodes],
   );
   const nodeCallbacks = useMemo(() => ({ updateProps }), [updateProps]);
+  // Reject a self-loop during the drag (visual feedback); onConnect enforces the rest.
+  const isValidConnection = useCallback((c: Connection | Edge) => c.source !== c.target, []);
 
   const addNode = useCallback(
     (type: string) => {
@@ -272,6 +290,7 @@ function GraphCanvas({ materialId, onClose }: { materialId: string; onClose: () 
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              isValidConnection={isValidConnection}
               nodeTypes={NODE_TYPES}
               fitView
               proOptions={{ hideAttribution: true }}
