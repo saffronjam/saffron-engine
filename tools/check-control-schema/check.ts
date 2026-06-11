@@ -307,6 +307,8 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
     }
     case "skeleton-overlay-on":
       return { show: true, axes: true, jointSize: 5 };
+    case "foot-ik-on":
+      return { entity: state.cubeId, enabled: true, groundHeight: 0 };
     case "step-one":
       return { frames: 1 };
     case "profiler-timestamps":

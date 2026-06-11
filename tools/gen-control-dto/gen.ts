@@ -312,6 +312,12 @@ const commands: CommandDef[] = [
   },
   { name: "focus", params: "EntityParams", result: "EntityRef", summary: "focus {entity}" },
   {
+    name: "get-world-transform",
+    params: "EntityParams",
+    result: "WorldTransformResult",
+    summary: "get-world-transform {entity} — the entity's composed world translation + scale",
+  },
+  {
     name: "get-environment",
     params: "EmptyParams",
     result: "EnvironmentDto",
@@ -419,6 +425,18 @@ const commands: CommandDef[] = [
     params: "SetSkeletonOverlayParams",
     result: "SkeletonOverlayResult",
     summary: "the selected rig's line-skeleton viewport overlay (show|axes|jointSize)",
+  },
+  {
+    name: "get-foot-ik",
+    params: "GetFootIkParams",
+    result: "FootIkResult",
+    summary: "a rig's foot-IK enable, ground height, and chain count",
+  },
+  {
+    name: "set-foot-ik",
+    params: "SetFootIkParams",
+    result: "FootIkResult",
+    summary: "toggle a rig's kinematic foot IK (enabled|groundHeight)",
   },
   {
     name: "get-script-status",
@@ -702,6 +720,7 @@ const commandFixtures = new Map<string, string>([
   ["pick", "viewport-center"],
   ["inspect", "cube-entity"],
   ["focus", "cube-entity"],
+  ["get-world-transform", "cube-entity"],
   ["get-environment", "empty"],
   ["set-environment", "environment-intensity"],
   ["set-atmosphere", "atmosphere-disabled"],
@@ -713,6 +732,8 @@ const commandFixtures = new Map<string, string>([
   ["stop", "empty"],
   ["get-skeleton-overlay", "empty"],
   ["set-skeleton-overlay", "skeleton-overlay-on"],
+  ["get-foot-ik", "cube-entity"],
+  ["set-foot-ik", "foot-ik-on"],
   ["get-play-state", "empty"],
   ["get-script-status", "empty"],
   ["drain-script-errors", "alarms-since-0"],
@@ -1552,6 +1573,33 @@ export interface SkinnedMesh {
 
 export interface Bone {}
 
+export interface FootChainDto {
+  upper: number;
+  mid: number;
+  end: number;
+  poleVector: Vec3;
+}
+
+export interface FootIk {
+  enabled: boolean;
+  groundHeight: number;
+  chains: FootChainDto[];
+}
+
+export interface BonePhysicsDto {
+  shapeHalfExtents: Vec3;
+  mass: number;
+  joint: string;
+  swingTwistLimits: Vec3;
+  driveStiffness: number;
+  driveDamping: number;
+  driveMaxForce: number;
+}
+
+export interface BonePhysics {
+  bones: BonePhysicsDto[];
+}
+
 export interface AtmosphereSettingsDto {
   enabled: boolean;
   planetRadius: number;
@@ -1581,6 +1629,8 @@ export interface Components {
   Relationship?: Relationship;
   SkinnedMesh?: SkinnedMesh;
   Bone?: Bone;
+  FootIk?: FootIk;
+  BonePhysics?: BonePhysics;
 }
 
 export type ComponentBody =
@@ -1598,6 +1648,8 @@ export type ComponentBody =
   | Relationship
   | SkinnedMesh
   | Bone
+  | FootIk
+  | BonePhysics
   | Record<string, unknown>;`;
   const paramsMap = commands
     .map((command) => `  ${JSON.stringify(command.name)}: ${command.params};`)
@@ -1709,6 +1761,8 @@ function componentSchemas(): Record<string, unknown> {
     "Relationship",
     "SkinnedMesh",
     "Bone",
+    "FootIk",
+    "BonePhysics",
   ];
   const schemas: Record<string, unknown> = {
     Name: {
@@ -1854,6 +1908,61 @@ function componentSchemas(): Record<string, unknown> {
       type: "object",
       additionalProperties: false,
       properties: {},
+    },
+    FootIk: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        groundHeight: { type: "number" },
+        chains: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              upper: { type: "number" },
+              mid: { type: "number" },
+              end: { type: "number" },
+              poleVector: vec3,
+            },
+            required: ["upper", "mid", "end", "poleVector"],
+          },
+        },
+      },
+      required: ["enabled", "groundHeight", "chains"],
+    },
+    BonePhysics: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        bones: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              shapeHalfExtents: vec3,
+              mass: { type: "number" },
+              joint: { type: "string", enum: ["fixed", "hinge", "swingtwist", "free"] },
+              swingTwistLimits: vec3,
+              driveStiffness: { type: "number" },
+              driveDamping: { type: "number" },
+              driveMaxForce: { type: "number" },
+            },
+            required: [
+              "shapeHalfExtents",
+              "mass",
+              "joint",
+              "swingTwistLimits",
+              "driveStiffness",
+              "driveDamping",
+              "driveMaxForce",
+            ],
+          },
+        },
+      },
+      required: ["bones"],
     },
     AtmosphereSettingsDto: {
       type: "object",
@@ -2413,6 +2522,96 @@ namespace se
             }
         }
         c.boneHandles.clear();  // resolved cache — relinkHierarchy rebuilds it
+        return {};
+    }
+
+    auto footIkComponentToJson(const FootIkComponent& c) -> nlohmann::json
+    {
+        nlohmann::json chains = nlohmann::json::array();
+        for (const FootChain& chain : c.chains)
+        {
+            chains.push_back(nlohmann::json{ { "upper", chain.upper },
+                                             { "mid", chain.mid },
+                                             { "end", chain.end },
+                                             { "poleVector", vec3ToJson(chain.poleVector) } });
+        }
+        return nlohmann::json{
+            { "enabled", c.enabled }, { "groundHeight", c.groundHeight }, { "chains", std::move(chains) }
+        };
+    }
+
+    auto footIkComponentFromJson(FootIkComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        c.enabled = jsonBoolOr(j, "enabled", false);
+        c.groundHeight = jsonF32Or(j, "groundHeight", 0.0f);
+        c.chains.clear();
+        if (j.contains("chains") && j["chains"].is_array())
+        {
+            for (const nlohmann::json& entry : j["chains"])
+            {
+                FootChain chain;
+                chain.upper = static_cast<i32>(entry.value("upper", -1));
+                chain.mid = static_cast<i32>(entry.value("mid", -1));
+                chain.end = static_cast<i32>(entry.value("end", -1));
+                chain.poleVector = vec3FromJson(entry.value("poleVector", nlohmann::json::object()));
+                c.chains.push_back(chain);
+            }
+        }
+        return {};
+    }
+
+    auto bonePhysicsComponentToJson(const BonePhysicsComponent& c) -> nlohmann::json
+    {
+        auto jointName = [](BonePhysics::Joint joint) -> const char*
+        {
+            switch (joint)
+            {
+                case BonePhysics::Joint::Fixed: return "fixed";
+                case BonePhysics::Joint::Hinge: return "hinge";
+                case BonePhysics::Joint::SwingTwist: return "swingtwist";
+                case BonePhysics::Joint::Free: return "free";
+            }
+            return "swingtwist";
+        };
+        nlohmann::json bones = nlohmann::json::array();
+        for (const BonePhysics& b : c.bones)
+        {
+            bones.push_back(nlohmann::json{ { "shapeHalfExtents", vec3ToJson(b.shapeHalfExtents) },
+                                            { "mass", b.mass },
+                                            { "joint", jointName(b.joint) },
+                                            { "swingTwistLimits", vec3ToJson(b.swingTwistLimits) },
+                                            { "driveStiffness", b.driveStiffness },
+                                            { "driveDamping", b.driveDamping },
+                                            { "driveMaxForce", b.driveMaxForce } });
+        }
+        return nlohmann::json{ { "bones", std::move(bones) } };
+    }
+
+    auto bonePhysicsComponentFromJson(BonePhysicsComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        auto jointFromName = [](const std::string& name) -> BonePhysics::Joint
+        {
+            if (name == "fixed") { return BonePhysics::Joint::Fixed; }
+            if (name == "hinge") { return BonePhysics::Joint::Hinge; }
+            if (name == "free") { return BonePhysics::Joint::Free; }
+            return BonePhysics::Joint::SwingTwist;
+        };
+        c.bones.clear();
+        if (j.contains("bones") && j["bones"].is_array())
+        {
+            for (const nlohmann::json& entry : j["bones"])
+            {
+                BonePhysics b;
+                b.shapeHalfExtents = vec3FromJson(entry.value("shapeHalfExtents", nlohmann::json::object()));
+                b.mass = jsonF32Or(entry, "mass", 1.0f);
+                b.joint = jointFromName(jsonStringOr(entry, "joint", std::string{ "swingtwist" }));
+                b.swingTwistLimits = vec3FromJson(entry.value("swingTwistLimits", nlohmann::json::object()));
+                b.driveStiffness = jsonF32Or(entry, "driveStiffness", 0.0f);
+                b.driveDamping = jsonF32Or(entry, "driveDamping", 0.0f);
+                b.driveMaxForce = jsonF32Or(entry, "driveMaxForce", 0.0f);
+                c.bones.push_back(b);
+            }
+        }
         return {};
     }
 
