@@ -190,6 +190,10 @@ export namespace se
     auto decodeImageHdr(const std::string& path) -> Result<DecodedImageFloat>;
     auto decodeImageFromMemoryHdr(const std::vector<u8>& encoded) -> Result<DecodedImageFloat>;
 
+    // In-place texture bakes applied at import so the runtime stays convention-agnostic.
+    void bakeDxToGlNormal(DecodedImage& image);     // DirectX (green=-Y) -> OpenGL (green=+Y)
+    void bakeGlossToRoughness(DecodedImage& image);  // glossiness -> roughness (1 - x)
+
     auto saveMesh(const Mesh& mesh, const std::string& path) -> Result<void>;  // baked .smesh
     auto loadMesh(const std::string& path) -> Result<Mesh>;
     // Vertex/index totals read from a .smesh's 64-byte header, without loading the data.
@@ -1090,6 +1094,28 @@ namespace se
         image.rgba.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
         stbi_image_free(pixels);
         return image;
+    }
+
+    // Converts a DirectX-convention normal map (green = -Y) to OpenGL (+Y) in place by inverting
+    // the green channel. Baked at import so the übershader stays convention-agnostic.
+    void bakeDxToGlNormal(DecodedImage& image)
+    {
+        for (std::size_t i = 1; i + 3 < image.rgba.size(); i = i + 4)
+        {
+            image.rgba[i] = static_cast<u8>(255 - image.rgba[i]);
+        }
+    }
+
+    // Converts a glossiness map to roughness in place (roughness = 1 - gloss) so a gloss-workflow
+    // source feeds the engine's roughness path. Inverts RGB; alpha is left intact.
+    void bakeGlossToRoughness(DecodedImage& image)
+    {
+        for (std::size_t i = 0; i + 3 < image.rgba.size(); i = i + 4)
+        {
+            image.rgba[i + 0] = static_cast<u8>(255 - image.rgba[i + 0]);
+            image.rgba[i + 1] = static_cast<u8>(255 - image.rgba[i + 1]);
+            image.rgba[i + 2] = static_cast<u8>(255 - image.rgba[i + 2]);
+        }
     }
 
     auto saveMesh(const Mesh& mesh, const std::string& path) -> Result<void>
