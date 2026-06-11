@@ -1040,6 +1040,33 @@ export namespace se
         f32 jointSize;
     };
 
+    struct SetFootIkParams
+    {
+        EntitySelector entity;
+        std::optional<bool> enabled;
+        std::optional<f32> groundHeight;
+    };
+
+    struct GetFootIkParams
+    {
+        EntitySelector entity;
+    };
+
+    struct FootIkResult
+    {
+        bool enabled;
+        f32 groundHeight;
+        i32 chains;
+    };
+
+    /// An entity's composed world-space transform (the cached WorldTransformComponent), so a
+    /// caller can read a bone's world position — e.g. to verify foot IK plants on the ground.
+    struct WorldTransformResult
+    {
+        Vec3 translation;
+        Vec3 scale;
+    };
+
     struct StepParams
     {
         std::optional<i32> frames;  // default 1
@@ -1289,6 +1316,8 @@ export namespace se
     auto dtoToJson(const ListClipsResult& value) -> Json;
     auto dtoToJson(const AnimationStateResult& value) -> Json;
     auto dtoToJson(const SkeletonOverlayResult& value) -> Json;
+    auto dtoToJson(const FootIkResult& value) -> Json;
+    auto dtoToJson(const WorldTransformResult& value) -> Json;
     auto dtoToJson(const DeselectResult& value) -> Json;
     auto dtoToJson(const SetComponentFieldResult& value) -> Json;
     auto dtoToJson(const EditorCamera& value) -> Json;
@@ -1361,4 +1390,6 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<SetAnimationLoopParams>) -> Result<SetAnimationLoopParams>;
     auto parseDto(const Json& params, DtoTag<AnimationStateParams>) -> Result<AnimationStateParams>;
     auto parseDto(const Json& params, DtoTag<SetSkeletonOverlayParams>) -> Result<SetSkeletonOverlayParams>;
+    auto parseDto(const Json& params, DtoTag<SetFootIkParams>) -> Result<SetFootIkParams>;
+    auto parseDto(const Json& params, DtoTag<GetFootIkParams>) -> Result<GetFootIkParams>;
 }

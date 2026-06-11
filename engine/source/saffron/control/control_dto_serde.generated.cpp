@@ -1792,6 +1792,54 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<GetFootIkParams>) -> Result<GetFootIkParams>
+    {
+        GetFootIkParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetFootIkParams>) -> Result<SetFootIkParams>
+    {
+        SetFootIkParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "enabled", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "enabled");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.enabled = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "groundHeight", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "groundHeight");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.groundHeight = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
     auto parseDto(const Json& params, DtoTag<DrainScriptErrorsParams>) -> Result<DrainScriptErrorsParams>
     {
         DrainScriptErrorsParams out;
@@ -2962,6 +3010,23 @@ namespace se
         return out;
     }
 
+    auto dtoToJson(const WorldTransformResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["translation"] = dtoToJson(value.translation);
+        out["scale"] = dtoToJson(value.scale);
+        return out;
+    }
+
+    auto dtoToJson(const Vec3& value) -> Json
+    {
+        Json out = Json::object();
+        out["x"] = value.x;
+        out["y"] = value.y;
+        out["z"] = value.z;
+        return out;
+    }
+
     auto dtoToJson(const EnvironmentDto& value) -> Json
     {
         return value.value;
@@ -3034,6 +3099,15 @@ namespace se
         out["show"] = value.show;
         out["axes"] = value.axes;
         out["jointSize"] = value.jointSize;
+        return out;
+    }
+
+    auto dtoToJson(const FootIkResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["enabled"] = value.enabled;
+        out["groundHeight"] = value.groundHeight;
+        out["chains"] = value.chains;
         return out;
     }
 
@@ -3110,15 +3184,6 @@ namespace se
         out["far"] = value.far;
         out["moveSpeed"] = value.moveSpeed;
         out["lookSpeed"] = value.lookSpeed;
-        return out;
-    }
-
-    auto dtoToJson(const Vec3& value) -> Json
-    {
-        Json out = Json::object();
-        out["x"] = value.x;
-        out["y"] = value.y;
-        out["z"] = value.z;
         return out;
     }
 
