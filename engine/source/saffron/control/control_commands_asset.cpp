@@ -1145,6 +1145,13 @@ namespace se
                 {
                     return Err(ok.error());
                 }
+                // A non-foldable graph renders on scene entities via a compiled übershader variant; build
+                // it now so resolveEntityMaterials finds it on disk. Failure is non-fatal — the material
+                // falls back to the shared übershader.
+                if (!foldable)
+                {
+                    (void)compileMaterialMeshShader(ctx.assets, m.graph, (*resolved)->id);
+                }
                 ctx.sceneEdit.sceneVersion += 1;
                 return MaterialSetGraphResult{ WireUuid{ (*resolved)->id.value }, foldable };
             });
