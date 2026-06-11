@@ -88,6 +88,11 @@ export namespace se
         // foldable graph is present, the resolved factors/textures above are derived from it; a
         // non-foldable graph (procedural nodes) is the codegen path. Null/empty = no graph.
         nlohmann::json graph;
+        // Material instance: an optional parent material + a sparse map of overridden fields. When
+        // `parent` is set this material resolves to the parent's params with `overrides` applied on
+        // top (edit-once-propagate: editing the parent reflows every instance). 0 = a master material.
+        Uuid parent;
+        nlohmann::json overrides;  // { fieldName: value } — only the fields this instance overrides
     };
 
     // The built-in default material: white albedo, fully rough, non-metallic. Returned by the
@@ -841,7 +846,9 @@ return {0}
                 { "normal", u(m.normalTexture) },
                 { "emissive", u(m.emissiveTexture) },
                 { "height", u(m.heightTexture) } } },
-            { "graph", m.graph.is_null() ? nlohmann::json::object() : m.graph }
+            { "graph", m.graph.is_null() ? nlohmann::json::object() : m.graph },
+            { "parent", std::to_string(m.parent.value) },
+            { "overrides", m.overrides.is_null() ? nlohmann::json::object() : m.overrides }
         };
     }
 
@@ -918,6 +925,11 @@ return {0}
         if (auto v = j.find("graph"); v != j.end() && v->is_object() && !v->empty())
         {
             m.graph = *v;
+        }
+        m.parent = uuid(j.value("parent", nlohmann::json{}));
+        if (auto v = j.find("overrides"); v != j.end() && v->is_object() && !v->empty())
+        {
+            m.overrides = *v;
         }
         return m;
     }
@@ -1074,9 +1086,78 @@ return {0}
         return id;
     }
 
-    // Reads assets/materials/<uuid>.smat into a MaterialAsset (pure data; textures are not
-    // resolved to GPU handles here). The reserved default-material id returns the built-in.
-    auto loadMaterialAsset(AssetServer& assets, Uuid id) -> Result<MaterialAsset>
+    // Applies a sparse override map { field: value } onto a base material (the instance path).
+    void applyOverrides(MaterialAsset& m, const nlohmann::json& overrides)
+    {
+        if (!overrides.is_object())
+        {
+            return;
+        }
+        const auto uuidOf = [](const nlohmann::json& v) -> Uuid
+        {
+            if (v.is_string())
+            {
+                return Uuid{ std::strtoull(v.get<std::string>().c_str(), nullptr, 10) };
+            }
+            if (v.is_number_unsigned())
+            {
+                return Uuid{ v.get<u64>() };
+            }
+            return Uuid{ 0 };
+        };
+        for (const auto& [field, value] : overrides.items())
+        {
+            if (field == "baseColor" && value.is_array() && value.size() >= 4)
+            {
+                m.baseColor = glm::vec4{ value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(),
+                                         value[3].get<f32>() };
+            }
+            else if (field == "emissive" && value.is_array() && value.size() >= 3)
+            {
+                m.emissive = glm::vec3{ value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>() };
+            }
+            else if (field == "metallic" && value.is_number())
+            {
+                m.metallic = value.get<f32>();
+            }
+            else if (field == "roughness" && value.is_number())
+            {
+                m.roughness = value.get<f32>();
+            }
+            else if (field == "emissiveStrength" && value.is_number())
+            {
+                m.emissiveStrength = value.get<f32>();
+            }
+            else if (field == "normalStrength" && value.is_number())
+            {
+                m.normalStrength = value.get<f32>();
+            }
+            else if (field == "albedoTexture")
+            {
+                m.albedoTexture = uuidOf(value);
+            }
+            else if (field == "ormTexture")
+            {
+                m.ormTexture = uuidOf(value);
+            }
+            else if (field == "normalTexture")
+            {
+                m.normalTexture = uuidOf(value);
+            }
+            else if (field == "emissiveTexture")
+            {
+                m.emissiveTexture = uuidOf(value);
+            }
+            else if (field == "heightTexture")
+            {
+                m.heightTexture = uuidOf(value);
+            }
+        }
+    }
+
+    // Reads the stored .smat as-is — no parent resolution, no graph fold. The edit path (the editor
+    // mutates this and writes it back via updateMaterialAsset).
+    auto loadMaterialAssetRaw(AssetServer& assets, Uuid id) -> Result<MaterialAsset>
     {
         if (id.value == DefaultMaterialId.value)
         {
@@ -1097,9 +1178,32 @@ return {0}
         {
             return Err(std::format("invalid material json '{}'", entry->path));
         }
-        MaterialAsset m = materialAssetFromJson(j);
-        // A foldable graph is the source of truth: derive the flat params from it. A non-foldable
-        // graph (procedural nodes) keeps the stored params as a fallback until codegen lands.
+        return materialAssetFromJson(j);
+    }
+
+    // Reads a .smat resolved for rendering: an instance is its parent's resolved params with this
+    // material's overrides applied (edit-once-propagate); a master applies its foldable graph. Pure
+    // data — textures are not resolved to GPU handles here.
+    auto loadMaterialAsset(AssetServer& assets, Uuid id, u32 depth = 0) -> Result<MaterialAsset>
+    {
+        auto raw = loadMaterialAssetRaw(assets, id);
+        if (!raw)
+        {
+            return raw;
+        }
+        MaterialAsset m = *raw;
+        if (m.parent.value != 0 && depth < 8)
+        {
+            if (auto parentResolved = loadMaterialAsset(assets, m.parent, depth + 1))
+            {
+                MaterialAsset base = *parentResolved;
+                applyOverrides(base, m.overrides);
+                base.parent = m.parent;        // keep the lineage so the editor knows it's an instance
+                base.overrides = m.overrides;  // keep the raw overrides for editing
+                return base;
+            }
+            // Missing/cyclic parent: fall back to this material's own stored params.
+        }
         if (m.graph.is_object() && !m.graph.empty())
         {
             MaterialAsset folded = m;
