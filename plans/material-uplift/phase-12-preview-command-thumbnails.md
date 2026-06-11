@@ -1,7 +1,17 @@
 # Phase 12 — Preview command + thumbnails
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (preview-render command; thumbnail-cache reuse is a follow-on)
 **Depends on:** 11
+
+> **Outcome.** `preview-render {material} [size]` → `{ png }` (base64): resolves the material asset →
+> `resolveMaterialAsset` → `renderMaterialPreview` → `encodeTextureThumbnailPng` → base64. Because it's an
+> out-of-band render (own command buffer + `waitIdle`, like the thumbnail), it returns synchronously — no
+> cross-frame handshake needed (the critic's `renderScene`-from-handler concern doesn't apply). e2e
+> `preview_render.test.ts` proves two materials (white vs red) yield different PNGs, validation-clean.
+> **Also fixed here:** the phase-09 persistence serde added MaterialComponent fields without updating the
+> **inspect component schema** — the contract test caught the resulting "unexpected property"; the `Material`
+> schema in `gen.ts` now declares all serde-emitted fields (119/119 contract). **Follow-on:** wire material
+> thumbnails in the asset browser through this path (the `get-thumbnail` material case) — editor work (phase 13).
 
 ## Goal
 
