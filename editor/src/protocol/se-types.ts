@@ -1153,6 +1153,21 @@ export interface MaterialSetGraphResult {
   foldable: boolean;
 }
 
+export interface MaterialCreateInstanceParams {
+  parent: WireUuid | string | number;
+  name: string;
+}
+
+export interface MaterialSetOverrideParams {
+  material: WireUuid | string | number;
+  field: string;
+  value: unknown;
+}
+
+export interface MaterialSetOverrideResult {
+  id: WireUuid;
+}
+
 export interface PathResult {
   path: string;
 }
@@ -1296,6 +1311,8 @@ export interface CommandParamsMap {
   "material-update": MaterialUpdateParams;
   "preview-render": PreviewRenderParams;
   "material-set-graph": MaterialSetGraphParams;
+  "material-create-instance": MaterialCreateInstanceParams;
+  "material-set-override": MaterialSetOverrideParams;
   "save-scene": PathParams;
   "load-scene": PathParams;
   "save-project": OptionalPathParams;
@@ -1414,6 +1431,8 @@ export interface CommandResultMap {
   "material-update": MaterialUpdateResult;
   "preview-render": PreviewRenderResult;
   "material-set-graph": MaterialSetGraphResult;
+  "material-create-instance": MaterialCreateResult;
+  "material-set-override": MaterialSetOverrideResult;
   "save-scene": PathResult;
   "load-scene": PathResult;
   "save-project": ProjectInfoDto;
