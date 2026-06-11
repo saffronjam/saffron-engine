@@ -1,7 +1,18 @@
 # Phase 13 — Material Editor panel
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (slot inspector + live preview; texture-slot pickers are a follow-on)
 **Depends on:** 10, 12
+
+> **Outcome.** `RightTool: "material"` + `MaterialEditorPanel.tsx`: a shadcn `Select` to pick a `.smat`
+> (from `material-list`) + a **New** button (`material-create`), the **live preview sphere** (an `<img>`
+> from `preview-render`, re-rendered after each edit), and live factor editing — `baseColor`/`metallic`/
+> `roughness`/`emissive`/`emissiveStrength` via the project's own `renderField` (so the widgets match the
+> inspector), each edit coalesced through `material-update` + a `setDragActive` poll guard. `selectedMaterialId`
+> added to the store; panel wired into `RightSidebar` + opened from the Topbar wrench menu. Client wrappers
+> added for `material-create/list/get/update/assign/import` + `preview-render`. **Validated:** `bun run check`
+> (gen:protocol + tsc) clean, `bun run lint` 0 errors, `bun run build` (vite) clean. (Runtime UI isn't
+> exercised in the headless e2e harness, but every command it calls is e2e-proven.) **Follow-on:** texture-slot
+> pickers in the panel (albedo/normal/etc.) and opening a material straight from the AssetsPanel.
 
 ## Goal
 
