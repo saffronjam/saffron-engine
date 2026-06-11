@@ -79,7 +79,9 @@ export namespace se
     auto newUuid() -> Uuid
     {
         static std::mt19937_64 engine{ std::random_device{}() };
-        static std::uniform_int_distribution<u64> distribution{ 1, std::numeric_limits<u64>::max() };
+        // Reserve the low range (< 1024) for built-in / synthetic assets (e.g. the default material),
+        // so a minted id never collides with a reserved one.
+        static std::uniform_int_distribution<u64> distribution{ 1024, std::numeric_limits<u64>::max() };
         return Uuid{ distribution(engine) };
     }
 
