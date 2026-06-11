@@ -289,6 +289,13 @@
       "fixture": "cube-entity"
     },
     {
+      "name": "get-world-transform",
+      "params": "EntityParams",
+      "result": "WorldTransformResult",
+      "status": "typed",
+      "fixture": "cube-entity"
+    },
+    {
       "name": "get-environment",
       "params": "EmptyParams",
       "result": "EnvironmentDto",
@@ -420,6 +427,20 @@
       "result": "SkeletonOverlayResult",
       "status": "typed",
       "fixture": "skeleton-overlay-on"
+    },
+    {
+      "name": "get-foot-ik",
+      "params": "GetFootIkParams",
+      "result": "FootIkResult",
+      "status": "typed",
+      "fixture": "cube-entity"
+    },
+    {
+      "name": "set-foot-ik",
+      "params": "SetFootIkParams",
+      "result": "FootIkResult",
+      "status": "typed",
+      "fixture": "foot-ik-on"
     },
     {
       "name": "get-script-status",

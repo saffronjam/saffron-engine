@@ -744,6 +744,24 @@
       }
     },
     {
+      "name": "get-world-transform",
+      "summary": "get-world-transform {entity} — the entity's composed world translation + scale",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EntityParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorldTransformResult"
+        }
+      }
+    },
+    {
       "name": "get-environment",
       "summary": "get environment settings",
       "params": [
@@ -1082,6 +1100,42 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/SkeletonOverlayResult"
+        }
+      }
+    },
+    {
+      "name": "get-foot-ik",
+      "summary": "a rig's foot-IK enable, ground height, and chain count",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/GetFootIkParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FootIkResult"
+        }
+      }
+    },
+    {
+      "name": "set-foot-ik",
+      "summary": "toggle a rig's kinematic foot IK (enabled|groundHeight)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetFootIkParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FootIkResult"
         }
       }
     },
@@ -2924,6 +2978,26 @@
           "active"
         ]
       },
+      "FootIkResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "groundHeight": {
+            "type": "number"
+          },
+          "chains": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "groundHeight",
+          "chains"
+        ]
+      },
       "FrameHistoryDto": {
         "type": "object",
         "additionalProperties": false,
@@ -3011,6 +3085,25 @@
           "cpuMs",
           "gpuMs",
           "cpuWaitMs"
+        ]
+      },
+      "GetFootIkParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "entity"
         ]
       },
       "GetScriptSchemaParams": {
@@ -4536,6 +4629,31 @@
           "exposureEv"
         ]
       },
+      "SetFootIkParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "groundHeight": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "entity"
+        ]
+      },
       "SetGiParams": {
         "type": "object",
         "additionalProperties": false,
@@ -5131,6 +5249,22 @@
           "value"
         ]
       },
+      "WorldTransformResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "translation": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "scale": {
+            "$ref": "#/components/schemas/Vec3"
+          }
+        },
+        "required": [
+          "translation",
+          "scale"
+        ]
+      },
       "Name": {
         "type": "object",
         "additionalProperties": false,
@@ -5446,6 +5580,104 @@
         "additionalProperties": false,
         "properties": {}
       },
+      "FootIk": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "groundHeight": {
+            "type": "number"
+          },
+          "chains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "upper": {
+                  "type": "number"
+                },
+                "mid": {
+                  "type": "number"
+                },
+                "end": {
+                  "type": "number"
+                },
+                "poleVector": {
+                  "$ref": "#/components/schemas/Vec3"
+                }
+              },
+              "required": [
+                "upper",
+                "mid",
+                "end",
+                "poleVector"
+              ]
+            }
+          }
+        },
+        "required": [
+          "enabled",
+          "groundHeight",
+          "chains"
+        ]
+      },
+      "BonePhysics": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "bones": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "shapeHalfExtents": {
+                  "$ref": "#/components/schemas/Vec3"
+                },
+                "mass": {
+                  "type": "number"
+                },
+                "joint": {
+                  "type": "string",
+                  "enum": [
+                    "fixed",
+                    "hinge",
+                    "swingtwist",
+                    "free"
+                  ]
+                },
+                "swingTwistLimits": {
+                  "$ref": "#/components/schemas/Vec3"
+                },
+                "driveStiffness": {
+                  "type": "number"
+                },
+                "driveDamping": {
+                  "type": "number"
+                },
+                "driveMaxForce": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "shapeHalfExtents",
+                "mass",
+                "joint",
+                "swingTwistLimits",
+                "driveStiffness",
+                "driveDamping",
+                "driveMaxForce"
+              ]
+            }
+          }
+        },
+        "required": [
+          "bones"
+        ]
+      },
       "AtmosphereSettingsDto": {
         "type": "object",
         "additionalProperties": false,
@@ -5543,6 +5775,12 @@
           },
           "Bone": {
             "$ref": "#/components/schemas/Bone"
+          },
+          "FootIk": {
+            "$ref": "#/components/schemas/FootIk"
+          },
+          "BonePhysics": {
+            "$ref": "#/components/schemas/BonePhysics"
           }
         }
       },
@@ -5589,6 +5827,12 @@
           },
           {
             "$ref": "#/components/schemas/Bone"
+          },
+          {
+            "$ref": "#/components/schemas/FootIk"
+          },
+          {
+            "$ref": "#/components/schemas/BonePhysics"
           }
         ]
       },

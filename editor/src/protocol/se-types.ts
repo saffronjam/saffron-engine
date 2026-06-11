@@ -96,6 +96,33 @@ export interface SkinnedMesh {
 
 export interface Bone {}
 
+export interface FootChainDto {
+  upper: number;
+  mid: number;
+  end: number;
+  poleVector: Vec3;
+}
+
+export interface FootIk {
+  enabled: boolean;
+  groundHeight: number;
+  chains: FootChainDto[];
+}
+
+export interface BonePhysicsDto {
+  shapeHalfExtents: Vec3;
+  mass: number;
+  joint: string;
+  swingTwistLimits: Vec3;
+  driveStiffness: number;
+  driveDamping: number;
+  driveMaxForce: number;
+}
+
+export interface BonePhysics {
+  bones: BonePhysicsDto[];
+}
+
 export interface AtmosphereSettingsDto {
   enabled: boolean;
   planetRadius: number;
@@ -125,6 +152,8 @@ export interface Components {
   Relationship?: Relationship;
   SkinnedMesh?: SkinnedMesh;
   Bone?: Bone;
+  FootIk?: FootIk;
+  BonePhysics?: BonePhysics;
 }
 
 export type ComponentBody =
@@ -142,6 +171,8 @@ export type ComponentBody =
   | Relationship
   | SkinnedMesh
   | Bone
+  | FootIk
+  | BonePhysics
   | Record<string, unknown>;
 
 export interface EntityRef {
@@ -574,6 +605,11 @@ export interface InspectResult {
   components: Components;
 }
 
+export interface WorldTransformResult {
+  translation: Vec3;
+  scale: Vec3;
+}
+
 export interface EnvironmentDto {
   skyMode: "color" | "texture" | "procedural";
   clearColor: Vec3;
@@ -699,6 +735,22 @@ export interface SetSkeletonOverlayParams {
   show?: boolean;
   axes?: boolean;
   jointSize?: number;
+}
+
+export interface GetFootIkParams {
+  entity: WireUuid | string | number;
+}
+
+export interface FootIkResult {
+  enabled: boolean;
+  groundHeight: number;
+  chains: number;
+}
+
+export interface SetFootIkParams {
+  entity: WireUuid | string | number;
+  enabled?: boolean;
+  groundHeight?: number;
 }
 
 export interface ScriptStatusResult {
@@ -1089,6 +1141,7 @@ export interface CommandParamsMap {
   "pick": PickParams;
   "inspect": EntityParams;
   "focus": EntityParams;
+  "get-world-transform": EntityParams;
   "get-environment": EmptyParams;
   "set-environment": SetEnvironmentParams;
   "set-atmosphere": SetAtmosphereParams;
@@ -1108,6 +1161,8 @@ export interface CommandParamsMap {
   "stop-preview": AnimationStateParams;
   "get-skeleton-overlay": EmptyParams;
   "set-skeleton-overlay": SetSkeletonOverlayParams;
+  "get-foot-ik": GetFootIkParams;
+  "set-foot-ik": SetFootIkParams;
   "get-script-status": EmptyParams;
   "drain-script-errors": DrainScriptErrorsParams;
   "get-script-schema": GetScriptSchemaParams;
@@ -1196,6 +1251,7 @@ export interface CommandResultMap {
   "pick": PickResult;
   "inspect": InspectResult;
   "focus": EntityRef;
+  "get-world-transform": WorldTransformResult;
   "get-environment": EnvironmentDto;
   "set-environment": EnvironmentDto;
   "set-atmosphere": EnvironmentDto;
@@ -1215,6 +1271,8 @@ export interface CommandResultMap {
   "stop-preview": AnimationStateResult;
   "get-skeleton-overlay": SkeletonOverlayResult;
   "set-skeleton-overlay": SkeletonOverlayResult;
+  "get-foot-ik": FootIkResult;
+  "set-foot-ik": FootIkResult;
   "get-script-status": ScriptStatusResult;
   "drain-script-errors": DrainScriptErrorsResult;
   "get-script-schema": GetScriptSchemaResult;
