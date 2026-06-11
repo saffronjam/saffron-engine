@@ -193,6 +193,12 @@ export namespace se
         glm::vec3 emissive{ 0.0f };
         f32 emissiveStrength = 1.0f;
         bool unlit = false;  // skip lighting (albedo * base color only) — a distinct PSO
+        Uuid normalTexture;      // tangent-space normal map (OpenGL +Y convention)
+        Uuid occlusionTexture;   // ambient occlusion (AO in R)
+        Uuid emissiveTexture;    // emissive map (modulates the emissive factor)
+        f32 normalStrength = 1.0f;
+        glm::vec2 uvTiling{ 1.0f };
+        glm::vec2 uvOffset{ 0.0f };
     };
 
     // One material in a multi-material mesh; the same fields as MaterialComponent.
@@ -206,6 +212,12 @@ export namespace se
         glm::vec3 emissive{ 0.0f };
         f32 emissiveStrength = 1.0f;
         bool unlit = false;
+        Uuid normalTexture;
+        Uuid occlusionTexture;
+        Uuid emissiveTexture;
+        f32 normalStrength = 1.0f;
+        glm::vec2 uvTiling{ 1.0f };
+        glm::vec2 uvOffset{ 0.0f };
     };
 
     // An ordered material table for a mesh with more than one source material; each
