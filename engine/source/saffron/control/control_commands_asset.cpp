@@ -993,6 +993,35 @@ namespace se
                 return MaterialUpdateResult{ WireUuid{ (*resolved)->id.value } };
             });
 
+        registerCommand<PreviewRenderParams, PreviewRenderResult>(
+            reg, "preview-render", "preview-render {material} [size]",
+            [](EngineContext& ctx, const PreviewRenderParams& params) -> Result<PreviewRenderResult>
+            {
+                auto resolved = resolveAsset(ctx, params.material);
+                if (!resolved)
+                {
+                    return Err(resolved.error());
+                }
+                auto loaded = loadMaterialAsset(ctx.assets, (*resolved)->id);
+                if (!loaded)
+                {
+                    return Err(loaded.error());
+                }
+                const SubmeshMaterial sm = resolveMaterialAsset(ctx.assets, ctx.renderer, *loaded);
+                const u32 size = params.size.value_or(256u);
+                auto tex = renderMaterialPreview(ctx.renderer, sm, size);
+                if (!tex)
+                {
+                    return Err(tex.error());
+                }
+                auto png = encodeTextureThumbnailPng(ctx.renderer, *tex, size);
+                if (!png)
+                {
+                    return Err(png.error());
+                }
+                return PreviewRenderResult{ base64Encode(*png) };
+            });
+
         registerCommand<PathParams, PathResult>(reg, "save-scene", "save-scene {path}",
                                                 [](EngineContext& ctx, const PathParams& params) -> Result<PathResult>
                                                 {
