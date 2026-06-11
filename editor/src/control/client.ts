@@ -364,6 +364,43 @@ export const client = {
   ): Promise<unknown> {
     return call("assign-asset", { entity, slot, asset });
   },
+  /// Create a new default material asset; returns its id + name.
+  materialCreate(name: string) {
+    return call("material-create", { name });
+  },
+  /// List the project's material assets (for the material browser/picker).
+  materialList() {
+    return call("material-list");
+  },
+  /// Read a material asset's fields (blend/unlit/factors/texture ids).
+  materialGet(material: string) {
+    return call("material-get", { material });
+  },
+  /// Edit a material asset's scalar factors in place.
+  materialUpdate(
+    material: string,
+    patch: {
+      baseColor?: { x: number; y: number; z: number; w: number };
+      metallic?: number;
+      roughness?: number;
+      emissive?: { x: number; y: number; z: number };
+      emissiveStrength?: number;
+    },
+  ): Promise<unknown> {
+    return call("material-update", { material, ...patch });
+  },
+  /// Assign a material asset to an entity (its MaterialAssetComponent; "0" clears).
+  materialAssign(entity: string, material: string): Promise<unknown> {
+    return call("material-assign", { entity, material });
+  },
+  /// Import a folder of PBR textures, suffix-detecting roles, into a new .smat.
+  materialImport(path: string, name?: string) {
+    return call("material-import", { path, name: name ?? "" });
+  },
+  /// Render a material on a studio-lit sphere; returns a base64 PNG.
+  previewRender(material: string, size?: number) {
+    return call("preview-render", { material, size });
+  },
   /// Import a model from a filesystem path; the engine spawns + selects an entity
   /// and returns its ref plus the created mesh/albedo asset ids.
   importModel(path: string): Promise<EntityRef & { mesh: string; albedoTexture: string }> {
