@@ -2,8 +2,6 @@
 
 ## Editor UX
 
-- Mouse buttons back and forward should work in the UI.
-- Undo/redo for edits, per main-tab basis.
 - Drag and drop models from the asset browser to create entities in the scene.
 - Fix browser UI quirks like drag-selecting elements so the editor feels like a normal desktop app.
 
