@@ -381,30 +381,40 @@ namespace se
                                     base64Encode(reply->png),       false };
         }
 
-        struct RigBounds
+        struct PreviewBounds
         {
             glm::vec3 center{ 0.0f };
             f32 radius = 1.0f;
             f32 minY = 0.0f;
         };
 
-        // The previewed rig's world-space bounding sphere, from its skinned mesh's rest-pose AABB.
-        auto computeRigBounds(Scene& scene, AssetServer& assets, Renderer& renderer, Entity rig) -> RigBounds
+        // The previewed model's world-space bounding sphere, from its mesh's rest-pose AABB. Works for a
+        // skinned-mesh root (SkinnedMeshComponent) or a static-mesh root (MeshComponent) alike.
+        auto computePreviewBounds(Scene& scene, AssetServer& assets, Renderer& renderer, Entity root) -> PreviewBounds
         {
-            RigBounds out;
-            if (!valid(scene, rig) || !hasComponent<SkinnedMeshComponent>(scene, rig))
+            PreviewBounds out;
+            if (!valid(scene, root))
             {
                 return out;
             }
+            Uuid meshId{ 0 };
+            if (hasComponent<SkinnedMeshComponent>(scene, root))
+            {
+                meshId = getComponent<SkinnedMeshComponent>(scene, root).mesh;
+            }
+            else if (hasComponent<MeshComponent>(scene, root))
+            {
+                meshId = getComponent<MeshComponent>(scene, root).mesh;
+            }
             updateWorldTransforms(scene);
-            auto gpu = loadMeshAsset(assets, renderer, getComponent<SkinnedMeshComponent>(scene, rig).mesh);
+            auto gpu = meshId.value != 0 ? loadMeshAsset(assets, renderer, meshId) : Ref<GpuMesh>{};
             if (!gpu)
             {
-                out.center = worldTranslation(scene, rig);
+                out.center = worldTranslation(scene, root);
                 out.minY = out.center.y - 1.0f;
                 return out;
             }
-            const glm::mat4 world = worldMatrix(scene, rig);
+            const glm::mat4 world = worldMatrix(scene, root);
             glm::vec3 lo{ 0.0f };
             glm::vec3 hi{ 0.0f };
             for (int c = 0; c < 8; c = c + 1)
@@ -426,8 +436,9 @@ namespace se
             return out;
         }
 
-        // A thin floor slab centered under the rig's feet (reserved system mesh; no catalog row).
-        auto spawnPreviewFloor(Scene& scene, AssetServer& assets, Renderer& renderer, const RigBounds& bounds) -> Entity
+        // A thin floor slab centered under the model's feet (reserved system mesh; no catalog row).
+        auto spawnPreviewFloor(Scene& scene, AssetServer& assets, Renderer& renderer, const PreviewBounds& bounds)
+            -> Entity
         {
             if (!ensurePreviewFloorMesh(assets, renderer))
             {
@@ -447,9 +458,9 @@ namespace se
             return floor;
         }
 
-        // Aim a fly-cam at the rig: a 3/4 view fit to its bounding sphere (the thumbnail framing). Starts
+        // Aim a fly-cam at the model: a 3/4 view fit to its bounding sphere (the thumbnail framing). Starts
         // from the current camera so the user's fov/near/far/speed prefs survive, then reframes the pose.
-        auto framePreviewCamera(SceneEditCamera cam, const RigBounds& bounds) -> SceneEditCamera
+        auto framePreviewCamera(SceneEditCamera cam, const PreviewBounds& bounds) -> SceneEditCamera
         {
             const f32 fovy = glm::radians(cam.fov);
             const f32 distance = bounds.radius / glm::tan(fovy * 0.5f) * 1.3f;
@@ -459,6 +470,9 @@ namespace se
             cam.pitch = glm::degrees(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)));
             cam.yaw = glm::degrees(std::atan2(forward.x, -forward.z));
             cam.farPlane = glm::max(cam.farPlane, distance + bounds.radius * 4.0f);
+            // Scale the near plane to the framed distance so a small model can be dollied in close
+            // without the stock 0.1 plane culling it; large models keep ~0.1 (the ceiling).
+            cam.nearPlane = glm::clamp(distance * 0.01f, 1e-4f, 0.1f);
             return cam;
         }
 
@@ -472,11 +486,11 @@ namespace se
         // fly-cam. Operates on the committed previewScene; writes edit.camera (after the caller has
         // stashed the authored one), stores the floor entity for the toggle, and returns the orbit
         // pivot + distance for the editor's orbit.
-        auto furnishPreviewScene(SceneEditContext& edit, AssetServer& assets, Renderer& renderer, Entity rig)
+        auto furnishPreviewScene(SceneEditContext& edit, AssetServer& assets, Renderer& renderer, Entity root)
             -> PreviewFraming
         {
             Scene& scene = *edit.previewScene;
-            const RigBounds bounds = computeRigBounds(scene, assets, renderer, rig);
+            const PreviewBounds bounds = computePreviewBounds(scene, assets, renderer, root);
 
             if (edit.previewShowFloor)
             {
@@ -499,11 +513,11 @@ namespace se
             return PreviewFraming{ bounds.center, bounds.radius / glm::tan(fovy * 0.5f) * 1.3f };
         }
 
-        // Drop the rig preview and restore the authored edit state: the fly-cam (stashed on enter, so
+        // Drop the asset preview and restore the authored edit state: the fly-cam (stashed on enter, so
         // framing/orbit never dirty the saved editorCamera), the overlay prefs, the authored selection
         // (ctx.scene was never touched while previewing), and the version stamps the editor's poll keys
         // on. A no-op when not previewing.
-        void leaveRigPreview(SceneEditContext& ctx)
+        void leaveAssetPreview(SceneEditContext& ctx)
         {
             if (!ctx.previewScene)
             {
@@ -511,7 +525,7 @@ namespace se
             }
             ctx.previewScene.reset();
             ctx.previewAsset = Uuid{ 0 };
-            ctx.previewRigEntity = Entity{ entt::null };
+            ctx.previewRootEntity = Entity{ entt::null };
             ctx.previewFloorEntity = Entity{ entt::null };
             ctx.previewBoneByNode.clear();
             ctx.camera = ctx.savedCamera;
@@ -543,7 +557,7 @@ namespace se
                 }
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 ProjectInfo project;
                 auto result =
@@ -586,7 +600,7 @@ namespace se
                 }
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 if (params.path.empty())
                 {
@@ -625,7 +639,7 @@ namespace se
                 }
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 auto bake = importModel(ctx.assets, params.path, ImportOptions{});
                 if (!bake)
@@ -869,13 +883,16 @@ namespace se
                 return result;
             });
 
-        // The rig the editor view consumes: the node forest as a flat parent-indexed bone tree (joints
-        // flagged) plus the model's animation sub-assets as clips — both read straight from the `.smodel`
-        // container metadata. Accepts the model, its mesh sub-asset, or one of its clip sub-assets; all
-        // resolve to the same owning container, so the clip↔mesh link is intrinsic, not a stored field.
-        registerCommand<GetRigParams, RigResult>(
-            reg, "get-rig", "get-rig {asset} — a model's bone tree + clips, read from its .smodel container",
-            [](EngineContext& ctx, const GetRigParams& params) -> Result<RigResult>
+        // The model the asset editor consumes: its capabilities (mesh/material/node counts, rig + clip
+        // presence), the node forest as a flat parent-indexed bone tree (joints flagged) when the model
+        // carries a skin, and its animation sub-assets as clips — all read from the `.smodel` container
+        // metadata. Accepts the model, a mesh sub-asset, or a clip sub-asset; all resolve to the same
+        // owning container, so the clip↔mesh link is intrinsic, not a stored field. A skinless (static)
+        // model returns an empty bone tree, not an error.
+        registerCommand<GetAssetModelParams, AssetModelResult>(
+            reg, "get-asset-model",
+            "get-asset-model {asset} — a model's capabilities + bone tree + clips, from its .smodel container",
+            [](EngineContext& ctx, const GetAssetModelParams& params) -> Result<AssetModelResult>
             {
                 if (auto ready = requireProjectLoaded(ctx); !ready)
                 {
@@ -898,75 +915,78 @@ namespace se
                     return Err(std::format("model {} is not loadable", containerId.value));
                 }
                 const ContainerMetadata& meta = model->meta;
-                if (meta.skin.is_null())
-                {
-                    return Err(std::format("model '{}' has no rig — re-import the asset as a rigged model", meta.name));
-                }
-                RigResult result;
+                AssetModelResult result;
                 result.mesh = WireUuid{ containerId.value };
                 result.name = meta.name;
                 const std::size_t nodeCount = meta.nodes.is_array() ? meta.nodes.size() : 0;
-                std::vector<i32> parents(nodeCount, -1);
-                for (std::size_t i = 0; i < nodeCount; i = i + 1)
+                const bool hasRig = !meta.skin.is_null();
+                // The bone tree, only when the container carries a skin: the joints plus their ancestor
+                // chains, bounded at the skeleton root (intermediate non-joint nodes included), but not
+                // the mesh node or unrelated scene roots. Node indices are preserved so
+                // set-skeleton-highlight stays index-keyed. A static model leaves `bones` empty.
+                if (hasRig)
                 {
-                    parents[i] = meta.nodes[i].value("parent", -1);
-                }
-                std::vector<bool> isJoint(nodeCount, false);
-                i32 skeletonRoot = meta.skin.value("skeletonRoot", -1);
-                if (auto it = meta.skin.find("joints"); it != meta.skin.end() && it->is_array())
-                {
-                    for (const json& joint : *it)
+                    std::vector<i32> parents(nodeCount, -1);
+                    for (std::size_t i = 0; i < nodeCount; i = i + 1)
                     {
-                        const i32 index = joint.get<i32>();
-                        if (index >= 0 && static_cast<std::size_t>(index) < nodeCount)
+                        parents[i] = meta.nodes[i].value("parent", -1);
+                    }
+                    std::vector<bool> isJoint(nodeCount, false);
+                    i32 skeletonRoot = meta.skin.value("skeletonRoot", -1);
+                    if (auto it = meta.skin.find("joints"); it != meta.skin.end() && it->is_array())
+                    {
+                        for (const json& joint : *it)
                         {
-                            isJoint[static_cast<std::size_t>(index)] = true;
+                            const i32 index = joint.get<i32>();
+                            if (index >= 0 && static_cast<std::size_t>(index) < nodeCount)
+                            {
+                                isJoint[static_cast<std::size_t>(index)] = true;
+                            }
                         }
                     }
-                }
-                // The rig is the joints plus their ancestor chains, bounded at the skeleton root: the bone
-                // hierarchy (intermediate non-joint nodes included), but not the mesh node or unrelated
-                // scene roots. Node indices are preserved so set-skeleton-highlight stays index-keyed.
-                std::vector<bool> inRig(nodeCount, false);
-                if (skeletonRoot >= 0 && static_cast<std::size_t>(skeletonRoot) < nodeCount)
-                {
-                    inRig[static_cast<std::size_t>(skeletonRoot)] = true;
-                }
-                for (std::size_t i = 0; i < nodeCount; i = i + 1)
-                {
-                    if (!isJoint[i])
+                    std::vector<bool> inRig(nodeCount, false);
+                    if (skeletonRoot >= 0 && static_cast<std::size_t>(skeletonRoot) < nodeCount)
                     {
-                        continue;
+                        inRig[static_cast<std::size_t>(skeletonRoot)] = true;
                     }
-                    i32 node = static_cast<i32>(i);
-                    while (node >= 0 && static_cast<std::size_t>(node) < nodeCount &&
-                           !inRig[static_cast<std::size_t>(node)])
+                    for (std::size_t i = 0; i < nodeCount; i = i + 1)
                     {
-                        inRig[static_cast<std::size_t>(node)] = true;
-                        if (node == skeletonRoot)
+                        if (!isJoint[i])
                         {
-                            break;
+                            continue;
                         }
-                        node = parents[static_cast<std::size_t>(node)];
+                        i32 node = static_cast<i32>(i);
+                        while (node >= 0 && static_cast<std::size_t>(node) < nodeCount &&
+                               !inRig[static_cast<std::size_t>(node)])
+                        {
+                            inRig[static_cast<std::size_t>(node)] = true;
+                            if (node == skeletonRoot)
+                            {
+                                break;
+                            }
+                            node = parents[static_cast<std::size_t>(node)];
+                        }
                     }
-                }
-                for (std::size_t i = 0; i < nodeCount; i = i + 1)
-                {
-                    if (!inRig[i])
+                    for (std::size_t i = 0; i < nodeCount; i = i + 1)
                     {
-                        continue;
+                        if (!inRig[i])
+                        {
+                            continue;
+                        }
+                        const i32 parent = parents[i];
+                        BoneDto bone;
+                        bone.index = static_cast<i32>(i);
+                        bone.name = meta.nodes[i].value("name", std::string{});
+                        bone.parent = parent >= 0 && static_cast<std::size_t>(parent) < nodeCount &&
+                                              inRig[static_cast<std::size_t>(parent)]
+                                          ? parent
+                                          : -1;
+                        bone.joint = isJoint[i];
+                        result.bones.push_back(std::move(bone));
                     }
-                    const i32 parent = parents[i];
-                    RigBoneDto bone;
-                    bone.index = static_cast<i32>(i);
-                    bone.name = meta.nodes[i].value("name", std::string{});
-                    bone.parent = parent >= 0 && static_cast<std::size_t>(parent) < nodeCount &&
-                                          inRig[static_cast<std::size_t>(parent)]
-                                      ? parent
-                                      : -1;
-                    bone.joint = isJoint[i];
-                    result.bones.push_back(std::move(bone));
                 }
+                i32 meshCount = 0;
+                i32 materialCount = 0;
                 for (const ContainerMetadata::SubAsset& sub : meta.subAssets)
                 {
                     if (sub.type == AssetType::Animation)
@@ -974,19 +994,34 @@ namespace se
                         result.clips.push_back(
                             AnimationClipDto{ WireUuid{ sub.subId.value }, sub.name, sub.duration, sub.tracks });
                     }
+                    else if (sub.type == AssetType::Mesh)
+                    {
+                        meshCount += 1;
+                    }
+                    else if (sub.type == AssetType::Material)
+                    {
+                        materialCount += 1;
+                    }
                 }
+                result.capabilities.meshCount = meshCount;
+                result.capabilities.materialCount = materialCount;
+                result.capabilities.nodeCount = static_cast<i32>(nodeCount);
+                result.capabilities.hasRig = hasRig;
+                result.capabilities.boneCount = static_cast<i32>(result.bones.size());
+                result.capabilities.clipCount = static_cast<i32>(result.clips.size());
                 return result;
             });
 
-        // Open a model's rig in an isolated preview scene (the asset-editor view). Routes through
-        // activeScene like play mode, so render / compute skinning / animation / entity-addressed
-        // commands all retarget to the preview for free, and the authored scene cannot leak. Accepts
-        // the model, its mesh sub-asset, or one of its clip sub-assets (a clip becomes the active
-        // clip). Entering while previewing a different rig swaps (drop + respawn), not errors. Camera +
-        // selection are stashed engine-side, so byte-identity holds even for CLI-driven enter/exit.
-        registerCommand<EnterRigPreviewParams, EnterRigPreviewResult>(
-            reg, "enter-rig-preview", "enter-rig-preview {asset} — open a model's rig in an isolated preview scene",
-            [](EngineContext& ctx, const EnterRigPreviewParams& params) -> Result<EnterRigPreviewResult>
+        // Open any model in an isolated preview scene (the asset editor). Routes through activeScene like
+        // play mode, so render / compute skinning / animation / entity-addressed commands all retarget to
+        // the preview for free, and the authored scene cannot leak. Accepts the model, a mesh sub-asset,
+        // or a clip sub-asset (a clip becomes the active clip). A static (skinless) model previews too —
+        // it just has no bone table. Entering while previewing a different model swaps (drop + respawn),
+        // not errors. Camera + selection are stashed engine-side, so byte-identity holds for CLI-driven
+        // enter/exit too.
+        registerCommand<EnterAssetPreviewParams, AssetPreviewResult>(
+            reg, "enter-asset-preview", "enter-asset-preview {asset} — open any model in an isolated preview scene",
+            [](EngineContext& ctx, const EnterAssetPreviewParams& params) -> Result<AssetPreviewResult>
             {
                 if (auto ready = requireProjectLoaded(ctx); !ready)
                 {
@@ -1013,13 +1048,10 @@ namespace se
                     return Err(std::format("model {} is not loadable", containerId.value));
                 }
                 const ContainerMetadata& meta = model->meta;
-                if (meta.skin.is_null())
-                {
-                    return Err(std::format("model '{}' has no rig — re-import the asset as a rigged model", meta.name));
-                }
 
                 // Build the preview scene locally so a failure leaves the current state untouched (a
-                // failed swap stays on the prior rig); commit only once the rig spawned a skinned mesh.
+                // failed swap stays on the prior model); commit only once the model spawned a renderable
+                // mesh (skinned or static).
                 Scene preview;
                 preview.catalog = ctx.sceneEdit.scene.catalog;
                 auto root = instantiateModel(preview, ctx.assets, containerId, meta.name);
@@ -1027,12 +1059,13 @@ namespace se
                 {
                     return Err(root.error());
                 }
-                if (!hasComponent<SkinnedMeshComponent>(preview, *root))
+                const bool rigged = hasComponent<SkinnedMeshComponent>(preview, *root);
+                if (!rigged && !hasComponent<MeshComponent>(preview, *root))
                 {
-                    return Err(std::format("model '{}' has no rig — re-import the asset as a rigged model", meta.name));
+                    return Err(std::format("model '{}' has no renderable mesh — re-import the asset", meta.name));
                 }
 
-                // Open-from-clip: that clip becomes the active clip; the rig opens paused at the rest
+                // Open-from-clip: that clip becomes the active clip; the model opens paused at the rest
                 // pose (previewInEdit off until the first transport action arms it — UE5's behavior).
                 if (entry->type == AssetType::Animation && hasComponent<AnimationPlayerComponent>(preview, *root))
                 {
@@ -1043,32 +1076,37 @@ namespace se
                     player.previewInEdit = false;
                 }
 
+                AssetPreviewResult result;
+                result.rootEntity = WireUuid{ getComponent<IdComponent>(preview, *root).id.value };
+                std::vector<Uuid> boneByNode;
                 // Map each joint's node index to its spawned entity (SkinnedMeshComponent.bones is in
-                // skin-joint order, matching meta.skin["joints"]) — the highlight table phase 6 drives.
-                const SkinnedMeshComponent& skin = getComponent<SkinnedMeshComponent>(preview, *root);
-                const std::vector<Uuid> boneUuids = skin.bones;
-                std::vector<i32> jointNodes;
-                if (auto it = meta.skin.find("joints"); it != meta.skin.end() && it->is_array())
+                // skin-joint order, matching meta.skin["joints"]) — the highlight table the tree drives.
+                // A static model has no skin: the bone table + boneByNode stay empty.
+                if (rigged)
                 {
-                    for (const json& joint : *it)
+                    const SkinnedMeshComponent& skin = getComponent<SkinnedMeshComponent>(preview, *root);
+                    const std::vector<Uuid> boneUuids = skin.bones;
+                    std::vector<i32> jointNodes;
+                    if (auto it = meta.skin.find("joints"); it != meta.skin.end() && it->is_array())
                     {
-                        jointNodes.push_back(joint.get<i32>());
+                        for (const json& joint : *it)
+                        {
+                            jointNodes.push_back(joint.get<i32>());
+                        }
                     }
-                }
-                const std::size_t nodeCount = meta.nodes.is_array() ? meta.nodes.size() : 0;
-                std::vector<Uuid> boneByNode(nodeCount, Uuid{ 0 });
-                EnterRigPreviewResult result;
-                result.rigEntity = WireUuid{ getComponent<IdComponent>(preview, *root).id.value };
-                const std::size_t jointCount =
-                    jointNodes.size() < boneUuids.size() ? jointNodes.size() : boneUuids.size();
-                for (std::size_t k = 0; k < jointCount; k = k + 1)
-                {
-                    const i32 nodeIdx = jointNodes[k];
-                    const Uuid uuid = boneUuids[k];
-                    if (nodeIdx >= 0 && static_cast<std::size_t>(nodeIdx) < nodeCount && uuid.value != 0)
+                    const std::size_t nodeCount = meta.nodes.is_array() ? meta.nodes.size() : 0;
+                    boneByNode.assign(nodeCount, Uuid{ 0 });
+                    const std::size_t jointCount =
+                        jointNodes.size() < boneUuids.size() ? jointNodes.size() : boneUuids.size();
+                    for (std::size_t k = 0; k < jointCount; k = k + 1)
                     {
-                        boneByNode[static_cast<std::size_t>(nodeIdx)] = uuid;
-                        result.bones.push_back(RigBoneEntityDto{ nodeIdx, WireUuid{ uuid.value } });
+                        const i32 nodeIdx = jointNodes[k];
+                        const Uuid uuid = boneUuids[k];
+                        if (nodeIdx >= 0 && static_cast<std::size_t>(nodeIdx) < nodeCount && uuid.value != 0)
+                        {
+                            boneByNode[static_cast<std::size_t>(nodeIdx)] = uuid;
+                            result.bones.push_back(BoneEntityDto{ nodeIdx, WireUuid{ uuid.value } });
+                        }
                     }
                 }
 
@@ -1080,30 +1118,32 @@ namespace se
                     ctx.sceneEdit.savedSelection = ctx.sceneEdit.selected;
                     ctx.sceneEdit.savedOverlay = ctx.sceneEdit.skeletonOverlay;
                 }
-                const Entity rigEntity = *root;
+                const Entity rootEntity = *root;
                 ctx.sceneEdit.previewScene.emplace(std::move(preview));
                 ctx.sceneEdit.previewAsset = containerId;
-                ctx.sceneEdit.previewRigEntity = rigEntity;
+                ctx.sceneEdit.previewRootEntity = rootEntity;
                 ctx.sceneEdit.previewBoneByNode = std::move(boneByNode);
                 ctx.sceneEdit.previewFloorEntity = Entity{ entt::null };
-                // Bones-visible is the expected first frame of a rig editor (UE5 Character > Bones); the
-                // highlight starts clear. Furnishing adds floor/light/sky and frames the fly-cam.
+                // Bones-on is the expected first frame for a rigged model (UE5 Character > Bones); it
+                // no-ops for a static model. The highlight starts clear. Furnishing adds floor/light/sky
+                // and frames the fly-cam.
                 ctx.sceneEdit.skeletonOverlay.show = true;
                 ctx.sceneEdit.skeletonOverlay.highlightJoint = -1;
-                const PreviewFraming framing = furnishPreviewScene(ctx.sceneEdit, ctx.assets, ctx.renderer, rigEntity);
+                const PreviewFraming framing = furnishPreviewScene(ctx.sceneEdit, ctx.assets, ctx.renderer, rootEntity);
                 result.target = Vec3{ framing.target.x, framing.target.y, framing.target.z };
                 result.distance = framing.distance;
-                setSelection(ctx.sceneEdit, rigEntity);
+                setSelection(ctx.sceneEdit, rootEntity);
                 ctx.sceneEdit.sceneVersion += 1;
                 ctx.sceneEdit.animationVersion += 1;
                 return result;
             });
 
         registerCommand<EmptyParams, PlayStateResult>(
-            reg, "exit-rig-preview", "exit-rig-preview — close the rig preview and restore the authored scene + camera",
+            reg, "exit-asset-preview",
+            "exit-asset-preview — close the asset preview and restore the authored scene + camera",
             [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
             {
-                leaveRigPreview(ctx.sceneEdit);  // no-op when not previewing (idempotent on tab close)
+                leaveAssetPreview(ctx.sceneEdit);  // no-op when not previewing (idempotent on tab close)
                 return PlayStateResult{
                     playStateName(ctx.sceneEdit.playState),           static_cast<i32>(ctx.sceneEdit.playVersion),
                     static_cast<i32>(ctx.sceneEdit.sceneVersion),     ctx.sceneEdit.hadPrimaryCamera,
@@ -1113,13 +1153,14 @@ namespace se
 
         // Preview-scene settings (UE5's Preview Scene Settings, v1 = Show Floor). Adds or removes the
         // floor slab live; the preference persists across enter/exit for the session.
-        registerCommand<SetRigPreviewOptionsParams, RigPreviewOptionsResult>(
-            reg, "set-rig-preview-options", "set-rig-preview-options {floor?} — preview-scene settings (show floor)",
-            [](EngineContext& ctx, const SetRigPreviewOptionsParams& params) -> Result<RigPreviewOptionsResult>
+        registerCommand<SetAssetPreviewOptionsParams, AssetPreviewOptionsResult>(
+            reg, "set-asset-preview-options",
+            "set-asset-preview-options {floor?} — preview-scene settings (show floor)",
+            [](EngineContext& ctx, const SetAssetPreviewOptionsParams& params) -> Result<AssetPreviewOptionsResult>
             {
                 if (!previewing(ctx.sceneEdit))
                 {
-                    return Err(std::string{ "not in a rig preview" });
+                    return Err(std::string{ "not in an asset preview" });
                 }
                 if (params.floor && *params.floor != ctx.sceneEdit.previewShowFloor)
                 {
@@ -1136,13 +1177,13 @@ namespace se
                     }
                     else
                     {
-                        const RigBounds bounds =
-                            computeRigBounds(scene, ctx.assets, ctx.renderer, ctx.sceneEdit.previewRigEntity);
+                        const PreviewBounds bounds =
+                            computePreviewBounds(scene, ctx.assets, ctx.renderer, ctx.sceneEdit.previewRootEntity);
                         ctx.sceneEdit.previewFloorEntity = spawnPreviewFloor(scene, ctx.assets, ctx.renderer, bounds);
                     }
                     ctx.sceneEdit.sceneVersion += 1;
                 }
-                return RigPreviewOptionsResult{ ctx.sceneEdit.previewShowFloor };
+                return AssetPreviewOptionsResult{ ctx.sceneEdit.previewShowFloor };
             });
 
         // A categorized cleanup report (Unused / Orphaned / Broken / Review) by reachability from the
@@ -1443,7 +1484,7 @@ namespace se
                 }
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 auto index = resolveAssetIndex(ctx, params.asset);
                 if (!index)
@@ -1476,7 +1517,7 @@ namespace se
             {
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 auto entity = resolveEntity(ctx, json{ { "entity", params.entity.value } });
                 if (!entity)
@@ -2029,7 +2070,7 @@ namespace se
                 }
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 const std::string path = params.path.value_or("project.json");
                 ProjectInfo project;
@@ -2060,7 +2101,7 @@ namespace se
                 }
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 if (auto ready = requireProjectLoaded(ctx); !ready)
                 {

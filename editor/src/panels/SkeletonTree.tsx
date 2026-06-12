@@ -1,32 +1,34 @@
-/// The rig editor's left panel: the rig's bone hierarchy as a tree (the home bones never had in the
-/// scene outliner). Read-only navigation — expand/collapse and select a bone; selecting drives the
-/// preview overlay's highlight channel (set-skeleton-highlight, wired in RigEditorWorkspace), never
-/// scene selection, so the selection-keyed animation state the timeline reads stays alive. Bone names
-/// render verbatim (they are the durable clip-binding keys); render joints are emphasized, intermediate
-/// nodes muted. Follows HierarchyTree's row/indent idiom so the two trees read as siblings.
-import { useMemo, useState } from "react";
+/// The asset editor's left panel (shown only for a rigged model): the bone hierarchy as a tree (the
+/// home bones never had in the scene outliner). Read-only navigation — expand/collapse and select a
+/// bone; selecting drives the preview overlay's highlight channel (set-skeleton-highlight, wired in
+/// AssetEditorWorkspace), never scene selection, so the selection-keyed animation state the timeline
+/// reads stays alive. Selection also flows in reverse — clicking a joint in the viewport drives the same
+/// channel — so the selected row scrolls into view here. Bone names render verbatim (they are the
+/// durable clip-binding keys); render joints are emphasized, intermediate nodes muted. Follows
+/// HierarchyTree's row/indent idiom.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bone, ChevronDown, ChevronRight } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { RigBoneDto } from "../protocol";
+import type { BoneDto } from "../protocol";
 
 /// Indent caps at this depth so a deep humanoid chain never forces horizontal scroll.
 const MAX_INDENT_DEPTH = 10;
 const INDENT_PX = 12;
 
-interface RigSkeletonTreeProps {
-  bones: RigBoneDto[];
-  /// The get-rig node index currently highlighted (-1 = none). Local view state in the workspace.
+interface SkeletonTreeProps {
+  bones: BoneDto[];
+  /// The get-asset-model node index currently highlighted (-1 = none). Local view state in the workspace.
   selectedIndex: number;
   onSelect: (joint: number) => void;
 }
 
-export function RigSkeletonTree({ bones, selectedIndex, onSelect }: RigSkeletonTreeProps) {
+export function SkeletonTree({ bones, selectedIndex, onSelect }: SkeletonTreeProps) {
   // children-by-parent (keyed by node index) + roots, rebuilt only when the bone list changes.
   const { childrenOf, roots } = useMemo(() => {
     const present = new Set(bones.map((b) => b.index));
-    const byParent = new Map<number, RigBoneDto[]>();
-    const rootList: RigBoneDto[] = [];
+    const byParent = new Map<number, BoneDto[]>();
+    const rootList: BoneDto[] = [];
     for (const bone of bones) {
       if (bone.parent >= 0 && present.has(bone.parent)) {
         const list = byParent.get(bone.parent);
@@ -43,6 +45,13 @@ export function RigSkeletonTree({ bones, selectedIndex, onSelect }: RigSkeletonT
   }, [bones]);
 
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(() => new Set());
+
+  // Scroll the selected row into view when the selection moves (e.g. a viewport joint pick selected a
+  // bone that's off-screen in a long list). No-ops if the row isn't rendered (a collapsed ancestor).
+  const selectedRowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    selectedRowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
 
   if (bones.length === 0) {
     return (
@@ -64,7 +73,7 @@ export function RigSkeletonTree({ bones, selectedIndex, onSelect }: RigSkeletonT
     });
   };
 
-  const renderRows = (bone: RigBoneDto, depth: number): React.ReactNode => {
+  const renderRows = (bone: BoneDto, depth: number): React.ReactNode => {
     const kids = childrenOf.get(bone.index) ?? [];
     const hasKids = kids.length > 0;
     const isCollapsed = collapsed.has(bone.index);
@@ -72,6 +81,7 @@ export function RigSkeletonTree({ bones, selectedIndex, onSelect }: RigSkeletonT
     return (
       <div key={bone.index}>
         <div
+          ref={selected ? selectedRowRef : null}
           role="button"
           tabIndex={0}
           className={cn(

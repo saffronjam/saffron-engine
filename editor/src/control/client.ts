@@ -24,7 +24,7 @@ import type {
   DrainAlarmsResult,
   DrainScriptErrorsResult,
   EditorCamera,
-  EnterRigPreviewResult,
+  AssetPreviewResult,
   GetScriptSchemaResult,
   SetScriptOverrideResult,
   EntityList,
@@ -40,8 +40,9 @@ import type {
   ProfilerModeResult,
   RenderPassTimingsDto,
   RenderStats,
-  RigPreviewOptionsResult,
-  RigResult,
+  AssetPreviewOptionsResult,
+  AssetModelResult,
+  PickSkeletonJointResult,
   Selection,
   SetPerfConfigParams,
   SkeletonOverlayResult,
@@ -233,11 +234,11 @@ export const client = {
   },
 
   // --- animation ---
-  /// The animation clips in the project catalog (the rig's available clips).
+  /// The animation clips in the project catalog (the entity's available clips).
   listClips(entity: string): Promise<ListClipsResult> {
     return call("list-clips", { entity });
   },
-  /// The rig's playhead, clip, wrap, speed, and the animationVersion stamp.
+  /// The entity's playhead, clip, wrap, speed, and the animationVersion stamp.
   getAnimationState(entity: string): Promise<AnimationStateResult> {
     return call("get-animation-state", { entity });
   },
@@ -253,9 +254,14 @@ export const client = {
   pauseAnimation(entity: string): Promise<AnimationStateResult> {
     return call("pause-animation", { entity });
   },
-  /// Set the playhead (previews in Edit). Works in Play, Paused, and Edit-preview alike.
-  seekAnimation(entity: string, time: number): Promise<AnimationStateResult> {
-    return call("seek-animation", { entity, time });
+  /// Set the playhead (previews in Edit). Works in Play, Paused, and Edit-preview alike. `seekBlend`
+  /// eases the pose to the seeked time over that many seconds instead of snapping (smooth scrubbing).
+  seekAnimation(
+    entity: string,
+    time: number,
+    opts?: { seekBlend?: number },
+  ): Promise<AnimationStateResult> {
+    return call("seek-animation", { entity, time, ...opts });
   },
   setAnimationLoop(
     entity: string,
@@ -263,26 +269,28 @@ export const client = {
   ): Promise<AnimationStateResult> {
     return call("set-animation-loop", { entity, wrap });
   },
-  /// Clear the Edit preview and stop, reverting the rig to its rest pose.
+  /// Clear the Edit preview and stop, reverting the entity to its rest pose.
   stopPreview(entity: string): Promise<AnimationStateResult> {
     return call("stop-preview", { entity });
   },
 
-  // --- rig editor ---
-  /// A model's bone tree + clips, read from its .smodel container. Accepts the model, a mesh
-  /// sub-asset, or a clip sub-asset — all resolve to the same owning container.
-  getRig(asset: string): Promise<RigResult> {
-    return call("get-rig", { asset });
+  // --- asset editor ---
+  /// A model's capabilities + bone tree + clips, read from its .smodel container. Accepts the model, a
+  /// mesh sub-asset, or a clip sub-asset — all resolve to the same owning container. A static model
+  /// returns an empty bone tree (capabilities.hasRig === false), not an error.
+  getAssetModel(asset: string): Promise<AssetModelResult> {
+    return call("get-asset-model", { asset });
   },
-  /// Open a model's rig in the isolated preview scene; returns the spawned rig entity + bone table.
-  enterRigPreview(asset: string): Promise<EnterRigPreviewResult> {
-    return call("enter-rig-preview", { asset });
+  /// Open any model in the isolated preview scene; returns the spawned root entity + bone table (empty
+  /// for a static model).
+  enterAssetPreview(asset: string): Promise<AssetPreviewResult> {
+    return call("enter-asset-preview", { asset });
   },
-  /// Close the rig preview and restore the authored scene + camera.
-  exitRigPreview(): Promise<PlayStateResult> {
-    return call("exit-rig-preview");
+  /// Close the asset preview and restore the authored scene + camera.
+  exitAssetPreview(): Promise<PlayStateResult> {
+    return call("exit-asset-preview");
   },
-  /// The selected/previewed rig's line-skeleton overlay toggles (master show, per-joint axes, joint size).
+  /// The previewed model's line-skeleton overlay toggles (master show, per-joint axes, joint size).
   setSkeletonOverlay(opts: {
     show?: boolean;
     axes?: boolean;
@@ -290,13 +298,18 @@ export const client = {
   }): Promise<SkeletonOverlayResult> {
     return call("set-skeleton-overlay", opts);
   },
-  /// Tint a previewed rig's joint by its get-rig node index (-1 clears the highlight).
+  /// Tint a previewed model's joint by its get-asset-model node index (-1 clears the highlight).
   setSkeletonHighlight(joint: number): Promise<SkeletonOverlayResult> {
     return call("set-skeleton-highlight", { joint });
   },
+  /// Pick the previewed model's nearest joint to a viewport click at normalized (u,v), within radiusPx
+  /// pixels. Returns the joint's get-asset-model node index, or found=false when none is close enough.
+  pickSkeletonJoint(u: number, v: number, radiusPx?: number): Promise<PickSkeletonJointResult> {
+    return call("pick-skeleton-joint", { u, v, radiusPx });
+  },
   /// Preview-scene settings (v1: show floor).
-  setRigPreviewOptions(opts: { floor?: boolean }): Promise<RigPreviewOptionsResult> {
-    return call("set-rig-preview-options", opts);
+  setAssetPreviewOptions(opts: { floor?: boolean }): Promise<AssetPreviewOptionsResult> {
+    return call("set-asset-preview-options", opts);
   },
 
   // --- scripting ---

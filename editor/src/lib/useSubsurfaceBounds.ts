@@ -1,11 +1,11 @@
 /// The Wayland subsurface bounds emitter, extracted from ViewportPanel so a second host rect (the
-/// rig editor's preview pane) can drive the same single subsurface. The transport SINK is a singleton
+/// asset editor's preview pane) can drive the same single subsurface. The transport SINK is a singleton
 /// (one subsurface, one presenter in wayland_viewport.rs), but the EMITTER is not: any component may
 /// call set_viewport_bounds, and a degenerate (<=0) rect no-ops via the computeBounds null guard.
 ///
 /// INVARIANT — at most one host is non-degenerate at a time, so no arbitration/locking is needed: the
 /// dock viewport host is 0x0 whenever a non-scene tab is active (App.tsx parks it via viewportHidden +
-/// the panel collapses), and the rig workspace only mounts while its tab is active (App.tsx
+/// the panel collapses), and the asset workspace only mounts while its tab is active (App.tsx
 /// conditionally mounts/unmounts workspaces). Two emitters therefore never both drive the subsurface.
 import { useEffect, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -58,13 +58,18 @@ function boundsEqual(a: ViewportBounds | null, b: ViewportBounds): boolean {
 ///     throttle dropped the last drag frame — this tier also resizes the engine's render target.
 /// The layout bus drives the same resize-end commit so a panel split that settles without further div
 /// mutation still commits.
-export function useSubsurfaceBounds(hostRef: RefObject<HTMLElement | null>): void {
+export function useSubsurfaceBounds(
+  hostRef: RefObject<HTMLElement | null>,
+  opts: { enabled?: boolean; onSettled?: () => void } = {},
+): void {
+  const { enabled, onSettled } = opts;
   useEffect(() => {
     const el = hostRef.current;
-    if (!el) {
+    if (!el || enabled === false) {
       return;
     }
     let cancelled = false;
+    let settledFired = false;
     let lastSent: ViewportBounds | null = null;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let lastLiveSent = 0;
@@ -122,7 +127,21 @@ export function useSubsurfaceBounds(hostRef: RefObject<HTMLElement | null>): voi
       scheduleEndCommit();
     };
 
-    void commit(true, true);
+    // The first forced commit resizes the engine's render target at the host's settled size; once it
+    // lands (plus one present at the new size, via the double-rAF) the viewport is ready to reveal.
+    void commit(true, true).then(() => {
+      if (cancelled || settledFired || !onSettled) {
+        return;
+      }
+      settledFired = true;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (!cancelled) {
+            onSettled();
+          }
+        }),
+      );
+    });
     const observer = new ResizeObserver(onGeometryChange);
     observer.observe(el);
     window.addEventListener("resize", onGeometryChange);
@@ -140,5 +159,5 @@ export function useSubsurfaceBounds(hostRef: RefObject<HTMLElement | null>): voi
         clearTimeout(liveTimer);
       }
     };
-  }, [hostRef]);
+  }, [hostRef, enabled, onSettled]);
 }

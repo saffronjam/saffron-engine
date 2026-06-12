@@ -1248,7 +1248,7 @@ export namespace se
         i32 sceneVersion;       // echoed so a stop reads as a scene change
         bool hasPrimaryCamera;  // captured at enterPlay; false drives the editor warning
         i32 animationVersion;   // bumped by the animation commands (Phase 12 reconcile poll)
-        WireUuid previewAsset;  // the model being rig-previewed, 0 when none (Edit/Play/Preview triad)
+        WireUuid previewAsset;  // the model being previewed, 0 when none (Edit/Play/Preview triad)
     };
 
     struct AnimationClipDto
@@ -1259,7 +1259,7 @@ export namespace se
         i32 tracks;  // animated joint-channel count (0 when unknown, e.g. the global list-clips catalog)
     };
 
-    struct RigBoneDto
+    struct BoneDto
     {
         i32 index;
         std::string name;
@@ -1267,36 +1267,50 @@ export namespace se
         bool joint;
     };
 
-    struct GetRigParams
+    // What a model can do — a flat, additive capability struct read once when the asset editor opens.
+    // A new capability (physics bodies, sockets, LODs) appends a field here; existing readers ignore
+    // unknown fields by construction, so neither the wire nor the editor needs a structural change.
+    struct AssetCapabilitiesDto
     {
-        AssetSelector asset;
+        i32 meshCount;      // Mesh sub-assets (every openable model has >= 1)
+        i32 materialCount;  // Material sub-assets
+        i32 nodeCount;      // node-forest size
+        bool hasRig;        // the container carries a skin -> skeleton tree + overlay
+        i32 boneCount;      // bones.size() (0 when !hasRig)
+        i32 clipCount;      // clips.size() (0 when none) -> clip list + timeline
     };
 
-    struct RigResult
+    struct GetAssetModelParams
     {
-        WireUuid mesh;
+        AssetSelector asset;  // a model, a mesh sub-asset, or a clip sub-asset (all resolve to the container)
+    };
+
+    struct AssetModelResult
+    {
+        WireUuid mesh;                        // the owning container id (the editor's tab key)
         std::string name;
-        std::vector<RigBoneDto> bones;
-        std::vector<AnimationClipDto> clips;
+        AssetCapabilitiesDto capabilities;    // what the model can do; gates the editor's panels
+        std::vector<BoneDto> bones;           // empty unless capabilities.hasRig
+        std::vector<AnimationClipDto> clips;  // empty unless capabilities.clipCount > 0
     };
 
-    struct EnterRigPreviewParams
+    struct EnterAssetPreviewParams
     {
         AssetSelector asset;
     };
 
-    struct RigBoneEntityDto
+    struct BoneEntityDto
     {
-        i32 index;        // the get-rig node index this preview entity stands in for
+        i32 index;        // the get-asset-model node index this preview entity stands in for
         WireUuid entity;  // the spawned preview-scene entity uuid for that joint
     };
 
-    struct EnterRigPreviewResult
+    struct AssetPreviewResult
     {
-        WireUuid rigEntity;                   // the spawned rig mesh entity (the timeline target)
-        std::vector<RigBoneEntityDto> bones;  // joint node index -> spawned preview-scene entity
-        Vec3 target;                          // the framed orbit pivot (rig bounding-sphere center)
-        f32 distance;                         // the framing distance from the target (orbit radius)
+        WireUuid rootEntity;               // the spawned model root entity (the timeline target)
+        std::vector<BoneEntityDto> bones;  // joint node index -> spawned entity (empty for an unrigged model)
+        Vec3 target;                       // the framed orbit pivot (bounding-sphere center)
+        f32 distance;                      // the framing distance from the target (orbit radius)
     };
 
     struct ListClipsParams
@@ -1324,6 +1338,7 @@ export namespace se
     {
         EntitySelector entity;
         f32 time;
+        std::optional<f32> seekBlend;  // blend seconds; poses ease to the seeked time instead of snapping (def 0)
     };
 
     struct SetAnimationLoopParams
@@ -1353,7 +1368,7 @@ export namespace se
     {
         std::optional<bool> show;      // master toggle
         std::optional<bool> axes;      // per-joint RGB axis lines
-        std::optional<f32> jointSize;  // joint-dot radius in pixels at unit distance
+        std::optional<f32> jointSize;  // joint-dot radius in pixels (screen-constant)
     };
 
     struct SkeletonOverlayResult
@@ -1361,20 +1376,33 @@ export namespace se
         bool show;
         bool axes;
         f32 jointSize;
-        i32 highlightJoint;  // get-rig node index of the tinted joint, -1 = none
+        i32 highlightJoint;  // get-asset-model node index of the tinted joint, -1 = none
     };
 
     struct SetSkeletonHighlightParams
     {
-        i32 joint;  // a get-rig node index to tint in the preview overlay, -1 = clear
+        i32 joint;  // a get-asset-model node index to tint in the preview overlay, -1 = clear
     };
 
-    struct SetRigPreviewOptionsParams
+    struct PickSkeletonJointParams
+    {
+        f32 u;                        // normalized [0,1] viewport x of the click
+        f32 v;                        // normalized [0,1] viewport y of the click
+        std::optional<f32> radiusPx;  // hit-test radius in pixels around the click (def 8)
+    };
+
+    struct PickSkeletonJointResult
+    {
+        bool found;
+        i32 nodeIndex;  // the picked joint's get-asset-model node index, -1 when none within radius
+    };
+
+    struct SetAssetPreviewOptionsParams
     {
         std::optional<bool> floor;  // show the preview floor slab
     };
 
-    struct RigPreviewOptionsResult
+    struct AssetPreviewOptionsResult
     {
         bool floor;
     };
@@ -1673,14 +1701,16 @@ export namespace se
     auto dtoToJson(const SelectionResult& value) -> Json;
     auto dtoToJson(const PlayStateResult& value) -> Json;
     auto dtoToJson(const AnimationClipDto& value) -> Json;
-    auto dtoToJson(const RigBoneDto& value) -> Json;
-    auto dtoToJson(const RigResult& value) -> Json;
-    auto dtoToJson(const RigBoneEntityDto& value) -> Json;
-    auto dtoToJson(const EnterRigPreviewResult& value) -> Json;
+    auto dtoToJson(const BoneDto& value) -> Json;
+    auto dtoToJson(const AssetCapabilitiesDto& value) -> Json;
+    auto dtoToJson(const AssetModelResult& value) -> Json;
+    auto dtoToJson(const BoneEntityDto& value) -> Json;
+    auto dtoToJson(const AssetPreviewResult& value) -> Json;
     auto dtoToJson(const ListClipsResult& value) -> Json;
     auto dtoToJson(const AnimationStateResult& value) -> Json;
     auto dtoToJson(const SkeletonOverlayResult& value) -> Json;
-    auto dtoToJson(const RigPreviewOptionsResult& value) -> Json;
+    auto dtoToJson(const PickSkeletonJointResult& value) -> Json;
+    auto dtoToJson(const AssetPreviewOptionsResult& value) -> Json;
     auto dtoToJson(const FootIkResult& value) -> Json;
     auto dtoToJson(const WorldTransformResult& value) -> Json;
     auto dtoToJson(const DeselectResult& value) -> Json;
@@ -1768,8 +1798,8 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<SetProbesParams>) -> Result<SetProbesParams>;
     auto parseDto(const Json& params, DtoTag<SetExposureParams>) -> Result<SetExposureParams>;
     auto parseDto(const Json& params, DtoTag<StepParams>) -> Result<StepParams>;
-    auto parseDto(const Json& params, DtoTag<GetRigParams>) -> Result<GetRigParams>;
-    auto parseDto(const Json& params, DtoTag<EnterRigPreviewParams>) -> Result<EnterRigPreviewParams>;
+    auto parseDto(const Json& params, DtoTag<GetAssetModelParams>) -> Result<GetAssetModelParams>;
+    auto parseDto(const Json& params, DtoTag<EnterAssetPreviewParams>) -> Result<EnterAssetPreviewParams>;
     auto parseDto(const Json& params, DtoTag<ListClipsParams>) -> Result<ListClipsParams>;
     auto parseDto(const Json& params, DtoTag<PlayAnimationParams>) -> Result<PlayAnimationParams>;
     auto parseDto(const Json& params, DtoTag<SeekAnimationParams>) -> Result<SeekAnimationParams>;
@@ -1777,7 +1807,8 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<AnimationStateParams>) -> Result<AnimationStateParams>;
     auto parseDto(const Json& params, DtoTag<SetSkeletonOverlayParams>) -> Result<SetSkeletonOverlayParams>;
     auto parseDto(const Json& params, DtoTag<SetSkeletonHighlightParams>) -> Result<SetSkeletonHighlightParams>;
-    auto parseDto(const Json& params, DtoTag<SetRigPreviewOptionsParams>) -> Result<SetRigPreviewOptionsParams>;
+    auto parseDto(const Json& params, DtoTag<PickSkeletonJointParams>) -> Result<PickSkeletonJointParams>;
+    auto parseDto(const Json& params, DtoTag<SetAssetPreviewOptionsParams>) -> Result<SetAssetPreviewOptionsParams>;
     auto parseDto(const Json& params, DtoTag<SetFootIkParams>) -> Result<SetFootIkParams>;
     auto parseDto(const Json& params, DtoTag<GetFootIkParams>) -> Result<GetFootIkParams>;
 }

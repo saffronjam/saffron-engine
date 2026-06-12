@@ -23,7 +23,7 @@ import type { ProjectInfo } from "../control/client";
 import { AssetPreview } from "../components/AssetViewer";
 import { CaptureFlame } from "../components/CaptureFlame";
 import { MaterialGraphEditor } from "../panels/MaterialGraphEditor";
-import { RigEditorWorkspace } from "../panels/RigEditorWorkspace";
+import { AssetEditorWorkspace } from "../panels/AssetEditorWorkspace";
 import { emitLayoutSettled } from "./layoutBus";
 import { logRender } from "../lib/renderLog";
 import { Toaster } from "@/components/ui/sonner";
@@ -56,9 +56,9 @@ export function App() {
   const activeKind = useEditorStore(
     (s) => s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId)?.kind ?? "scene",
   );
-  const activeAsset = useEditorStore((s) => {
+  const activeImage = useEditorStore((s) => {
     const tab = s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId);
-    return tab?.kind === "asset"
+    return tab?.kind === "imageViewer"
       ? (s.assets.find((asset) => asset.id === tab.assetId) ?? null)
       : null;
   });
@@ -66,16 +66,16 @@ export function App() {
     const tab = s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId);
     return tab?.kind === "materialGraph" ? tab.materialId : null;
   });
-  const activeRigMeshId = useEditorStore((s) => {
+  const activeAssetEditorId = useEditorStore((s) => {
     const tab = s.viewTabs.find((candidate) => candidate.id === s.activeViewTabId);
-    return tab?.kind === "rigEditor" ? tab.rigMeshId : null;
+    return tab?.kind === "assetEditor" ? tab.assetId : null;
   });
   const [revealed, setRevealed] = useState(didRevealWindow);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const sceneTabActive = activeViewTabId === "scene";
-  // The rig editor also presents the live subsurface (in its own preview pane), so it keeps the
+  // The asset editor also presents the live subsurface (in its own preview pane), so it keeps the
   // viewport unparked exactly like the scene tab; every other tab parks it.
-  const subsurfaceVisible = sceneTabActive || activeKind === "rigEditor";
+  const subsurfaceVisible = sceneTabActive || activeKind === "assetEditor";
 
   // W/E/R → translate/rotate/scale, gated off while a text field is focused.
   useGizmoShortcuts();
@@ -228,14 +228,14 @@ export function App() {
           <Topbar />
           <Layout key={projectPath ?? ""} />
         </div>
-        {activeKind === "asset" && <AssetWorkspace asset={activeAsset} />}
+        {activeKind === "imageViewer" && <ImageViewerWorkspace asset={activeImage} />}
         {activeKind === "flamegraph" && <FlameGraphWorkspace />}
         {activeKind === "materialGraph" && (
           <MaterialGraphWorkspace materialId={activeGraphMaterialId} />
         )}
-        {/* key={rigMeshId} so a rig A -> rig B switch remounts (cleanup exits A, mount enters B). */}
-        {activeKind === "rigEditor" && activeRigMeshId !== null && (
-          <RigEditorWorkspace key={activeRigMeshId} rigMeshId={activeRigMeshId} />
+        {/* key={assetId} so a model A -> model B switch remounts (cleanup exits A, mount enters B). */}
+        {activeKind === "assetEditor" && activeAssetEditorId !== null && (
+          <AssetEditorWorkspace key={activeAssetEditorId} assetId={activeAssetEditorId} />
         )}
         <ProjectStartupModal open={projectModalOpen} onProjectLoaded={handleProjectLoaded} />
         <SettingsModal />
@@ -260,7 +260,7 @@ function StatusFooter() {
   );
 }
 
-function AssetWorkspace({ asset }: { asset: AssetEntry | null }) {
+function ImageViewerWorkspace({ asset }: { asset: AssetEntry | null }) {
   if (!asset) {
     return (
       <main className="flex min-h-0 flex-1 items-center justify-center bg-background text-xs italic text-muted-foreground">

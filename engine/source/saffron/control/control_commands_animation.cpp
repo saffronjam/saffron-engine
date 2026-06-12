@@ -2,6 +2,7 @@ module;
 
 #include <nlohmann/json.hpp>
 #include <entt/entt.hpp>
+#include <glm/glm.hpp>
 
 #include <algorithm>
 #include <cstdlib>
@@ -14,6 +15,7 @@ module Saffron.Control;
 
 import Saffron.Core;
 import Saffron.Json;
+import Saffron.Rendering;
 import Saffron.Scene;
 import Saffron.SceneEdit;
 import Saffron.Assets;
@@ -286,7 +288,9 @@ namespace se
             });
 
         registerCommand<SeekAnimationParams, AnimationStateResult>(
-            reg, "seek-animation", "seek-animation {entity, time} — set the playhead (previews in Edit)",
+            reg, "seek-animation",
+            "seek-animation {entity, time, seekBlend=0} — set the playhead (previews in Edit); seekBlend "
+            "eases the pose to the seeked time instead of snapping",
             [](EngineContext& ctx, const SeekAnimationParams& params) -> Result<AnimationStateResult>
             {
                 auto player = playerOf(ctx, params.entity);
@@ -295,6 +299,15 @@ namespace se
                     return Err(player.error());
                 }
                 (*player)->time = params.time;
+                // A self-transition (prevClip == clip) inertializes the pose from where it is now toward
+                // the seeked time over `seekBlend` seconds, so sparse scrub seeks read as smooth motion.
+                const f32 seekBlend = params.seekBlend.value_or(0.0f);
+                if (seekBlend > 0.0f && (*player)->clip.value != 0)
+                {
+                    (*player)->prevClip = (*player)->clip;
+                    (*player)->transition = 0.0f;
+                    (*player)->transitionDuration = seekBlend;
+                }
                 (*player)->previewInEdit = true;
                 ctx.sceneEdit.animationVersion += 1;
                 return stateOf(ctx, **player);
@@ -356,16 +369,72 @@ namespace se
                 return skeletonOverlayState(opts);
             });
 
-        // Tint one joint of the previewed rig's overlay, addressed by its get-rig node index. The rig
-        // editor's skeleton tree drives this instead of scene selection — selecting a bone entity would
-        // null the selection-keyed animation state and break the rig timeline. -1 clears the highlight.
+        // Tint one joint of the previewed model's overlay, addressed by its get-asset-model node index.
+        // The asset editor's skeleton tree drives this instead of scene selection — selecting a bone
+        // entity would null the selection-keyed animation state and break the timeline. -1 clears it.
         registerCommand<SetSkeletonHighlightParams, SkeletonOverlayResult>(
             reg, "set-skeleton-highlight",
-            "set-skeleton-highlight {joint} — tint a previewed rig's joint by its get-rig node index (-1 clears)",
+            "set-skeleton-highlight {joint} — tint a previewed model's joint by its get-asset-model node index",
             [](EngineContext& ctx, const SetSkeletonHighlightParams& params) -> Result<SkeletonOverlayResult>
             {
                 ctx.sceneEdit.skeletonOverlay.highlightJoint = params.joint < 0 ? -1 : params.joint;
                 return skeletonOverlayState(ctx.sceneEdit.skeletonOverlay);
+            });
+
+        // Reverse selection for the asset editor: project the previewed model's joints to the viewport
+        // and return the node index of the one nearest the click (within radiusPx), so clicking a joint
+        // dot in the viewport selects its bone in the skeleton tree. The overlay joints are pure geometry
+        // (the spawned bone entities carry no mesh, so the generic `pick` skips them), hence a dedicated
+        // screen-space hit-test against the same world positions the overlay draws.
+        registerCommand<PickSkeletonJointParams, PickSkeletonJointResult>(
+            reg, "pick-skeleton-joint",
+            "pick-skeleton-joint {u, v, radiusPx=8} — the previewed model's nearest joint to a viewport click",
+            [](EngineContext& ctx, const PickSkeletonJointParams& params) -> Result<PickSkeletonJointResult>
+            {
+                SceneEditContext& edit = ctx.sceneEdit;
+                if (!previewing(edit) || edit.previewBoneByNode.empty())
+                {
+                    return PickSkeletonJointResult{ false, -1 };
+                }
+                const u32 width = viewportWidth(ctx.renderer);
+                const u32 height = viewportHeight(ctx.renderer);
+                if (width == 0 || height == 0)
+                {
+                    return PickSkeletonJointResult{ false, -1 };
+                }
+                Scene& scene = activeScene(edit);
+                updateWorldTransforms(scene);  // pick against the same world joint positions the overlay draws
+                const CameraView cam = renderCameraView(edit);
+                const glm::vec2 clickPx{ params.u * static_cast<f32>(width), params.v * static_cast<f32>(height) };
+                const f32 radiusPx = params.radiusPx.value_or(8.0f);
+                i32 bestNode = -1;
+                f32 bestDistSq = radiusPx * radiusPx;
+                for (std::size_t node = 0; node < edit.previewBoneByNode.size(); node = node + 1)
+                {
+                    const Uuid id = edit.previewBoneByNode[node];
+                    if (id.value == 0)
+                    {
+                        continue;
+                    }
+                    const Entity bone = findEntityByUuid(scene, id.value);
+                    if (bone.handle == entt::null || !valid(scene, bone))
+                    {
+                        continue;
+                    }
+                    const GizmoProjection p = viewportProject(cam, width, height, worldTranslation(scene, bone));
+                    if (!p.visible)
+                    {
+                        continue;
+                    }
+                    const glm::vec2 d = p.pixel - clickPx;
+                    const f32 distSq = glm::dot(d, d);
+                    if (distSq <= bestDistSq)
+                    {
+                        bestDistSq = distSq;
+                        bestNode = static_cast<i32>(node);
+                    }
+                }
+                return PickSkeletonJointResult{ bestNode >= 0, bestNode };
             });
 
         registerCommand<GetFootIkParams, FootIkResult>(

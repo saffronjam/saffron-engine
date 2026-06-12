@@ -171,10 +171,15 @@ namespace
             }
             return;
         }
-        if (cmd == "get-rig")
+        if (cmd == "get-asset-model")
         {
-            std::printf("rig %s  (mesh %s)\n", result.value("name", "").c_str(),
+            std::printf("model %s  (mesh %s)\n", result.value("name", "").c_str(),
                         result.value("mesh", std::string{}).c_str());
+            const auto caps = result.value("capabilities", json::object());
+            std::printf("  meshes=%d  materials=%d  nodes=%d  rig=%s  bones=%d  clips=%d\n",
+                        caps.value("meshCount", 0), caps.value("materialCount", 0), caps.value("nodeCount", 0),
+                        caps.value("hasRig", false) ? "yes" : "no", caps.value("boneCount", 0),
+                        caps.value("clipCount", 0));
             const auto& bones = result.value("bones", json::array());
             for (const auto& b : bones)
             {
@@ -376,6 +381,18 @@ namespace
             else
             {
                 std::printf("no hit\n");
+            }
+            return;
+        }
+        if (cmd == "pick-skeleton-joint")
+        {
+            if (result.value("found", false))
+            {
+                std::printf("joint node=%d\n", result.value("nodeIndex", -1));
+            }
+            else
+            {
+                std::printf("no joint\n");
             }
             return;
         }

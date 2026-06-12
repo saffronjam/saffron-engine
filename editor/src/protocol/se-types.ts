@@ -729,6 +729,7 @@ export interface PlayAnimationParams {
 export interface SeekAnimationParams {
   entity: WireUuid | string | number;
   time: number;
+  seekBlend?: number;
 }
 
 export interface SetAnimationLoopParams {
@@ -753,11 +754,22 @@ export interface SetSkeletonHighlightParams {
   joint: number;
 }
 
-export interface SetRigPreviewOptionsParams {
+export interface PickSkeletonJointParams {
+  u: number;
+  v: number;
+  radiusPx?: number;
+}
+
+export interface PickSkeletonJointResult {
+  found: boolean;
+  nodeIndex: number;
+}
+
+export interface SetAssetPreviewOptionsParams {
   floor?: boolean;
 }
 
-export interface RigPreviewOptionsResult {
+export interface AssetPreviewOptionsResult {
   floor: boolean;
 }
 
@@ -1078,36 +1090,46 @@ export interface AssetReferencesResult {
   footprint: number;
 }
 
-export interface GetRigParams {
+export interface GetAssetModelParams {
   asset: WireUuid | string | number;
 }
 
-export interface RigResult {
+export interface AssetModelResult {
   mesh: WireUuid;
   name: string;
-  bones: RigBoneDto[];
+  capabilities: AssetCapabilitiesDto;
+  bones: BoneDto[];
   clips: AnimationClipDto[];
 }
 
-export interface RigBoneDto {
+export interface AssetCapabilitiesDto {
+  meshCount: number;
+  materialCount: number;
+  nodeCount: number;
+  hasRig: boolean;
+  boneCount: number;
+  clipCount: number;
+}
+
+export interface BoneDto {
   index: number;
   name: string;
   parent: number;
   joint: boolean;
 }
 
-export interface EnterRigPreviewParams {
+export interface EnterAssetPreviewParams {
   asset: WireUuid | string | number;
 }
 
-export interface EnterRigPreviewResult {
-  rigEntity: WireUuid;
-  bones: RigBoneEntityDto[];
+export interface AssetPreviewResult {
+  rootEntity: WireUuid;
+  bones: BoneEntityDto[];
   target: Vec3;
   distance: number;
 }
 
-export interface RigBoneEntityDto {
+export interface BoneEntityDto {
   index: number;
   entity: WireUuid;
 }
@@ -1451,7 +1473,8 @@ export interface CommandParamsMap {
   "get-skeleton-overlay": EmptyParams;
   "set-skeleton-overlay": SetSkeletonOverlayParams;
   "set-skeleton-highlight": SetSkeletonHighlightParams;
-  "set-rig-preview-options": SetRigPreviewOptionsParams;
+  "pick-skeleton-joint": PickSkeletonJointParams;
+  "set-asset-preview-options": SetAssetPreviewOptionsParams;
   "get-foot-ik": GetFootIkParams;
   "set-foot-ik": SetFootIkParams;
   "get-script-status": EmptyParams;
@@ -1487,9 +1510,9 @@ export interface CommandParamsMap {
   "reimport-model": ReimportModelParams;
   "model-info": ModelInfoParams;
   "asset-references": AssetReferencesParams;
-  "get-rig": GetRigParams;
-  "enter-rig-preview": EnterRigPreviewParams;
-  "exit-rig-preview": EmptyParams;
+  "get-asset-model": GetAssetModelParams;
+  "enter-asset-preview": EnterAssetPreviewParams;
+  "exit-asset-preview": EmptyParams;
   "clean-assets": CleanAssetsParams;
   "delete-unused": DeleteUnusedParams;
   "rename-asset": RenameAssetParams;
@@ -1588,7 +1611,8 @@ export interface CommandResultMap {
   "get-skeleton-overlay": SkeletonOverlayResult;
   "set-skeleton-overlay": SkeletonOverlayResult;
   "set-skeleton-highlight": SkeletonOverlayResult;
-  "set-rig-preview-options": RigPreviewOptionsResult;
+  "pick-skeleton-joint": PickSkeletonJointResult;
+  "set-asset-preview-options": AssetPreviewOptionsResult;
   "get-foot-ik": FootIkResult;
   "set-foot-ik": FootIkResult;
   "get-script-status": ScriptStatusResult;
@@ -1624,9 +1648,9 @@ export interface CommandResultMap {
   "reimport-model": ReimportModelResult;
   "model-info": ModelInfoResult;
   "asset-references": AssetReferencesResult;
-  "get-rig": RigResult;
-  "enter-rig-preview": EnterRigPreviewResult;
-  "exit-rig-preview": PlayStateResult;
+  "get-asset-model": AssetModelResult;
+  "enter-asset-preview": AssetPreviewResult;
+  "exit-asset-preview": PlayStateResult;
   "clean-assets": CleanReport;
   "delete-unused": DeleteUnusedResult;
   "rename-asset": AssetRef;

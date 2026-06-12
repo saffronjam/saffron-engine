@@ -56,7 +56,7 @@ namespace se
         bool scriptVmActive = false;            // a VM exists (Playing/Paused); stop destroys it
         bool scriptErrorPending = false;        // set inside simTick; drives the deferred pause
         bool shmPublish = false;                // frames publish to shared memory; the editor owns the render size
-        bool previewActive = false;             // tracks rig-preview transitions to prune the anim runtime
+        bool previewActive = false;             // tracks asset-preview transitions to prune the anim runtime
     };
 
     enum class BillboardKind
@@ -345,10 +345,11 @@ namespace se
             return;
         }
         se::Scene& scene = se::activeScene(editor);
-        // The rig the overlay draws: the previewed rig while previewing (so highlighting a bone via the
-        // dedicated channel never blanks the overlay, and a bone has no SkinnedMesh of its own), else
-        // the selected entity in the normal scene-edit view.
-        const se::Entity target = editor.previewScene ? editor.previewRigEntity : editor.selected;
+        // The model the overlay draws bones for: the previewed model's root while previewing (so
+        // highlighting a bone via the dedicated channel never blanks the overlay, and a bone has no
+        // SkinnedMesh of its own), else the selected entity in the normal scene-edit view. A static
+        // model's root has no SkinnedMeshComponent, so the overlay self-gates to nothing just below.
+        const se::Entity target = editor.previewScene ? editor.previewRootEntity : editor.selected;
         if (target.handle == entt::null)
         {
             return;
@@ -358,15 +359,14 @@ namespace se
             return;
         }
         const se::SkinnedMeshComponent& skin = se::getComponent<se::SkinnedMeshComponent>(scene, target);
-        // Resolve the highlighted joint (a get-rig node index) to its spawned entity uuid; only set
-        // while previewing, drawn in a distinct tint.
+        // Resolve the highlighted joint (a get-asset-model node index) to its spawned entity uuid; only
+        // set while previewing, drawn in a distinct tint.
         se::Uuid highlightUuid{ 0 };
         if (editor.previewScene && editor.skeletonOverlay.highlightJoint >= 0 &&
             static_cast<std::size_t>(editor.skeletonOverlay.highlightJoint) < editor.previewBoneByNode.size())
         {
             highlightUuid = editor.previewBoneByNode[static_cast<std::size_t>(editor.skeletonOverlay.highlightJoint)];
         }
-        const glm::vec3 eye = se::cameraPosition(cam);
         constexpr glm::vec4 BoneColor{ 0.55f, 0.78f, 1.0f, 0.95f };
         constexpr glm::vec4 JointColor{ 1.0f, 0.78f, 0.18f, 1.0f };
         constexpr glm::vec4 HighlightColor{ 0.30f, 1.0f, 0.45f, 1.0f };
@@ -399,12 +399,12 @@ namespace se
                     addLine(vertices, parent.pixel, joint.pixel, 2.0f, BoneColor, width, height);
                 }
             }
-            // Joint dot, radius held screen-constant so it never vanishes when zoomed out. The
+            // Joint dot: a constant pixel radius (joint.pixel is already the projected screen point and
+            // addCircleFill takes pixels), so the dot stays the same on-screen size at any zoom. The
             // highlighted joint draws larger in a distinct tint (the skeleton-tree selection channel).
-            const se::f32 distance = glm::length(eye - worldPos);
             const bool highlighted = highlightUuid.value != 0 &&
                                      se::getComponent<se::IdComponent>(scene, bone).id.value == highlightUuid.value;
-            const se::f32 baseRadius = std::max(2.5f, distance * editor.skeletonOverlay.jointSize * 0.05f);
+            const se::f32 baseRadius = std::max(2.5f, editor.skeletonOverlay.jointSize);
             const se::f32 radius = highlighted ? baseRadius * 1.8f : baseRadius;
             addCircleFill(vertices, joint.pixel, radius, highlighted ? HighlightColor : JointColor, width, height);
             // Optional per-joint RGB axes from the bone's world-rotation basis.
@@ -870,7 +870,7 @@ export namespace se
                 }
                 // Insert any thumbnails the worker finished this interval into the GPU caches.
                 se::drainThumbnailCompletions(state->assets);
-                // Entering or leaving the rig preview swaps activeScene to a fresh entity set; drop the
+                // Entering or leaving the asset preview swaps activeScene to a fresh entity set; drop the
                 // anim runtime's per-entity transition/pose entries so a re-entered preview starts clean
                 // and dead preview-entity entries never accumulate across opens.
                 if (const bool previewing = state->editor->previewScene.has_value(); previewing != state->previewActive)
@@ -941,7 +941,7 @@ export namespace se
                     options.showEditorCameraModels = editor.playState == se::PlayState::Edit;
                     se::renderScene(app.renderer, live, state->assets, cam, options);
                     // The gizmo + billboards are editor chrome: hidden inside the game view, and during
-                    // the rig preview (an "Edit without chrome" view). The gizmo would write transforms
+                    // the asset preview (an "Edit without chrome" view). The gizmo would write transforms
                     // the play duplicate swallows. The skeleton overlay (when shown) still draws in both.
                     const bool editChrome = editor.playState == se::PlayState::Edit && !editor.previewScene.has_value();
                     se::submitSceneEditOverlay(editor, app.renderer, cam, viewWidth, viewHeight, editChrome);

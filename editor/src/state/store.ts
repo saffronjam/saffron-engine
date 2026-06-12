@@ -56,13 +56,14 @@ export type ViewTab =
   | { id: "scene"; kind: "scene"; title: "Scene"; closable: false }
   | { id: "flamegraph"; kind: "flamegraph"; title: "Flame graph"; closable: true }
   | { id: string; kind: "materialGraph"; materialId: string; title: string; closable: true }
-  // The rig editor is keyed by the resolved rig (the mesh/model uuid), not the clicked asset, so a
-  // mesh and any of its clips open or focus the SAME tab — and the engine's one-previewScene
-  // constraint can never be violated by two tabs of one rig.
-  | { id: string; kind: "rigEditor"; rigMeshId: string; title: string; closable: true }
+  // The asset editor is keyed by the resolved model (the container uuid), not the clicked asset, so a
+  // model, its mesh, and any of its clips open or focus the SAME tab — and the engine's one-previewScene
+  // constraint can never be violated by two tabs of one model.
+  | { id: string; kind: "assetEditor"; assetId: string; title: string; closable: true }
+  // The image viewer: a passive texture/image preview (distinct from the asset editor's 3D preview).
   | {
       id: string;
-      kind: "asset";
+      kind: "imageViewer";
       assetId: string;
       title: string;
       assetType: AssetEntry["type"];
@@ -270,18 +271,19 @@ export interface EditorState {
   /// Rewrite selected folder paths through a folder move (prefix rename).
   rewriteSelectedFolderPaths(rewrite: (path: string) => string): void;
   setAssetMarqueeActive(assetMarqueeActive: boolean): void;
-  openAssetTab(asset: AssetEntry): void;
+  /// Open (or focus) the image/texture viewer for a texture asset.
+  openImageViewerTab(asset: AssetEntry): void;
   /// Open (or focus) the Flame graph main tab.
   openFlameTab(): void;
   /// Open (or focus) the node-graph editor for a material as a main tab.
   openMaterialGraphTab(materialId: string): void;
-  /// Open (or focus) the rig editor for a rig, keyed by its resolved mesh/model uuid. The caller
-  /// resolves an asset (mesh or clip) to its rig mesh id before opening.
-  openRigEditorTab(rigMeshId: string, title: string): void;
-  /// Route an asset (a mesh or a clip) to the rig editor: resolve its rig via get-rig (both share the
-  /// owning .smodel container), then open/focus that rig's tab. On a resolution failure the tab opens
-  /// keyed by the asset so the workspace surfaces the not-a-rig error state (rather than a dead toast).
-  openRigEditorForAsset(assetId: string, fallbackName: string): void;
+  /// Open (or focus) the asset editor for a model, keyed by its resolved container uuid. The caller
+  /// resolves an asset (model, mesh, or clip) to its model id before opening.
+  openAssetEditorTab(assetId: string, title: string): void;
+  /// Route an asset (a model, mesh, or clip) to the asset editor: resolve it via get-asset-model (all
+  /// share the owning .smodel container), then open/focus that model's tab. On a resolution failure the
+  /// tab opens keyed by the asset so the workspace surfaces a load-failure state (not a dead toast).
+  openAssetEditorForAsset(assetId: string, fallbackName: string): void;
   closeViewTab(id: string): void;
   setActiveViewTab(id: string): void;
   moveViewTab(id: string, index: number): void;
@@ -502,11 +504,11 @@ export const useEditorStore = create<EditorState>((set) => ({
       assets,
       assetFolders,
       viewTabs: s.viewTabs.map((tab) => {
-        if (tab.kind === "rigEditor") {
-          const mesh = assets.find((entry) => entry.id === tab.rigMeshId);
-          return mesh ? { ...tab, title: mesh.name } : tab;
+        if (tab.kind === "assetEditor") {
+          const model = assets.find((entry) => entry.id === tab.assetId);
+          return model ? { ...tab, title: model.name } : tab;
         }
-        if (tab.kind !== "asset") {
+        if (tab.kind !== "imageViewer") {
           return tab;
         }
         const asset = assets.find((entry) => entry.id === tab.assetId);
@@ -645,9 +647,9 @@ export const useEditorStore = create<EditorState>((set) => ({
       return changed ? { selectedFolderPaths: next } : {};
     }),
   setAssetMarqueeActive: (assetMarqueeActive) => set({ assetMarqueeActive }),
-  openAssetTab: (asset) =>
+  openImageViewerTab: (asset) =>
     set((s) => {
-      const id = `asset:${asset.id}`;
+      const id = `imageViewer:${asset.id}`;
       const existing = s.viewTabs.some((tab) => tab.id === id);
       return {
         activeViewTabId: id,
@@ -657,7 +659,7 @@ export const useEditorStore = create<EditorState>((set) => ({
               ...s.viewTabs,
               {
                 id,
-                kind: "asset",
+                kind: "imageViewer",
                 assetId: asset.id,
                 title: asset.name,
                 assetType: asset.type,
@@ -693,26 +695,26 @@ export const useEditorStore = create<EditorState>((set) => ({
             ],
       };
     }),
-  openRigEditorTab: (rigMeshId, title) =>
+  openAssetEditorTab: (assetId, title) =>
     set((s) => {
-      const id = `rigEditor:${rigMeshId}`;
+      const id = `assetEditor:${assetId}`;
       const existing = s.viewTabs.some((tab) => tab.id === id);
       return {
         activeViewTabId: id,
         viewTabs: existing
           ? s.viewTabs
-          : [...s.viewTabs, { id, kind: "rigEditor", rigMeshId, title, closable: true }],
+          : [...s.viewTabs, { id, kind: "assetEditor", assetId, title, closable: true }],
       };
     }),
-  openRigEditorForAsset: (assetId, fallbackName) => {
+  openAssetEditorForAsset: (assetId, fallbackName) => {
     void (async () => {
       try {
-        const rig = await client.getRig(assetId);
-        useEditorStore.getState().openRigEditorTab(rig.mesh, rig.name);
+        const model = await client.getAssetModel(assetId);
+        useEditorStore.getState().openAssetEditorTab(model.mesh, model.name);
       } catch {
-        // Not a rig (or resolution failed): key the tab by the asset; the workspace's enter then
-        // surfaces the not-a-rig error state.
-        useEditorStore.getState().openRigEditorTab(assetId, fallbackName);
+        // Resolution failed (e.g. not part of a model container): key the tab by the asset; the
+        // workspace's enter then surfaces a load-failure state.
+        useEditorStore.getState().openAssetEditorTab(assetId, fallbackName);
       }
     })();
   },

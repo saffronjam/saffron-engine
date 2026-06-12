@@ -456,7 +456,7 @@ namespace se
             {
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 auto entity = resolveEntity(ctx, params.entity);
                 if (!entity)
@@ -942,7 +942,7 @@ namespace se
             {
                 if (previewing(ctx.sceneEdit))
                 {
-                    return Err("exit the rig preview first");
+                    return Err("exit the asset preview first");
                 }
                 if (ctx.sceneEdit.playState == PlayState::Paused)
                 {

@@ -1765,6 +1765,16 @@ namespace se
             if (!parsed) { return Err(std::move(parsed.error())); }
             out.time = std::move(*parsed);
         }
+
+        {
+            auto value = optionalField(params, "seekBlend", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "seekBlend");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.seekBlend = std::move(*parsed);
+            }
+        }
         return out;
     }
 
@@ -1840,9 +1850,41 @@ namespace se
         return out;
     }
 
-    auto parseDto(const Json& params, DtoTag<SetRigPreviewOptionsParams>) -> Result<SetRigPreviewOptionsParams>
+    auto parseDto(const Json& params, DtoTag<PickSkeletonJointParams>) -> Result<PickSkeletonJointParams>
     {
-        SetRigPreviewOptionsParams out;
+        PickSkeletonJointParams out;
+
+        {
+            auto value = requiredField(params, "u", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readF32(**value, "u");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.u = std::move(*parsed);
+        }
+
+        {
+            auto value = requiredField(params, "v", 1, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readF32(**value, "v");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.v = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "radiusPx", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "radiusPx");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.radiusPx = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetAssetPreviewOptionsParams>) -> Result<SetAssetPreviewOptionsParams>
+    {
+        SetAssetPreviewOptionsParams out;
 
         {
             auto value = optionalField(params, "floor", 0, true);
@@ -2530,9 +2572,9 @@ namespace se
         return out;
     }
 
-    auto parseDto(const Json& params, DtoTag<GetRigParams>) -> Result<GetRigParams>
+    auto parseDto(const Json& params, DtoTag<GetAssetModelParams>) -> Result<GetAssetModelParams>
     {
-        GetRigParams out;
+        GetAssetModelParams out;
 
         {
             auto value = requiredField(params, "asset", 0, true);
@@ -2544,9 +2586,9 @@ namespace se
         return out;
     }
 
-    auto parseDto(const Json& params, DtoTag<EnterRigPreviewParams>) -> Result<EnterRigPreviewParams>
+    auto parseDto(const Json& params, DtoTag<EnterAssetPreviewParams>) -> Result<EnterAssetPreviewParams>
     {
-        EnterRigPreviewParams out;
+        EnterAssetPreviewParams out;
 
         {
             auto value = requiredField(params, "asset", 0, true);
@@ -3691,7 +3733,15 @@ namespace se
         return out;
     }
 
-    auto dtoToJson(const RigPreviewOptionsResult& value) -> Json
+    auto dtoToJson(const PickSkeletonJointResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["found"] = value.found;
+        out["nodeIndex"] = value.nodeIndex;
+        return out;
+    }
+
+    auto dtoToJson(const AssetPreviewOptionsResult& value) -> Json
     {
         Json out = Json::object();
         out["floor"] = value.floor;
@@ -3975,17 +4025,30 @@ namespace se
         return out;
     }
 
-    auto dtoToJson(const RigResult& value) -> Json
+    auto dtoToJson(const AssetModelResult& value) -> Json
     {
         Json out = Json::object();
         out["mesh"] = dtoToJson(value.mesh);
         out["name"] = value.name;
+        out["capabilities"] = dtoToJson(value.capabilities);
         out["bones"] = dtoVectorToJson(value.bones);
         out["clips"] = dtoVectorToJson(value.clips);
         return out;
     }
 
-    auto dtoToJson(const RigBoneDto& value) -> Json
+    auto dtoToJson(const AssetCapabilitiesDto& value) -> Json
+    {
+        Json out = Json::object();
+        out["meshCount"] = value.meshCount;
+        out["materialCount"] = value.materialCount;
+        out["nodeCount"] = value.nodeCount;
+        out["hasRig"] = value.hasRig;
+        out["boneCount"] = value.boneCount;
+        out["clipCount"] = value.clipCount;
+        return out;
+    }
+
+    auto dtoToJson(const BoneDto& value) -> Json
     {
         Json out = Json::object();
         out["index"] = value.index;
@@ -3995,17 +4058,17 @@ namespace se
         return out;
     }
 
-    auto dtoToJson(const EnterRigPreviewResult& value) -> Json
+    auto dtoToJson(const AssetPreviewResult& value) -> Json
     {
         Json out = Json::object();
-        out["rigEntity"] = dtoToJson(value.rigEntity);
+        out["rootEntity"] = dtoToJson(value.rootEntity);
         out["bones"] = dtoVectorToJson(value.bones);
         out["target"] = dtoToJson(value.target);
         out["distance"] = value.distance;
         return out;
     }
 
-    auto dtoToJson(const RigBoneEntityDto& value) -> Json
+    auto dtoToJson(const BoneEntityDto& value) -> Json
     {
         Json out = Json::object();
         out["index"] = value.index;

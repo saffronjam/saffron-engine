@@ -16,7 +16,6 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ArrowLeft,
   ArrowRight,
-  Bone,
   Eye,
   Folder,
   FolderPlus,
@@ -179,8 +178,8 @@ export function AssetsPanel() {
   const refreshAssets = useEditorStore((s) => s.refreshAssets);
   const instantiateModel = useEditorStore((s) => s.instantiateModel);
   const nativeDialogOpen = useEditorStore((s) => s.nativeDialogOpen);
-  const openAssetTab = useEditorStore((s) => s.openAssetTab);
-  const openRigEditorForAsset = useEditorStore((s) => s.openRigEditorForAsset);
+  const openImageViewerTab = useEditorStore((s) => s.openImageViewerTab);
+  const openAssetEditorForAsset = useEditorStore((s) => s.openAssetEditorForAsset);
   const closeViewTab = useEditorStore((s) => s.closeViewTab);
   const [history, setHistory] = useState<FolderHistory>({ stack: [null], index: 0 });
   const [creatingFolder, setCreatingFolder] = useState<CreatingFolder | null>(null);
@@ -614,22 +613,20 @@ export function AssetsPanel() {
     setPendingAssetDelete({ assets: targetAssets, usages });
   }, []);
 
-  // Double-click / "View" routing: animation clips and rigged meshes/models open the rig editor
-  // (resolving to their owning rig via the synchronous `rigged` flag the scan put on the catalog row);
-  // everything else opens the image/asset viewer. Unrigged meshes also get a context-menu "Open in Rig
-  // editor" (which then surfaces the not-a-rig error state).
+  // Double-click / "View" routing: every model, mesh, and animation clip opens the asset editor (the
+  // live preview viewport, plus rig panels when the model is rigged); textures and other assets open
+  // the image viewer.
   const routeView = useCallback(
     (asset: AssetEntry) => {
-      const ridesRigEditor =
-        asset.type === "animation" ||
-        (asset.rigged === true && (asset.type === "mesh" || asset.type === "model"));
-      if (ridesRigEditor) {
-        openRigEditorForAsset(asset.id, asset.name);
+      const ridesAssetEditor =
+        asset.type === "model" || asset.type === "mesh" || asset.type === "animation";
+      if (ridesAssetEditor) {
+        openAssetEditorForAsset(asset.id, asset.name);
       } else {
-        openAssetTab(asset);
+        openImageViewerTab(asset);
       }
     },
-    [openAssetTab, openRigEditorForAsset],
+    [openImageViewerTab, openAssetEditorForAsset],
   );
 
   const confirmDeleteAssets = useCallback(
@@ -642,8 +639,8 @@ export function AssetsPanel() {
             try {
               await client.deleteAsset(asset.id);
               deletedIds.add(asset.id);
-              closeViewTab(`asset:${asset.id}`);
-              closeViewTab(`rigEditor:${asset.id}`);
+              closeViewTab(`imageViewer:${asset.id}`);
+              closeViewTab(`assetEditor:${asset.id}`);
             } catch (err) {
               notify(`Could not delete ${asset.name}: ${errorText(err)}`);
             }
@@ -892,7 +889,6 @@ export function AssetsPanel() {
                 }
                 nativeDialogOpen={nativeDialogOpen}
                 onViewAsset={routeView}
-                onOpenRigEditor={openRigEditorForAsset}
                 onInstantiate={onInstantiate}
                 onRenameAsset={setRenamingAsset}
                 onDeleteAsset={deleteAsset}
@@ -965,7 +961,6 @@ function GridContextMenuItems({
   renamingFolderGridPath,
   nativeDialogOpen,
   onViewAsset,
-  onOpenRigEditor,
   onInstantiate,
   onRenameAsset,
   onDeleteAsset,
@@ -982,7 +977,6 @@ function GridContextMenuItems({
   renamingFolderGridPath: string | null;
   nativeDialogOpen: boolean;
   onViewAsset(asset: AssetEntry): void;
-  onOpenRigEditor(assetId: string, fallbackName: string): void;
   onInstantiate(modelId: string): void;
   onRenameAsset(assetId: string): void;
   onDeleteAsset(asset: AssetEntry): void;
@@ -1045,12 +1039,6 @@ function GridContextMenuItems({
           <Eye />
           View
         </ContextMenuItem>
-        {asset.type === "mesh" ? (
-          <ContextMenuItem onSelect={() => onOpenRigEditor(asset.id, asset.name)}>
-            <Bone />
-            Open in Rig editor
-          </ContextMenuItem>
-        ) : null}
         {asset.type === "model" ? (
           <ContextMenuItem onSelect={() => onInstantiate(asset.id)}>
             <Plus />

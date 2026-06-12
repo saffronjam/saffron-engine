@@ -178,8 +178,8 @@ export namespace se
     {
         bool show = false;        // master toggle (set-skeleton-overlay)
         bool axes = false;        // per-joint RGB axis lines
-        f32 jointSize = 4.0f;     // joint-dot radius in pixels at unit distance (scaled screen-constant)
-        i32 highlightJoint = -1;  // get-rig node index of the tinted joint while previewing, -1 = none
+        f32 jointSize = 4.0f;     // joint-dot radius in pixels (screen-constant at any zoom)
+        i32 highlightJoint = -1;  // get-asset-model node index of the tinted joint while previewing, -1 = none
     };
 
     // The editor's mutable state: the scene being edited, the component registry
@@ -228,26 +228,26 @@ export namespace se
         i64 scriptErrorSeq = 0;                           // last assigned ScriptError.seq (drain high-water)
         std::unordered_set<std::string> scriptInputKeys;  // normalized key names held for Lua gameplay input
 
-        // The rig preview (the asset-editor view): an isolated scene holding only the previewed rig +
-        // its furnishing, entered/left over the control plane. Routed through activeScene exactly like
-        // the play duplicate, so render/skinning/animation/commands retarget to it for free. Stays in
+        // The asset preview (the asset editor): an isolated scene holding only the previewed model + its
+        // furnishing, entered/left over the control plane. Routed through activeScene exactly like the
+        // play duplicate, so render/skinning/animation/commands retarget to it for free. Stays in
         // PlayState::Edit (mutually exclusive with play), and never leaks into project.json because
         // save-project serializes `scene` explicitly.
         std::optional<Scene> previewScene;        // the isolated preview scene; nullopt when not previewing
         Uuid previewAsset{ 0 };                   // the model container being previewed (0 = none)
-        Entity previewRigEntity{ entt::null };    // the spawned rig mesh entity in previewScene
-        std::vector<Uuid> previewBoneByNode;      // get-rig node index -> spawned joint entity uuid (0 = none)
+        Entity previewRootEntity{ entt::null };   // the spawned model root entity in previewScene
+        std::vector<Uuid> previewBoneByNode;      // node index -> spawned joint entity uuid (empty for a static model)
         Entity savedSelection{ entt::null };      // authored-scene selection stashed across the preview
         SceneEditCamera savedCamera;              // fly-cam stashed on enter, restored on exit (byte-identity)
         SkeletonOverlayOptions savedOverlay;      // overlay prefs stashed on enter (preview forces it on)
-        bool previewShowFloor = true;             // the preview floor slab toggle (set-rig-preview-options)
+        bool previewShowFloor = true;             // the preview floor slab toggle (set-asset-preview-options)
         Entity previewFloorEntity{ entt::null };  // the spawned floor slab in previewScene (for the toggle)
     };
 
     // Append to the bounded script-error ring, stamping seq + the current play tick.
     void pushScriptError(SceneEditContext& ctx, u64 entityUuid, std::string script, std::string message);
 
-    // The scene every consumer addresses: the rig preview while previewing, the play duplicate while
+    // The scene every consumer addresses: the asset preview while previewing, the play duplicate while
     // playing/paused, the authored scene in Edit. Preview takes precedence (it is entered only from
     // Edit). Nothing else may branch on playState/previewScene to pick a scene.
     inline auto activeScene(SceneEditContext& ctx) -> Scene&

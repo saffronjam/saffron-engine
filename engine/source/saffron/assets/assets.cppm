@@ -122,7 +122,7 @@ export namespace se
     // resolve path when a referenced material is missing. Its id is in the reserved (< 1024) range.
     inline constexpr Uuid DefaultMaterialId{ 1 };
 
-    // The rig-preview floor slab's mesh, in the reserved (< 1024) range. Seeded into the GPU mesh cache
+    // The asset-preview floor slab's mesh, in the reserved (< 1024) range. Seeded into the GPU mesh cache
     // (not the catalog), so the preview floor renders without a catalog row that would serialize.
     inline constexpr Uuid PreviewFloorMeshId{ 2 };
     inline auto defaultMaterialAsset() -> MaterialAsset
@@ -5377,7 +5377,7 @@ return {0}
         return out;
     }
 
-    // Seeds the rig-preview floor mesh (a unit cube) into the GPU mesh cache under the reserved
+    // Seeds the asset-preview floor mesh (a unit cube) into the GPU mesh cache under the reserved
     // PreviewFloorMeshId, once. No catalog row — a preview floor entity carries a MeshComponent for
     // that id and loadMeshAsset resolves it cache-first, so it never serializes into project.json. A
     // null entry left on failure is a negative-cache marker; clearAssetCaches drops it on project load.

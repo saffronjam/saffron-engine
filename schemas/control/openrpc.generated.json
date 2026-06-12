@@ -1105,7 +1105,7 @@
     },
     {
       "name": "set-skeleton-highlight",
-      "summary": "tint a previewed rig's joint by its get-rig node index (-1 clears)",
+      "summary": "tint a previewed model's joint by its get-asset-model node index (-1 clears)",
       "params": [
         {
           "name": "params",
@@ -1122,20 +1122,38 @@
       }
     },
     {
-      "name": "set-rig-preview-options",
-      "summary": "set-rig-preview-options {floor?} — preview-scene settings (show floor)",
+      "name": "pick-skeleton-joint",
+      "summary": "pick the previewed model's nearest joint to a viewport click (u,v) within radiusPx",
       "params": [
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/SetRigPreviewOptionsParams"
+            "$ref": "#/components/schemas/PickSkeletonJointParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/RigPreviewOptionsResult"
+          "$ref": "#/components/schemas/PickSkeletonJointResult"
+        }
+      }
+    },
+    {
+      "name": "set-asset-preview-options",
+      "summary": "set-asset-preview-options {floor?} — preview-scene settings (show floor)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetAssetPreviewOptionsParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AssetPreviewOptionsResult"
         }
       }
     },
@@ -1770,44 +1788,44 @@
       }
     },
     {
-      "name": "get-rig",
-      "summary": "get-rig {asset} — a model's bone tree + clips, read from its .smodel container",
+      "name": "get-asset-model",
+      "summary": "get-asset-model {asset} — a model's capabilities + bone tree + clips, from its .smodel container",
       "params": [
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/GetRigParams"
+            "$ref": "#/components/schemas/GetAssetModelParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/RigResult"
+          "$ref": "#/components/schemas/AssetModelResult"
         }
       }
     },
     {
-      "name": "enter-rig-preview",
-      "summary": "enter-rig-preview {asset} — open a model's rig in an isolated preview scene",
+      "name": "enter-asset-preview",
+      "summary": "enter-asset-preview {asset} — open any model in an isolated preview scene",
       "params": [
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/EnterRigPreviewParams"
+            "$ref": "#/components/schemas/EnterAssetPreviewParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/EnterRigPreviewResult"
+          "$ref": "#/components/schemas/AssetPreviewResult"
         }
       }
     },
     {
-      "name": "exit-rig-preview",
-      "summary": "exit-rig-preview — close the rig preview and restore the authored scene + camera",
+      "name": "exit-asset-preview",
+      "summary": "exit-asset-preview — close the asset preview and restore the authored scene + camera",
       "params": [
         {
           "name": "params",
@@ -2656,6 +2674,38 @@
           "animationVersion"
         ]
       },
+      "AssetCapabilitiesDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "meshCount": {
+            "type": "integer"
+          },
+          "materialCount": {
+            "type": "integer"
+          },
+          "nodeCount": {
+            "type": "integer"
+          },
+          "hasRig": {
+            "type": "boolean"
+          },
+          "boneCount": {
+            "type": "integer"
+          },
+          "clipCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "meshCount",
+          "materialCount",
+          "nodeCount",
+          "hasRig",
+          "boneCount",
+          "clipCount"
+        ]
+      },
       "AssetEntryDto": {
         "type": "object",
         "additionalProperties": false,
@@ -2788,6 +2838,79 @@
         },
         "required": [
           "asset"
+        ]
+      },
+      "AssetModelResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mesh": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/AssetCapabilitiesDto"
+          },
+          "bones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoneDto"
+            }
+          },
+          "clips": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnimationClipDto"
+            }
+          }
+        },
+        "required": [
+          "mesh",
+          "name",
+          "capabilities",
+          "bones",
+          "clips"
+        ]
+      },
+      "AssetPreviewOptionsResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "floor": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "floor"
+        ]
+      },
+      "AssetPreviewResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rootEntity": {
+            "type": "string"
+          },
+          "bones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoneEntityDto"
+            }
+          },
+          "target": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "distance": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "rootEntity",
+          "bones",
+          "target",
+          "distance"
         ]
       },
       "AssetRef": {
@@ -2986,6 +3109,46 @@
           "id",
           "name",
           "slot"
+        ]
+      },
+      "BoneDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent": {
+            "type": "integer"
+          },
+          "joint": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "name",
+          "parent",
+          "joint"
+        ]
+      },
+      "BoneEntityDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "entity": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "entity"
         ]
       },
       "CaptureStartParams": {
@@ -3523,7 +3686,7 @@
         "properties": {},
         "required": []
       },
-      "EnterRigPreviewParams": {
+      "EnterAssetPreviewParams": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -3540,33 +3703,6 @@
         },
         "required": [
           "asset"
-        ]
-      },
-      "EnterRigPreviewResult": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "rigEntity": {
-            "type": "string"
-          },
-          "bones": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RigBoneEntityDto"
-            }
-          },
-          "target": {
-            "$ref": "#/components/schemas/Vec3"
-          },
-          "distance": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "rigEntity",
-          "bones",
-          "target",
-          "distance"
         ]
       },
       "EntityList": {
@@ -3835,6 +3971,25 @@
           "cpuWaitMs"
         ]
       },
+      "GetAssetModelParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      },
       "GetFootIkParams": {
         "type": "object",
         "additionalProperties": false,
@@ -3852,25 +4007,6 @@
         },
         "required": [
           "entity"
-        ]
-      },
-      "GetRigParams": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "asset": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "integer"
-              }
-            ]
-          }
-        },
-        "required": [
-          "asset"
         ]
       },
       "GetScriptSchemaParams": {
@@ -4776,6 +4912,41 @@
           "hit"
         ]
       },
+      "PickSkeletonJointParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "u": {
+            "type": "number"
+          },
+          "v": {
+            "type": "number"
+          },
+          "radiusPx": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "u",
+          "v"
+        ]
+      },
+      "PickSkeletonJointResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "found": {
+            "type": "boolean"
+          },
+          "nodeIndex": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "found",
+          "nodeIndex"
+        ]
+      },
       "PingParams": {
         "type": "object",
         "additionalProperties": false,
@@ -5519,88 +5690,6 @@
           "aa"
         ]
       },
-      "RigBoneDto": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "index": {
-            "type": "integer"
-          },
-          "name": {
-            "type": "string"
-          },
-          "parent": {
-            "type": "integer"
-          },
-          "joint": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "index",
-          "name",
-          "parent",
-          "joint"
-        ]
-      },
-      "RigBoneEntityDto": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "index": {
-            "type": "integer"
-          },
-          "entity": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "index",
-          "entity"
-        ]
-      },
-      "RigPreviewOptionsResult": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "floor": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "floor"
-        ]
-      },
-      "RigResult": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "mesh": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "bones": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RigBoneDto"
-            }
-          },
-          "clips": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AnimationClipDto"
-            }
-          }
-        },
-        "required": [
-          "mesh",
-          "name",
-          "bones",
-          "clips"
-        ]
-      },
       "ScanAssetsResult": {
         "type": "object",
         "additionalProperties": false,
@@ -5772,6 +5861,9 @@
           },
           "time": {
             "type": "number"
+          },
+          "seekBlend": {
+            "type": "number"
           }
         },
         "required": [
@@ -5877,6 +5969,16 @@
           "entity",
           "wrap"
         ]
+      },
+      "SetAssetPreviewOptionsParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "floor": {
+            "type": "boolean"
+          }
+        },
+        "required": []
       },
       "SetAtmosphereParams": {
         "type": "object",
@@ -6390,16 +6492,6 @@
         "required": [
           "restir"
         ]
-      },
-      "SetRigPreviewOptionsParams": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "floor": {
-            "type": "boolean"
-          }
-        },
-        "required": []
       },
       "SetRtShadowsResult": {
         "type": "object",

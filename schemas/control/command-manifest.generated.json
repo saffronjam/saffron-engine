@@ -433,14 +433,21 @@
       "params": "SetSkeletonHighlightParams",
       "result": "SkeletonOverlayResult",
       "status": "typed",
-      "skip": "needs an active rig preview — covered in make e2e"
+      "skip": "needs an active asset preview — covered in make e2e"
     },
     {
-      "name": "set-rig-preview-options",
-      "params": "SetRigPreviewOptionsParams",
-      "result": "RigPreviewOptionsResult",
+      "name": "pick-skeleton-joint",
+      "params": "PickSkeletonJointParams",
+      "result": "PickSkeletonJointResult",
       "status": "typed",
-      "skip": "needs an active rig preview — covered in make e2e"
+      "skip": "needs an active rigged asset preview — covered in make e2e"
+    },
+    {
+      "name": "set-asset-preview-options",
+      "params": "SetAssetPreviewOptionsParams",
+      "result": "AssetPreviewOptionsResult",
+      "status": "typed",
+      "skip": "needs an active asset preview — covered in make e2e"
     },
     {
       "name": "get-foot-ik",
@@ -688,25 +695,25 @@
       "skip": "requires an asset id from a prior import"
     },
     {
-      "name": "get-rig",
-      "params": "GetRigParams",
-      "result": "RigResult",
+      "name": "get-asset-model",
+      "params": "GetAssetModelParams",
+      "result": "AssetModelResult",
       "status": "typed",
-      "skip": "needs an imported rig — covered in make e2e"
+      "skip": "needs an imported model — covered in make e2e"
     },
     {
-      "name": "enter-rig-preview",
-      "params": "EnterRigPreviewParams",
-      "result": "EnterRigPreviewResult",
+      "name": "enter-asset-preview",
+      "params": "EnterAssetPreviewParams",
+      "result": "AssetPreviewResult",
       "status": "typed",
-      "skip": "needs an imported rig — covered in make e2e"
+      "skip": "needs an imported model — covered in make e2e"
     },
     {
-      "name": "exit-rig-preview",
+      "name": "exit-asset-preview",
       "params": "EmptyParams",
       "result": "PlayStateResult",
       "status": "typed",
-      "skip": "needs an active rig preview — covered in make e2e"
+      "skip": "needs an active asset preview — covered in make e2e"
     },
     {
       "name": "clean-assets",

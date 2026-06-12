@@ -1,27 +1,27 @@
-/// The rig editor's right panel: the rig's own clips (read from get-rig, i.e. its .smodel container's
-/// animation sub-assets — not the whole catalog) and a details section for the focused clip or the rig.
-/// Clicking a clip loads it paused at frame 0 on the preview rig (UE5's pick semantics: select loads,
-/// the transport plays). The active row follows engine truth from the reconcile poll, with an optimistic
-/// highlight in between.
+/// The asset editor's right panel (shown only when the model has clips): the model's own clips (read
+/// from get-asset-model, i.e. its .smodel container's animation sub-assets — not the whole catalog) and
+/// a details section for the focused clip or the model. Clicking a clip loads it paused at frame 0 on
+/// the previewed model (UE5's pick semantics: select loads, the transport plays). The active row follows
+/// engine truth from the reconcile poll, with an optimistic highlight in between.
 import { useEffect, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { client } from "../control/client";
 import { errorText, notifyError } from "../lib/flash";
 import { useEditorStore } from "../state/store";
-import type { RigResult } from "../protocol";
+import type { AssetModelResult } from "../protocol";
 
 function formatSeconds(sec: number): string {
   return `${(Number.isFinite(sec) && sec > 0 ? sec : 0).toFixed(2)}s`;
 }
 
-interface RigClipListProps {
-  rig: RigResult | null;
-  rigEntity: string | null;
+interface ClipListProps {
+  model: AssetModelResult | null;
+  rootEntity: string | null;
 }
 
-export function RigClipList({ rig, rigEntity }: RigClipListProps) {
-  // The preview rig is the selected entity, so the selection-keyed animationState slice mirrors it.
+export function ClipList({ model, rootEntity }: ClipListProps) {
+  // The previewed model is the selected entity, so the selection-keyed animationState slice mirrors it.
   const activeClip = useEditorStore((s) => s.animationState?.clip ?? null);
   const wrap = useEditorStore((s) => s.animationState?.wrap ?? null);
   const [pendingClip, setPendingClip] = useState<string | null>(null);
@@ -32,17 +32,17 @@ export function RigClipList({ rig, rigEntity }: RigClipListProps) {
     setPendingClip(null);
   }, [activeClip]);
 
-  const clips = rig?.clips ?? [];
+  const clips = model?.clips ?? [];
   const selectedClip = pendingClip ?? activeClip;
   const focused = focusClip ? clips.find((clip) => clip.id === focusClip) : undefined;
 
   const pick = (clipId: string): void => {
-    if (!rigEntity) {
+    if (!rootEntity) {
       return;
     }
     setPendingClip(clipId);
     setFocusClip(clipId);
-    void client.playAnimation(rigEntity, clipId, { paused: true }).catch((err: unknown) => {
+    void client.playAnimation(rootEntity, clipId, { paused: true }).catch((err: unknown) => {
       notifyError(errorText(err));
     });
   };
@@ -54,7 +54,7 @@ export function RigClipList({ rig, rigEntity }: RigClipListProps) {
       </div>
       {clips.length === 0 ? (
         <div className="flex flex-1 items-center justify-center p-3 text-center text-xs italic text-muted-foreground">
-          No clips imported with this rig. Re-import the model to add them.
+          No clips imported with this model. Re-import it to add them.
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
@@ -88,15 +88,15 @@ export function RigClipList({ rig, rigEntity }: RigClipListProps) {
             <DetailRow label="Tracks" value={String(focused.tracks)} />
             {wrap ? <DetailRow label="Wrap" value={wrap} /> : null}
           </dl>
-        ) : rig ? (
+        ) : model ? (
           <dl className="space-y-1">
-            <DetailRow label="Mesh" value={rig.name} />
-            <DetailRow label="Bones" value={String(rig.bones.length)} />
+            <DetailRow label="Mesh" value={model.name} />
+            <DetailRow label="Bones" value={String(model.bones.length)} />
             <DetailRow
               label="Joints"
-              value={String(rig.bones.filter((bone) => bone.joint).length)}
+              value={String(model.bones.filter((bone) => bone.joint).length)}
             />
-            <DetailRow label="Clips" value={String(rig.clips.length)} />
+            <DetailRow label="Clips" value={String(model.clips.length)} />
           </dl>
         ) : null}
       </div>
