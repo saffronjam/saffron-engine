@@ -28,7 +28,7 @@ beforeAll(async () => {
     .call("set-rt-shadows", { enabled: true })
     .then(() => true)
     .catch(() => false);
-  const imported = await engine.call<{ id: string; name: string }>("import-model", { path: FIXTURE });
+  const imported = await engine.importEntity(FIXTURE);
   meshId = imported.id;
   await engine.settle();
 });

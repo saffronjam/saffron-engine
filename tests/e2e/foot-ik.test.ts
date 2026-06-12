@@ -25,7 +25,7 @@ const worldY = async (entity: string): Promise<number> =>
 beforeAll(async () => {
   engine = await Engine.boot({ SAFFRON_AUTO_EMPTY_PROJECT: "1" });
   await engine.call("set-camera", { yaw: 0, pitch: 0 });
-  meshId = (await engine.call<{ id: string }>("import-model", { path: FIXTURE })).id;
+  meshId = (await engine.importEntity(FIXTURE)).id;
   const bones = (await engine.call<Inspect>("inspect", { entity: meshId })).components.SkinnedMesh?.bones ?? [];
   ankleId = bones[2];
   // hip→knee→ankle chain; the knee bends in -X, so the pole points that way.

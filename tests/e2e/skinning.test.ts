@@ -55,9 +55,7 @@ async function screenshot(tag: string): Promise<Buffer> {
 let meshId = "";
 
 test("a rigged glTF imports as a bone-entity hierarchy", async () => {
-  const imported = await engine.call<{ id: string; name: string }>("import-model", {
-    path: FIXTURE,
-  });
+  const imported = await engine.importEntity(FIXTURE);
   meshId = imported.id;
   await engine.settle();
 
