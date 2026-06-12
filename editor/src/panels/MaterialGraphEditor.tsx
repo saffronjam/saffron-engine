@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   addEdge,
   Background,
@@ -46,14 +47,6 @@ import {
   TEXTURE_SLOTS,
 } from "../materials/graph";
 import { Button } from "@/components/ui/button";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuGroup,
-  ContextMenuItem,
-  ContextMenuLabel,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   Select,
@@ -87,7 +80,7 @@ function OutputAnchor({ pin }: { pin: string }) {
         type="source"
         position={Position.Right}
         id={pin}
-        className="!h-2 !w-2 !border-muted-foreground !bg-emerald-500"
+        className="!h-3 !w-3 !border-0 !bg-emerald-400"
       />
     </>
   );
@@ -115,7 +108,7 @@ function SaffronNode({ id, data }: NodeProps<FlowNode>) {
               // Fixed width so the inline rgba channels shrink to fit instead of expanding to the
               // native number-input width (which blows the node out to ~600px).
               return (
-                <div className="nodrag w-44">
+                <div className="nodrag w-64">
                   <ColorField
                     kind="color4"
                     value={{
@@ -170,7 +163,7 @@ function SaffronNode({ id, data }: NodeProps<FlowNode>) {
                     type="target"
                     position={Position.Left}
                     id={inPin}
-                    className="!h-2 !w-2 !border-muted-foreground !bg-sky-500"
+                    className="!h-3 !w-3 !border-0 !bg-sky-400"
                   />
                 ) : null}
                 <span className="pl-3 text-muted-foreground">{inPin ? pinLabel(inPin) : ""}</span>
@@ -180,7 +173,7 @@ function SaffronNode({ id, data }: NodeProps<FlowNode>) {
                     type="source"
                     position={Position.Right}
                     id={outPin}
-                    className="!h-2 !w-2 !border-muted-foreground !bg-emerald-500"
+                    className="!h-3 !w-3 !border-0 !bg-emerald-400"
                   />
                 ) : null}
               </div>
@@ -201,8 +194,12 @@ function GraphCanvas({ materialId }: { materialId: string }) {
   const [preview, setPreview] = useState<string | null>(() => previewCache.get(materialId) ?? null);
   const [status, setStatus] = useState<string>("");
   const loadedRef = useRef(false);
-  // The screen point of the last right-click, so the context menu creates a node under the cursor.
+  // The node-create menu is a controlled, positioned element (not Radix) so every right-click reopens
+  // it at the new cursor — Radix ContextMenu re-anchors unreliably while open. menuPosRef feeds addNode
+  // (screen → flow coords); `menu` drives the rendered position.
   const menuPosRef = useRef<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const reactFlow = useReactFlow();
 
   // Load the material's stored graph into the canvas. Show the cached preview immediately, then
@@ -316,6 +313,30 @@ function GraphCanvas({ materialId }: { materialId: string }) {
     return cats;
   }, []);
 
+  // Close the create menu on a left-click outside it or Escape (a right-click is handled by
+  // onPaneContextMenu, which repositions; its button-2 mousedown is ignored here).
+  useEffect(() => {
+    if (!menu) {
+      return;
+    }
+    const onDown = (e: MouseEvent): void => {
+      if (e.button === 0 && menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenu(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        setMenu(null);
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
+
   return (
     <div className="flex h-full w-full flex-col bg-background text-[12px] text-foreground">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
@@ -330,51 +351,31 @@ function GraphCanvas({ materialId }: { materialId: string }) {
       </div>
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={76} minSize={40} className="min-w-0">
-          {/* modal=false: the default modal overlay swallows a second right-click, so the menu
-              wouldn't reposition until dismissed. Without it, each right-click re-anchors here. */}
-          <ContextMenu modal={false}>
-            <ContextMenuTrigger asChild>
-              <div
-                className="h-full w-full"
-                onContextMenu={(e) => {
-                  menuPosRef.current = { x: e.clientX, y: e.clientY };
-                }}
-              >
-                <NodeCallbacksContext.Provider value={nodeCallbacks}>
-                  <ReactFlow
-                    nodes={nodes}
-                    edges={edges}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    onConnect={onConnect}
-                    isValidConnection={isValidConnection}
-                    nodeTypes={NODE_TYPES}
-                    colorMode="dark"
-                    fitView
-                    fitViewOptions={{ maxZoom: 1, padding: 0.3 }}
-                    proOptions={{ hideAttribution: true }}
-                  >
-                    <Background />
-                    <Controls />
-                  </ReactFlow>
-                </NodeCallbacksContext.Provider>
-              </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent className="w-44">
-              {PALETTE_CATEGORIES.map((cat) => (
-                <ContextMenuGroup key={cat}>
-                  <ContextMenuLabel className="text-[10px] uppercase text-muted-foreground">
-                    {cat}
-                  </ContextMenuLabel>
-                  {palette[cat].map((type) => (
-                    <ContextMenuItem key={type} onSelect={() => addNode(type)}>
-                      {NODE_SPECS[type].label}
-                    </ContextMenuItem>
-                  ))}
-                </ContextMenuGroup>
-              ))}
-            </ContextMenuContent>
-          </ContextMenu>
+          <NodeCallbacksContext.Provider value={nodeCallbacks}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              isValidConnection={isValidConnection}
+              nodeTypes={NODE_TYPES}
+              colorMode="dark"
+              fitView
+              fitViewOptions={{ maxZoom: 1, padding: 0.3 }}
+              proOptions={{ hideAttribution: true }}
+              onPaneContextMenu={(event) => {
+                event.preventDefault();
+                const point = { x: event.clientX, y: event.clientY };
+                menuPosRef.current = point;
+                setMenu(point);
+              }}
+              onMoveStart={() => setMenu(null)}
+            >
+              <Background />
+              <Controls />
+            </ReactFlow>
+          </NodeCallbacksContext.Provider>
         </ResizablePanel>
         <ResizableHandle />
         <ResizablePanel defaultSize={24} minSize={12} className="min-w-0">
@@ -394,6 +395,35 @@ function GraphCanvas({ materialId }: { materialId: string }) {
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
+      {menu
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="fixed z-50 max-h-[80vh] w-44 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+              style={{ left: menu.x, top: menu.y }}
+            >
+              {PALETTE_CATEGORIES.map((cat) => (
+                <div key={cat}>
+                  <div className="px-2 py-1 text-[10px] uppercase text-muted-foreground">{cat}</div>
+                  {palette[cat].map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => {
+                        addNode(type);
+                        setMenu(null);
+                      }}
+                      className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-accent hover:text-accent-foreground"
+                    >
+                      {NODE_SPECS[type].label}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

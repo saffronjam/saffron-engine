@@ -30,6 +30,9 @@ export interface VectorEditorProps {
   labels?: readonly string[];
   /// Tint the labels with the gizmo axis colors (X red, Y green, Z blue); off → neutral labels.
   coloredLabels?: boolean;
+  /// Readout formatter (default `formatNumber`). A caller with very narrow fields (color channels in a
+  /// node) can cap the width; the wire keeps full precision, this is display only.
+  format?: (n: number) => string;
   /// One atomic patch per edit (the changed axes), never per-axis calls racing
   /// onto a stale base.
   onChange(patch: Record<string, number>): void;
@@ -43,6 +46,7 @@ export function VectorEditor({
   step = 0.05,
   labels,
   coloredLabels = true,
+  format = formatNumber,
   onChange,
   onDragStart,
   onDragEnd,
@@ -105,7 +109,7 @@ export function VectorEditor({
           <Input
             type="number"
             step={step}
-            value={formatNumber(scrub.value[axis] ?? 0)}
+            value={format(scrub.value[axis] ?? 0)}
             className="h-7 rounded-none border-0 bg-transparent px-1 py-0.5 font-mono text-[11px] shadow-none focus-visible:ring-0"
             onPointerDown={(event) => event.stopPropagation()}
             onChange={(event) =>

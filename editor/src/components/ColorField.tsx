@@ -31,6 +31,21 @@ function channelToHex(c: number): string {
   return channelToByte(c).toString(16).padStart(2, "0");
 }
 
+/// Cap a channel readout to 4 characters so it fits the compact node fields (the wire keeps full
+/// precision; this is display only): 0.678 → "0.68", 0.314 → "0.31", 1 → "1", 12.34 → "12.3".
+function formatChannel(n: number): string {
+  if (!Number.isFinite(n)) {
+    return "0";
+  }
+  for (let decimals = 2; decimals >= 0; decimals -= 1) {
+    const s = Number(n.toFixed(decimals)).toString();
+    if (s.length <= 4) {
+      return s;
+    }
+  }
+  return Number(n.toFixed(0)).toString();
+}
+
 export function ColorField({ kind, value, onChange, onDragStart, onDragEnd }: ColorFieldProps) {
   const hasAlpha = kind === "color4";
   const channels = hasAlpha ? (["x", "y", "z", "w"] as const) : (["x", "y", "z"] as const);
@@ -102,6 +117,7 @@ export function ColorField({ kind, value, onChange, onDragStart, onDragEnd }: Co
           labels={channelLabels}
           value={color}
           step={0.01}
+          format={formatChannel}
           onChange={onChange}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
