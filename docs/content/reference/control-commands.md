@@ -119,8 +119,9 @@ wrap, speed, animationVersion}`.
 | `load-scene` | `{path}` | read a scene JSON (deselects) |
 | `save-project` | `{path?}` | save the active project, or save to `path` |
 | `load-project` | `{path=project.json}` | compatibility alias for opening a project (deselects) |
-| `get-thumbnail` | `{asset:id\|name, size=128}` | base64 PNG preview (mesh = 3D render, texture = the image) |
+| `get-thumbnail` | `{asset:id\|name, size=128}` | base64 PNG preview (mesh = 3D render, texture = the image); a disk-cache hit returns it, a cold miss replies `pending` while a worker generates it (retry) |
 | `view-asset` | `{asset:id\|name, size=512}` | larger base64 PNG preview (same body as `get-thumbnail`) |
+| `thumbnail-cache` | `{action:stats\|clear}` | inspect (`{entries, bytes}`) or empty the project's thumbnail disk cache |
 | `screenshot` | `{target:viewport\|window, path}` | PNG; `viewport` is synchronous, `window` is written at end of frame |
 | `quit` | — | close the running app |
 

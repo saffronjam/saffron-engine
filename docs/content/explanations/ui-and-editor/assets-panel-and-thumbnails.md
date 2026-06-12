@@ -19,6 +19,8 @@ The toolbar holds back/forward buttons over a history stack with browser semanti
 
 `AssetsPanel` lays the current folder out with a CSS grid (`repeat(auto-fill, minmax(72px, 1fr))`), so tiles reflow to the panel width. Each `AssetTile` is a 72px tile: a square thumbnail on top, an in-place name button beneath. Subfolders show as folder tiles. An empty catalog shows an import and drag-and-drop prompt instead. The list comes from the reconcile poll's `list-assets` refresh, re-fetched eagerly after imports, moves, renames, or deletes.
 
+Each tile tracks a three-state fetch (`loading` / `ready` / `none`): while the `get-thumbnail` promise is outstanding it shows a `Loader2` spinner over a dimmed type icon, a resolve swaps in the image, and a reject (an unsupported type or a failed render) settles to the bare type icon — a missing thumbnail is not an error. A warm cache starts `ready`, so re-opening a folder never flashes the spinner. The `AssetPicker` swatch and the asset viewer's 512 preview use the same distinction.
+
 Right-clicking the asset background opens commands for **New Folder** and **Import**. Right-clicking a folder — as a grid tile or a tree row — opens **New Folder**, **Rename**, and **Delete**; Delete removes the virtual folder and moves its assets back to Root. Right-clicking an asset opens **View** and **Delete**; Delete asks the engine for `asset-usages` first, shows an in-place confirmation with affected slots, then calls `delete-asset`. The Delete key on a focused tile or tree row (clicking one focuses it) starts the same delete flow as its context menu item; the key is the `assets.delete` binding (default Delete), rebindable in [Editor Settings](../editor-settings/).
 
 Asset selection is local editor state. A click selects one tile, Ctrl-click toggles a tile, Shift-click adds the range from the last clicked tile through the current tile, and dragging on empty panel space draws a marquee that selects intersecting asset tiles. Clicking empty space clears the selection. Dragging any selected tile writes the selected asset ids into the asset drag payload, so a folder drop moves the whole selection.
@@ -31,9 +33,13 @@ Selecting a single asset slides a detail overlay in from the right edge of the g
 
 A thumbnail travels as data rather than a registered descriptor, since no GPU context is shared. `get-thumbnail` renders the asset to a small offscreen and reads it back as a **base64 PNG** in the JSON result; the client decodes it to a `Blob` and an object URL:
 
-- a **texture** asset renders its own decoded image;
+- a **texture** asset reads its own decoded image back;
 - a **mesh** asset renders a [3D preview](../mesh-thumbnails/);
 - anything else, or a failed render, falls back to a Lucide type icon in the webview.
+
+The readback is **right-sized to the requested `size`**, not the source resolution. A texture larger than the tile is downscaled on the GPU first — a chained linear halving (mip-style, so a 4k source is not undersampled by a single tap) down to a target that fits `size`×`size` while preserving aspect — and only that small image is copied back and PNG-encoded. So a 128 px thumbnail of a 4096×2048 HDR reads back ~128×64 pixels, not 8.4M, whatever the source. The reply's `width`/`height` report the actual PNG dimensions. `view-asset` (512) takes the same path through the same `size` parameter.
+
+A thumbnail of an **HDR asset** is tonemapped, not clamped. An HDR's radiance runs well past 1.0, so the plain [0,1]×255 clamp used for already-display-range captures blew the preview out to white; the texture branch instead Reinhard-maps + gamma-encodes the small downscaled image (≈16k pixels, cheap on the CPU) so a sky preview shows sky-and-horizon detail. Mesh and material previews render to a display-range offscreen already, so they keep the clamp.
 
 Each `get-thumbnail` call is a GPU→CPU readback plus a PNG encode, so it must not run per frame or per tile. A module-scope frontend cache keyed by asset id holds `{ blob URL, the px size it was fetched at }`, and concurrent requests for the same asset share one in-flight promise. A cached URL is reused synchronously whenever it is at least as large as the requested size, so folder navigation does not ask the backend for thumbnails it already decoded in the current webview session:
 
@@ -48,6 +54,20 @@ export async function getThumbnailUrl(assetId: string, size: number): Promise<st
 ```
 
 When the catalog changes, on a project or scene load, every cached blob URL is stale. `invalidateThumbnails` revokes them all, and the lazy cache re-fetches on demand.
+
+### The engine's disk cache
+
+The webview cache is per-session — wiped on every project load — so on its own a project with ~100 textures pays a full round of generation at every startup. Underneath it the **engine keeps a persistent PNG cache** that survives restarts, because the engine is the right owner: it knows the source files and when they change.
+
+- **Location:** `<projectRoot>/cache/thumbnails/`, next to the project's `assets/` and outside it, so the catalog scan and project save/load never pick it up. One PNG per entry.
+- **Key:** the asset uuid, the requested pixel size, and a *stamp* of the source file — its size and mtime, folded with a cache-format version into the filename `<uuid>-<size>-<stamp>.png`. A hit is a single `exists()` after stating the source; a stale entry (edited source, or a version bump) simply never matches its old stamp again, so there is no explicit invalidation step for edits. Bumping `ThumbnailCacheVersion` invalidates every entry at once when generation behaviour changes.
+- **Flow:** `get-thumbnail` reads the cached PNG bytes straight into the base64 reply on a hit — no GPU work, no encode — and reports the width/height read from the PNG header. On a miss it generates as above and writes the PNG before replying (best-effort: a failed write logs and still replies). So the second start of a project is disk reads, with no multi-second HDR spike.
+
+The stamp keys textures on their imported file and meshes on the `.smesh`; materials stamp on the resolved material state, so editing a parent material reflows every instance's key (see [asset commands](../../tooling-and-control/asset-commands/) for the `thumbnail-cache` command and the delete/orphan cleanup).
+
+### Off the frame loop
+
+A cold cache-miss still has to decode the source, upload it, and render — for a 4k HDR that is ~1 s of work that, run inside the per-frame control drain, would freeze the viewport. So generation runs on a **worker thread**. On a miss the engine enqueues a job and replies `pending: true` immediately; the worker decodes + uploads + renders + readbacks + writes the PNG to the disk cache, and `getThumbnailUrl` re-requests with backoff (keeping the loading spinner) until the retry is a plain disk-cache hit. Pending replies return in microseconds, so the editor's serialized control I/O never queues behind a generation. The worker owns its own Vulkan command pool and shares the graphics queue with the frame loop under a mutex; finished GPU textures/meshes are handed back to the main thread and folded into the in-session caches, so a later draw of the same asset reuses them. A persistent generation failure replies with an error, which settles the tile to the type icon rather than retrying forever.
 
 ## Rename in place
 

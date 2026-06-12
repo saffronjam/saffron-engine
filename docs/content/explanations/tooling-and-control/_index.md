@@ -16,6 +16,6 @@ The control plane is a JSON-over-unix-socket protocol that drives a running edit
 | `se-cli-protocol` | the JSON request/response shape, argument coercion, no engine dependency | `tools/se` |
 | `scene-commands` | list/create/destroy/select, add/copy/rename entity, set component(-field), camera, gizmo, pick, focus, inspect | `control_commands_scene.cpp` |
 | `render-commands` | set-aa / set-clustered / set-ibl / set-ssao / set-ssgi / set-shadows / set-gi / set-exposure / set-depth-prepass, render-stats | `control_commands_render.cpp` |
-| `asset-commands` | import-model/texture, list/rename/folder/rename-folder/move/delete/assign-asset, get-thumbnail/view-asset, save/load project | `control_commands_asset.cpp` |
+| `asset-commands` | import-model/texture, list/rename/folder/rename-folder/move/delete/assign-asset, get-thumbnail/view-asset/thumbnail-cache, save/load project | `control_commands_asset.cpp` |
 | `screenshots-and-capture` | viewport vs. window PNG, deferred swapchain capture | `control_commands_asset.cpp`; `renderer_capture.cpp` |
 | `shared-types` | DTO-first wire contract: C++ DTOs → serde, TS, OpenRPC, manifest-driven contract test, wire invariants | `control_dto.cppm`; `tools/gen-control-dto`; `tools/check-control-schema` |

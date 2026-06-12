@@ -33,10 +33,13 @@ Folders are catalog metadata, not filesystem directories. They are saved in `pro
 |---|---|---|
 | `get-thumbnail` | `{asset, size=128}` | Renders a small preview of a catalog asset; returns the PNG as base64. |
 | `view-asset` | `{asset, size=512}` | Same as `get-thumbnail` at a larger default size, for a full-asset look. |
+| `thumbnail-cache` | `{action: stats\|clear}` | Inspects (`{entries, bytes}`) or empties the project's thumbnail disk cache. |
 
-Both resolve the `asset` by id or name and return `{format: "png", size, base64}`: the encoded image bytes inline in the JSON result, so a remote UI can show a preview without sharing a filesystem. The asset's type selects the path. A **mesh** is drawn as a framed 3D render through `renderMeshThumbnail`, the same preview the Assets panel tiles use. A **texture** is the image itself, read straight back from the GPU.
+Both resolve the `asset` by id or name and return `{format: "png", width, height, base64, pending}`: the encoded image bytes inline in the JSON result, so a remote UI can show a preview without sharing a filesystem. The asset's type selects the path. A **mesh** is drawn as a framed 3D render through `renderMeshThumbnail`, the same preview the Assets panel tiles use. A **texture** is the image itself, GPU-downscaled to fit the requested size before being read back, so the cost is bounded by `size`, not the source resolution; an HDR texture is tonemapped on the way out. `width`/`height` report the actual PNG.
 
-The work is a synchronous GPU→CPU readback. The command records its own command buffer, renders or copies into a host-visible staging buffer, then `waitIdle`s before encoding the PNG to memory. That mirrors [`captureViewport`](../screenshots-and-capture/): it runs between frames on the command-drain step, never on the present path, so it never stalls or tears a frame in flight. Because it blocks for a GPU round-trip, it is heavier than the list and rename commands. A UI should request a thumbnail once and cache the result, keying off the catalog version rather than re-fetching every frame.
+A generated PNG is written to a persistent **disk cache** at `<projectRoot>/cache/thumbnails/`, keyed on the asset uuid, the requested size, and a stamp of the source (its file stat for meshes/textures, its resolved material state for materials). A hit reads the PNG straight off disk — no GPU work — so a warm start is disk reads, not regeneration. Edits self-invalidate through the stamp; `delete-asset` purges an asset's cached PNGs, a re-import's orphans are swept on the next project load, and `thumbnail-cache clear` empties the dir on demand.
+
+A cold miss does the real work — decode, upload, render, readback — on a **worker thread**, not the per-frame control drain, since a 4k HDR is ~1 s of it. The command enqueues a job and returns `pending: true` immediately; the worker writes the PNG to the disk cache and the client retries (with backoff) until the retry is a cache hit. The worker has its own Vulkan command pool and shares the graphics queue with the frame loop under a mutex (per-submit fences, never a device-wide `waitIdle`), so neither the render thread nor the editor's serialized control I/O ever blocks on generation. Uploaded textures/meshes are handed back to the main thread and folded into the in-session caches. A UI also caches the decoded blob per session on top, keying off the catalog version.
 
 ## Save and load
 
@@ -65,7 +68,7 @@ The project commands are the whole-project pair. One `project.json` holds the ca
 | Registration | `control_commands_asset.cpp` | `registerAssetCommands` |
 | Import | `control_commands_asset.cpp` | `import-model` (`importModel`, `spawnModel`), `import-texture` (`importTexture`) |
 | Catalog | `control_commands_asset.cpp` | `list-assets`, `rename-asset`, `create-asset-folder`, `rename-asset-folder`, `delete-asset-folder`, `move-asset`, `asset-usages`, `delete-asset`, `assign-asset`; `ctx.assets.catalog.entries` |
-| Thumbnails | `control_commands_asset.cpp` | `get-thumbnail`, `view-asset` (`renderMeshThumbnail`, base64 PNG-to-memory) |
+| Thumbnails | `control_commands_asset.cpp` | `get-thumbnail`, `view-asset`, `thumbnail-cache` (`renderMeshThumbnail`, base64 PNG-to-memory, the `assets.cppm` disk cache helpers) |
 | Project IO | `control_commands_asset.cpp` | `save-project`/`load-project`, `save-scene`/`load-scene` |
 | Capture + quit | `control_commands_asset.cpp` | `screenshot` (`captureViewport`, `requestWindowCapture`), `quit` |
 

@@ -64,8 +64,15 @@ and copies its decoded image straight back.
 
 There is no shared GPU context with the webview. The rendered image is read back into a host-visible
 staging buffer, encoded to a PNG in memory, and returned as base64 in the `get-thumbnail` result
-(`{format, size, base64}`). The [Assets panel](../assets-panel-and-thumbnails/) asks for 128px; the
-View modal re-renders at 512px through `view-asset`.
+(`{format, width, height, base64}`, the dimensions truthful to the PNG). The [Assets
+panel](../assets-panel-and-thumbnails/) asks for 128px; the View modal re-renders at 512px through
+`view-asset`. A mesh renders straight into the requested size, so it needs no downscale before
+readback — that step only kicks in for an oversized [texture](../assets-panel-and-thumbnails/) asset.
+
+The render is not synchronous on the request. A cold miss is generated on the engine's thumbnail
+[worker thread](../assets-panel-and-thumbnails/) (the loaded mesh is handed back to the main thread's
+cache afterward): `get-thumbnail` replies `pending` and the result lands in the persistent disk cache,
+so the editor's retry — and every later start — is a plain cache read, never a frame-loop stall.
 
 The webview decodes the base64 to a `Blob`, makes an object URL, and caches it by asset id. The
 readback runs once per asset, not once per tile or per frame. That
