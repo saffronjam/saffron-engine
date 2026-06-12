@@ -121,6 +121,10 @@ export namespace se
     // The built-in default material: white albedo, fully rough, non-metallic. Returned by the
     // resolve path when a referenced material is missing. Its id is in the reserved (< 1024) range.
     inline constexpr Uuid DefaultMaterialId{ 1 };
+
+    // The rig-preview floor slab's mesh, in the reserved (< 1024) range. Seeded into the GPU mesh cache
+    // (not the catalog), so the preview floor renders without a catalog row that would serialize.
+    inline constexpr Uuid PreviewFloorMeshId{ 2 };
     inline auto defaultMaterialAsset() -> MaterialAsset
     {
         return MaterialAsset{};
@@ -443,6 +447,7 @@ export namespace se
             if (entry.type == AssetType::Animation)
             {
                 record["duration"] = entry.duration;
+                record["tracks"] = entry.tracks;
             }
             // Container linkage + colorspace: omitted when default so standalone rows stay
             // byte-identical to before this field set existed.
@@ -457,6 +462,10 @@ export namespace se
             if (entry.colorspace != Colorspace::Auto)
             {
                 record["colorspace"] = colorspaceName(entry.colorspace);
+            }
+            if (entry.rigged)
+            {
+                record["rigged"] = true;
             }
             assets.push_back(std::move(record));
         }
@@ -512,6 +521,8 @@ export namespace se
             parsed.hdr = jsonBoolOr(entry, "hdr", false);
             parsed.linear = jsonBoolOr(entry, "linear", false);
             parsed.duration = jsonF32Or(entry, "duration", 0.0f);
+            parsed.tracks = static_cast<i32>(jsonU64Or(entry, "tracks", 0));
+            parsed.rigged = jsonBoolOr(entry, "rigged", false);
             parsed.container = Uuid{ jsonU64Or(entry, "container", 0) };
             if (auto it = entry.find("chunk"); it != entry.end() && it->is_number_integer())
             {
@@ -592,6 +603,7 @@ export namespace se
             u32 chunk = 0;           // TOC chunk index inside the container
             std::string colorspace;  // texture: srgb|linear|hdr|auto (empty otherwise)
             f32 duration = 0.0f;     // animation: clip length in seconds
+            i32 tracks = 0;          // animation: animated joint-channel count
         };
         u32 schema = MetadataSchemaVersion;
         Uuid modelId;
@@ -633,6 +645,7 @@ export namespace se
             if (sub.type == AssetType::Animation)
             {
                 record["duration"] = sub.duration;
+                record["tracks"] = sub.tracks;
             }
             subs.push_back(std::move(record));
         }
@@ -717,6 +730,7 @@ export namespace se
                 sub.chunk = static_cast<u32>(jsonU64Or(record, "chunk", 0));
                 sub.colorspace = jsonStringOr(record, "colorspace", std::string{});
                 sub.duration = jsonF32Or(record, "duration", 0.0f);
+                sub.tracks = static_cast<i32>(jsonU64Or(record, "tracks", 0));
                 meta.subAssets.push_back(std::move(sub));
             }
         }
@@ -910,9 +924,9 @@ export namespace se
     // entry simply never matches its (now-changed) stamp again. The dir lives outside assets/, so the
     // catalog scan and project save/load never see it.
 
-    // Bump when generation behaviour changes (the phase 1/2 mapping, a future format tweak) so every
-    // existing entry's stamp stops matching and the whole cache regenerates.
-    inline constexpr u32 ThumbnailCacheVersion = 1;
+    // Bump when generation behaviour changes so every existing entry's stamp stops matching and the
+    // whole cache regenerates. v2: model thumbnails render textured (per-submesh materials).
+    inline constexpr u32 ThumbnailCacheVersion = 2;
 
     auto thumbnailCacheDir(const AssetServer& assets) -> std::filesystem::path
     {
@@ -2916,7 +2930,6 @@ return {0}
         return loadAnimation(assets.root + "/" + entry->path);
     }
 
-
     // FNV-1a 64-bit of a file's bytes, as a decimal string. Content-addressed (not mtime) so a
     // reimport whose source is byte-identical is skipped (phase 13). Empty string on a read failure.
     auto hashFileFnv(const std::string& path) -> std::string
@@ -3061,17 +3074,23 @@ return {0}
     // a freshly baked container and a rediscovered one yield identical rows.
     auto catalogRowsForModel(const ContainerMetadata& meta, const std::string& relativePath) -> std::vector<AssetEntry>
     {
+        // A rigged container (its MetadataChunk carries a skin) flags every row it contributes, so the
+        // editor's grid can route a rigged mesh's double-click to the rig editor without a per-click probe.
+        const bool rigged = !meta.skin.is_null();
         std::vector<AssetEntry> rows;
         rows.push_back(
             AssetEntry{ .id = meta.modelId, .name = meta.name, .type = AssetType::Model, .path = relativePath });
+        rows.back().rigged = rigged;
         for (const ContainerMetadata::SubAsset& sub : meta.subAssets)
         {
             AssetEntry row;
             row.id = sub.subId;
             row.name = sub.name;
             row.type = sub.type;
+            row.rigged = rigged;
             row.colorspace = colorspaceFromName(sub.colorspace);
             row.duration = sub.duration;
+            row.tracks = sub.tracks;
             // An extracted (remapped) sub-asset is a standalone file: its row points at the external
             // path, not the container, so a scan agrees with the resolver and the ids never alias.
             const std::string key = std::to_string(sub.subId.value);
@@ -3254,6 +3273,7 @@ return {0}
             sub.name = clipName;
             sub.chunk = clipChunk;
             sub.duration = clip.duration;
+            sub.tracks = static_cast<i32>(clip.tracks.size());
             meta.subAssets.push_back(std::move(sub));
         }
 
@@ -3289,8 +3309,7 @@ return {0}
     // Imports a model source by translating it, baking it into one `.smodel`, and adding the catalog
     // rows it contributes. Produces an asset; does not upload to the GPU or spawn an entity. Pair with
     // instantiateModel to place it. (No renderer — baking is pure disk + catalog.)
-    auto importModel(AssetServer& assets, const std::string& path, const ImportOptions& options)
-        -> Result<BakeResult>
+    auto importModel(AssetServer& assets, const std::string& path, const ImportOptions& options) -> Result<BakeResult>
     {
         auto graph = translateModel(path);
         if (!graph)
@@ -3891,6 +3910,7 @@ return {0}
         row.path = relativeDest;
         row.colorspace = colorspaceFromName(sub->colorspace);
         row.duration = sub->duration;
+        row.tracks = sub->tracks;
         putAsset(assets.catalog, std::move(row));
 
         // Drop the stale reader (its TOC offsets shifted) and the sub-asset's GPU ref so the next
@@ -3952,6 +3972,7 @@ return {0}
                 row.chunk = static_cast<i32>(sub.chunk);
                 row.colorspace = colorspaceFromName(sub.colorspace);
                 row.duration = sub.duration;
+                row.tracks = sub.tracks;
                 putAsset(assets.catalog, std::move(row));
                 break;
             }
@@ -5356,6 +5377,34 @@ return {0}
         return out;
     }
 
+    // Seeds the rig-preview floor mesh (a unit cube) into the GPU mesh cache under the reserved
+    // PreviewFloorMeshId, once. No catalog row — a preview floor entity carries a MeshComponent for
+    // that id and loadMeshAsset resolves it cache-first, so it never serializes into project.json. A
+    // null entry left on failure is a negative-cache marker; clearAssetCaches drops it on project load.
+    auto ensurePreviewFloorMesh(AssetServer& assets, Renderer& renderer) -> bool
+    {
+        if (auto it = assets.meshRefByUuid.find(PreviewFloorMeshId.value); it != assets.meshRefByUuid.end())
+        {
+            return it->second != nullptr;
+        }
+        auto model = translateModel(assetPath("models/cube.gltf"));
+        if (!model)
+        {
+            logWarn(std::format("preview floor mesh: {}", model.error()));
+            assets.meshRefByUuid[PreviewFloorMeshId.value] = nullptr;
+            return false;
+        }
+        auto meshRef = uploadMesh(renderer, model->mesh);
+        if (!meshRef)
+        {
+            logWarn(std::format("preview floor mesh: {}", meshRef.error()));
+            assets.meshRefByUuid[PreviewFloorMeshId.value] = nullptr;
+            return false;
+        }
+        assets.meshRefByUuid[PreviewFloorMeshId.value] = *meshRef;
+        return true;
+    }
+
     auto loadEditorCameraModel(AssetServer& assets, Renderer& renderer) -> SystemMeshVisual*
     {
         SystemMeshVisual& visual = assets.editorCameraModel;
@@ -5940,9 +5989,10 @@ return {0}
     struct ThumbnailTextureSource
     {
         Uuid id;
-        std::string path;  // absolute source file under assets/
-        bool hdr = false;  // .hdr float source -> uploadTextureFloat + tonemapped preview
-        bool srgb = true;  // LDR colorspace: albedo/emissive sRGB, data maps linear
+        std::string path;       // absolute source file under assets/ (empty when bytes is set)
+        bool hdr = false;       // .hdr float source -> uploadTextureFloat + tonemapped preview
+        bool srgb = true;       // LDR colorspace: albedo/emissive sRGB, data maps linear
+        std::vector<u8> bytes;  // embedded chunk image bytes (decoded from memory when non-empty)
     };
 
     struct ThumbnailJob
@@ -5953,9 +6003,10 @@ return {0}
         std::string cachePath;                                 // <projectRoot>/cache/thumbnails/<…>.png
         ThumbnailTextureSource texture;                        // type == Texture
         std::string meshPath;                                  // type == Mesh (standalone .smesh, absolute)
-        std::vector<std::byte> meshBytes;                      // type == Mesh, embedded: the .smesh chunk image
+        std::vector<std::byte> meshBytes;                      // type == Mesh/Model, embedded: the .smesh chunk image
         MaterialAsset material;                                // type == Material (parent-resolved)
-        std::vector<ThumbnailTextureSource> materialTextures;  // the material's referenced textures
+        std::vector<ThumbnailTextureSource> materialTextures;  // the material's (or model's) referenced textures
+        std::vector<MaterialAsset> modelMaterials;             // type == Model: one per material slot, in slot order
     };
 
     struct ThumbnailReply
@@ -5985,7 +6036,7 @@ return {0}
     {
         if (src.hdr)
         {
-            auto decoded = decodeImageHdr(src.path);
+            auto decoded = src.bytes.empty() ? decodeImageHdr(src.path) : decodeImageFromMemoryHdr(src.bytes);
             if (!decoded)
             {
                 logWarn(decoded.error());
@@ -6000,7 +6051,7 @@ return {0}
             handback.emplace_back(src.id, *tex);
             return *tex;
         }
-        auto decoded = decodeImage(src.path);
+        auto decoded = src.bytes.empty() ? decodeImage(src.path) : decodeImageFromMemory(src.bytes);
         if (!decoded)
         {
             logWarn(decoded.error());
@@ -6074,6 +6125,39 @@ return {0}
                 return Err(tex.error());
             }
             return encodeTextureThumbnailPng(renderer, *tex, job.size);
+        }
+        if (job.type == AssetType::Model)
+        {
+            std::unordered_map<u64, Ref<GpuTexture>> local;
+            for (const ThumbnailTextureSource& src : job.materialTextures)
+            {
+                if (auto tex = thumbnailUploadTexture(renderer, src, texOut))
+                {
+                    local[src.id.value] = tex;
+                }
+            }
+            const auto resolveTex = [&](Uuid tid) -> Ref<GpuTexture>
+            {
+                auto it = local.find(tid.value);
+                return it != local.end() ? it->second : Ref<GpuTexture>{};
+            };
+            std::vector<SubmeshMaterial> submeshMaterials;
+            submeshMaterials.reserve(job.modelMaterials.size());
+            for (const MaterialAsset& mat : job.modelMaterials)
+            {
+                submeshMaterials.push_back(buildSubmeshMaterial(mat, resolveTex));
+            }
+            auto mesh = loadMeshFromBytes(std::span<const std::byte>{ job.meshBytes });
+            if (!mesh)
+            {
+                return Err(mesh.error());
+            }
+            auto meshRef = uploadMesh(renderer, *mesh);
+            if (!meshRef)
+            {
+                return Err(meshRef.error());
+            }
+            return encodeModelThumbnailPng(renderer, *meshRef, submeshMaterials, job.size);
         }
         return Err(std::string{ "asset has no thumbnail" });
     }
@@ -6313,8 +6397,93 @@ return {0}
                 return Err(bytes.error());
             }
             stamp = thumbnailSourceStamp(assets, *match);
-            job.type = AssetType::Mesh;
             job.meshBytes = std::move(*bytes);
+            if (match->type == AssetType::Model)
+            {
+                // Textured preview: resolve each material slot (subAsset order matches Submesh.materialSlot)
+                // and hand the worker each referenced texture's embedded chunk bytes + colorspace.
+                std::unordered_set<u64> addedTextures;
+                const auto addTexture = [&](Uuid tid)
+                {
+                    if (tid.value == 0 || addedTextures.contains(tid.value))
+                    {
+                        return;
+                    }
+                    const AssetEntry* te = findAsset(assets.catalog, tid);
+                    if (te == nullptr || te->type != AssetType::Texture)
+                    {
+                        return;
+                    }
+                    ThumbnailTextureSource ts;
+                    ts.id = tid;
+                    if (te->container.value != 0)
+                    {
+                        auto tc = loadModelAsset(assets, te->container);
+                        if (!tc)
+                        {
+                            return;
+                        }
+                        Colorspace space = Colorspace::Srgb;
+                        if (const TocEntry* toc = tc->reader.find(ChunkKind::Texture, tid.value); toc != nullptr)
+                        {
+                            space = static_cast<Colorspace>(toc->flags);
+                        }
+                        const ByteSource tsrc = chunkSourceFor(assets, *tc, ChunkKind::Texture, tid);
+                        if (tsrc.path.empty())
+                        {
+                            return;
+                        }
+                        auto tb = tsrc.read();
+                        if (!tb)
+                        {
+                            return;
+                        }
+                        ts.bytes.resize(tb->size());
+                        if (!tb->empty())
+                        {
+                            std::memcpy(ts.bytes.data(), tb->data(), tb->size());
+                        }
+                        ts.hdr = space == Colorspace::Hdr;
+                        ts.srgb = space != Colorspace::Linear && space != Colorspace::Hdr;
+                    }
+                    else
+                    {
+                        ts.path = assets.root + "/" + te->path;
+                        ts.hdr = te->hdr;
+                        ts.srgb = !te->linear;
+                    }
+                    addedTextures.insert(tid.value);
+                    job.materialTextures.push_back(std::move(ts));
+                };
+                for (const ContainerMetadata::SubAsset& sub : container->meta.subAssets)
+                {
+                    if (sub.type != AssetType::Material)
+                    {
+                        continue;
+                    }
+                    MaterialAsset mat;
+                    if (auto resolved = resolveMaterial(assets, id, sub.subId))
+                    {
+                        mat = std::move(*resolved);
+                    }
+                    else
+                    {
+                        logWarn(std::format("model {}: material {} unresolved: {}", id.value, sub.subId.value,
+                                            resolved.error()));
+                    }
+                    for (Uuid tid : { mat.albedoTexture, mat.ormTexture, mat.normalTexture, mat.emissiveTexture,
+                                      mat.heightTexture })
+                    {
+                        addTexture(tid);
+                    }
+                    job.modelMaterials.push_back(std::move(mat));
+                }
+                job.type = AssetType::Model;
+            }
+            else
+            {
+                job.type = AssetType::Mesh;
+            }
         }
         else
         {

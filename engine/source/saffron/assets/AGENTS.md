@@ -13,7 +13,7 @@ GPU caches. Imported by `Saffron.Control` (the asset/scene/animation command fil
 |---|---|
 | Catalog + GPU cache | `AssetServer`, `meshRefByUuid`/`textureRefByUuid`, `clearAssetCaches`, catalog↔json |
 | Project I/O | `saveProject`/`loadProject`/`createProject`, `ProjectVersion`, app-data/user roots |
-| Import | `importTexture`/`importModel`, `registerTextureBytes`, `loadMeshAsset`/`loadTextureAsset` |
+| Import | `importModel`/`bakeModel`/`instantiateModel`/`reimportModel`, `importTexture`/`registerTextureBytes`, `loadMeshAsset`/`loadTextureAsset`/`loadAnimationClipAsset` |
 | Materials | `.smat` serde, `loadMaterialAsset`, `applyOverrides`, `lowerGraphToParams`, `compileMaterial*Shader`, `resolveEntityMaterials` |
 | Scene driver | `renderScene`, `pickEntity`, `spawnModel`/`spawnSkinnedModel` |
 
