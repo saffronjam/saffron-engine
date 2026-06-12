@@ -668,6 +668,190 @@ namespace se
         return std::make_shared<GpuTexture>(std::move(texture));
     }
 
+    // Renders a model's mesh under the studio preview lighting, each submesh shaded with its own
+    // material from the table (indexed by Submesh.materialSlot), framed by the mesh bounds. The
+    // textured counterpart to renderMeshThumbnail — the asset tile shows the model as it looks.
+    auto renderModelThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh,
+                              const std::vector<SubmeshMaterial>& submeshMaterials, u32 size) -> Result<Ref<GpuTexture>>
+    {
+        if (!mesh)
+        {
+            return Err(std::string{ "renderModelThumbnail: null mesh" });
+        }
+        if (!renderer.pipelines.preview)
+        {
+            auto created = newPreviewPipeline(renderer, assetPath("shaders/preview.spv"));
+            if (!created)
+            {
+                return Err(created.error());
+            }
+            renderer.pipelines.preview = *created;
+        }
+        const Ref<Pipeline> pipeline = renderer.pipelines.preview;
+
+        const vk::SampleCountFlagBits samples = thumbnailSampleCount(renderer);
+        const bool msaa = samples != vk::SampleCountFlagBits::e1;
+        auto colorImage = newColorImage(renderer, size, size, renderer.swapchain.format, false, samples);
+        if (!colorImage)
+        {
+            return Err(colorImage.error());
+        }
+        Image color = std::move(*colorImage);
+        Image resolve;
+        if (msaa)
+        {
+            auto resolveImage = newColorImage(renderer, size, size, renderer.swapchain.format);
+            if (!resolveImage)
+            {
+                return Err(resolveImage.error());
+            }
+            resolve = std::move(*resolveImage);
+        }
+        auto depthImage = newDepthImage(renderer, size, size, samples);
+        if (!depthImage)
+        {
+            return Err(depthImage.error());
+        }
+        Image depth = std::move(*depthImage);
+
+        // Frame the mesh from the 3/4 direction preview.slang assumes for its fixed view vector, so the
+        // specular reads correctly; distance fits the bounding sphere.
+        const glm::vec3 center = (mesh->boundsMin + mesh->boundsMax) * 0.5f;
+        f32 radius = glm::length(mesh->boundsMax - mesh->boundsMin) * 0.5f;
+        if (radius <= 0.0001f)
+        {
+            radius = 1.0f;
+        }
+        const f32 fovy = glm::radians(45.0f);
+        const f32 distance = radius / glm::tan(fovy * 0.5f) * 1.3f;
+        const glm::vec3 eye = center + glm::normalize(glm::vec3(0.3f, 0.4f, 1.0f)) * distance;
+        const glm::mat4 view = glm::lookAt(eye, center, glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 proj =
+            glm::perspective(fovy, 1.0f, glm::max(0.01f, distance - radius * 2.0f), distance + radius * 2.0f);
+        proj[1][1] *= -1.0f;
+        const glm::mat4 viewProj = proj * view;
+
+        const u32 white = renderer.defaultWhiteTexture ? renderer.defaultWhiteTexture->bindlessIndex : 0u;
+        const auto idx = [&](const Ref<GpuTexture>& t) { return (t && t->image) ? t->bindlessIndex : white; };
+
+        vk::CommandBufferAllocateInfo cmdAlloc{};
+        cmdAlloc.commandPool = oneOffCommandPool(renderer);
+        cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
+        cmdAlloc.commandBufferCount = 1;
+        auto cmds = checked(renderer.context.device.allocateCommandBuffers(cmdAlloc),
+                            "renderModelThumbnail: allocateCommandBuffers");
+        if (!cmds)
+        {
+            return Err(cmds.error());
+        }
+        vk::CommandBuffer cmd = (*cmds)[0];
+        vk::CommandBufferBeginInfo begin{};
+        begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        static_cast<void>(cmd.begin(begin));
+
+        transitionImage(cmd, color.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                        vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
+        if (msaa)
+        {
+            transitionImage(cmd, resolve.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+                            vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                            vk::AccessFlagBits2::eColorAttachmentWrite);
+        }
+        transitionImage(cmd, depth.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
+                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                        vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+                            vk::PipelineStageFlagBits2::eLateFragmentTests,
+                        vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::ImageAspectFlagBits::eDepth);
+
+        vk::RenderingAttachmentInfo colorAttach{};
+        colorAttach.imageView = color.view;
+        colorAttach.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        colorAttach.loadOp = vk::AttachmentLoadOp::eClear;
+        colorAttach.storeOp = msaa ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore;
+        colorAttach.clearValue =
+            vk::ClearValue{ vk::ClearColorValue{ std::array<f32, 4>{ 0.10f, 0.10f, 0.12f, 1.0f } } };
+        if (msaa)
+        {
+            colorAttach.resolveMode = vk::ResolveModeFlagBits::eAverage;
+            colorAttach.resolveImageView = resolve.view;
+            colorAttach.resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        }
+        vk::RenderingAttachmentInfo depthAttach{};
+        depthAttach.imageView = depth.view;
+        depthAttach.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        depthAttach.loadOp = vk::AttachmentLoadOp::eClear;
+        depthAttach.storeOp = vk::AttachmentStoreOp::eDontCare;
+        depthAttach.clearValue = vk::ClearValue{ vk::ClearDepthStencilValue{ 1.0f, 0 } };
+        vk::RenderingInfo rendering{};
+        rendering.renderArea = vk::Rect2D{ vk::Offset2D{ 0, 0 }, vk::Extent2D{ size, size } };
+        rendering.layerCount = 1;
+        rendering.setColorAttachments(colorAttach);
+        rendering.setPDepthAttachment(&depthAttach);
+        cmd.beginRendering(rendering);
+
+        vk::Viewport viewport{ 0.0f, 0.0f, static_cast<f32>(size), static_cast<f32>(size), 0.0f, 1.0f };
+        cmd.setViewport(0, viewport);
+        cmd.setScissor(0, vk::Rect2D{ vk::Offset2D{ 0, 0 }, vk::Extent2D{ size, size } });
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline->layout, 0, renderer.descriptors.bindlessSet,
+                               {});
+        vk::DeviceSize offset = 0;
+        cmd.bindVertexBuffers(0, mesh->vertexBuffer, offset);
+        cmd.bindIndexBuffer(mesh->indexBuffer, 0, vk::IndexType::eUint32);
+        const SubmeshMaterial fallback{};
+        for (const Submesh& submesh : mesh->submeshes)
+        {
+            const SubmeshMaterial& m =
+                submeshMaterials.empty()
+                    ? fallback
+                    : submeshMaterials[std::min<std::size_t>(submesh.materialSlot, submeshMaterials.size() - 1)];
+            u32 features = 0u;
+            if (m.normalTexture && m.normalTexture->image)
+            {
+                features |= 1u;  // FEATURE_NORMAL
+            }
+            PreviewPush push{};
+            push.viewProj = viewProj;
+            push.baseColor = m.baseColor;
+            push.tex =
+                glm::uvec4{ idx(m.albedoTexture), idx(m.metallicRoughnessTexture), idx(m.normalTexture), features };
+            push.pbr = glm::vec4{ m.metallic, m.roughness, m.normalStrength, 0.0f };
+            cmd.pushConstants(pipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+                              0, sizeof(push), &push);
+            cmd.drawIndexed(submesh.indexCount, 1, submesh.firstIndex, submesh.vertexOffset, 0);
+        }
+        cmd.endRendering();
+
+        Image& result = msaa ? resolve : color;
+        transitionImage(cmd, result.image, vk::ImageLayout::eColorAttachmentOptimal,
+                        vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                        vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader,
+                        vk::AccessFlagBits2::eShaderSampledRead);
+        static_cast<void>(cmd.end());
+
+        auto submitted = submitAndWait(renderer, cmd);
+        renderer.context.device.freeCommandBuffers(oneOffCommandPool(renderer), cmd);
+        if (!submitted)
+        {
+            return Err(submitted.error());
+        }
+
+        GpuTexture texture;
+        texture.device = renderer.context.device;
+        texture.allocator = renderer.context.allocator;
+        texture.image = result.image;
+        texture.view = result.view;
+        texture.alloc = result.alloc;
+        texture.extent = result.extent;
+        texture.format = result.format;
+        result.image = nullptr;
+        result.view = nullptr;
+        result.alloc = nullptr;
+        return std::make_shared<GpuTexture>(std::move(texture));
+    }
+
     // A transient 1x image for the thumbnail downscale chain: TRANSFER_DST | TRANSFER_SRC only
     // (blit target then blit source; never sampled or stored). No view — blit/copy take images.
     static auto newBlitImage(Renderer& renderer, u32 width, u32 height, vk::Format format) -> Result<Image>
@@ -873,6 +1057,18 @@ namespace se
     {
         // Render the framed mesh to a size×size texture, then read that texture back.
         auto tex = renderMeshThumbnail(renderer, mesh, size);
+        if (!tex)
+        {
+            return Err(tex.error());
+        }
+        return encodeTextureThumbnailPng(renderer, *tex, size);
+    }
+
+    auto encodeModelThumbnailPng(Renderer& renderer, const Ref<GpuMesh>& mesh,
+                                 const std::vector<SubmeshMaterial>& submeshMaterials, u32 size) -> Result<ThumbnailPng>
+    {
+        // Render the framed, textured model to a size×size texture, then read that texture back.
+        auto tex = renderModelThumbnail(renderer, mesh, submeshMaterials, size);
         if (!tex)
         {
             return Err(tex.error());

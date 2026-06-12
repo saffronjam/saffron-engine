@@ -1819,6 +1819,12 @@ export namespace se
     // (a node-graph material's compiled surface), used for a fresh per-call pipeline.
     auto renderMaterialPreview(Renderer& renderer, const SubmeshMaterial& material, u32 size,
                                const std::string& shaderSpv = std::string{}) -> Result<Ref<GpuTexture>>;
+    // Renders a model's mesh with its per-submesh materials (indexed by Submesh.materialSlot) under the
+    // same studio lighting as renderMaterialPreview, framed by the mesh AABB — the textured asset-tile
+    // preview. An out-of-band render that waits idle, like the other thumbnail renders.
+    auto renderModelThumbnail(Renderer& renderer, const Ref<GpuMesh>& mesh,
+                              const std::vector<SubmeshMaterial>& submeshMaterials, u32 size)
+        -> Result<Ref<GpuTexture>>;
 
     // How a captured RGBA16F buffer is mapped to 8-bit PNG. `Clamp` clamps [0,1]×255 — correct for
     // an already-tonemapped offscreen (screenshots, mesh/material previews). `Tonemap` Reinhard-maps
@@ -1844,6 +1850,11 @@ export namespace se
     // cost is bounded by `size` regardless of source resolution; `width`/`height` report the PNG.
     // `transfer` controls HDR mapping — pass Tonemap for an HDR asset, Clamp otherwise.
     auto encodeAssetThumbnailPng(Renderer& renderer, const Ref<GpuMesh>& mesh, u32 size) -> Result<ThumbnailPng>;
+    // Like encodeAssetThumbnailPng but shades the mesh with its per-submesh materials (the textured
+    // model preview) rather than the flat mesh look.
+    auto encodeModelThumbnailPng(Renderer& renderer, const Ref<GpuMesh>& mesh,
+                                 const std::vector<SubmeshMaterial>& submeshMaterials, u32 size)
+        -> Result<ThumbnailPng>;
     auto encodeTextureThumbnailPng(Renderer& renderer, const Ref<GpuTexture>& texture, u32 size,
                                    PngTransfer transfer = PngTransfer::Clamp) -> Result<ThumbnailPng>;
 
