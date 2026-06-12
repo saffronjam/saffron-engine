@@ -97,4 +97,4 @@ but does not yet populate.
 - [Playback runtime](../playback-runtime/) — the evaluator whose `time` the playhead shows
 - [Skeleton overlay](../skeleton-overlay/) — the viewport bones the preview moves
 - [Animation data model](../animation-data-model/) — the clip and pose types behind the bars
-- [Rig editor](../../ui-and-editor/rig-editor/) — the same transport + surface components, mounted against the preview rig
+- [Asset editor](../../ui-and-editor/asset-editor/) — the same transport + surface components, mounted against the previewed model

@@ -76,4 +76,4 @@ are session state — not serialized into the project.
 - [Playback runtime](../playback-runtime/) — the evaluator that moves the joints this draws
 - [Animation data model](../animation-data-model/) — the skeleton and pose types it reads
 - [Gizmo](../../ui-and-editor/gizmo/) — the native overlay path it shares
-- [Rig editor](../../ui-and-editor/rig-editor/) — keys this overlay to the previewed rig and adds a highlight channel
+- [Asset editor](../../ui-and-editor/asset-editor/) — keys this overlay to the previewed model and adds a highlight channel
