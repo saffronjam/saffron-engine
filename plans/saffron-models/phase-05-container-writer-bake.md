@@ -1,7 +1,15 @@
 # Phase 05 — Container writer (bake `.smodel`)
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 **Depends on:** 04
+
+> Implementation note: `bakeModel` landed additively (signature `bakeModel(assets, graph, options,
+> sourcePath, modelId)` — `sourcePath` is needed for the import recipe + model name). `importModel`
+> stays on the coupled `.smesh`/spawn path this phase; the import-*flow* repoint (and the "one
+> `.smodel`, no loose files, no spawn" e2e) lands in **phase 08**, where instantiate (07) exists to
+> spawn from a container — you cannot spawn from a baked container until the 06 loader + 07 instantiate
+> are present, and dozens of e2e tests depend on `add-entity cube/model` spawning. Verified by the
+> `runBakeModelSelfTest` C++ self-test instead (bake → prefix-read → MESH chunk loads).
 
 ## Goal
 

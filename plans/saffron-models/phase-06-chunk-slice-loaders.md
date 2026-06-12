@@ -1,7 +1,16 @@
 # Phase 06 — Chunk-slice loaders + GPU cache by sub-id
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 **Depends on:** 05
+
+> Implementation note: the base-offset `loadMesh` is realized as `loadMeshFromBytes` /
+> `loadMeshSkinFromBytes` / `loadAnimationFromBytes` (parse a `.smesh`/`.sanim` image from a memory
+> span, validating against the span length) — a chunk slice is read into memory via `ByteSource` and
+> parsed identically to a whole file. `loadMeshAsset` / `loadTextureAsset` now route an embedded
+> sub-asset (`AssetEntry.container != 0`) through `resolveMesh` / `resolveTexture`, so the draw path
+> stays unchanged. The GPU-free slice path (open container, slice, parse, `resolveMaterial`, remap
+> fallback) is covered by `runChunkLoaderSelfTest`; the GPU upload half of `resolveMesh/Texture` is
+> exercised by the phase 07/08 instantiate + render e2e.
 
 ## Goal
 

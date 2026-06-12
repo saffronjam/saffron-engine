@@ -1,7 +1,17 @@
 # Phase 08 — Split import/instantiate control commands
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 **Depends on:** 07
+
+> Implementation note: `import-model-to-asset` (bake, no spawn) + `instantiate-model` (spawn from an
+> existing model asset) added, with `importModelToAsset` (`translateModel`→`bakeModel`→catalog rows) as
+> the engine seam. The legacy `import-model` command is **kept as-is** (not retired/composed): ~20 e2e
+> tests, the editor, and `tools/check-projects` depend on its spawn + loose-artifact behaviour, so the
+> safe call is the additive one — the decoupled flow is the future path the editor (16) uses, the
+> coupled path stays green. The result DTO carries `type:"model"` as a plain string; surfacing `Model`
+> in `AssetTypeDto` (so `list-assets` labels it) is deferred to phase 16 where the editor consumes it.
+> Verified by `tests/e2e/model_asset.test.ts` (import → no spawn → instantiate ×2 → two entities,
+> validation-clean) and the 127-check contract test.
 
 ## Goal
 

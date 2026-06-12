@@ -1,7 +1,16 @@
 # Phase 07 — Decoupled instantiate from container
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 **Depends on:** 06
+
+> Implementation note: `instantiateModel(scene, assets, modelId, name)` — no `Renderer` needed, since
+> `spawnModel`/`spawnSkinnedModel` only set component uuids (GPU upload is lazy at draw via
+> `loadMeshAsset`→`resolveMesh`). It reconstructs an `ImportResult` from the MetadataChunk
+> (`importedNodesFromJson`/`importedSkinFromJson`, material slots via `resolveMaterial`) and reuses the
+> existing spawn machinery, so the render path is unchanged. `ModelInstanceComponent` is registered
+> inline in `scene_edit_components.cpp` (mirroring `MaterialAssetComponent`) — no `gen.ts` change, so
+> the generated files and contract test are untouched. Import still spawns on its own path this phase;
+> the flow cutover lands in phase 08.
 
 ## Goal
 
