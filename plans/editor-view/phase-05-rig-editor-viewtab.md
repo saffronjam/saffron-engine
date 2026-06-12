@@ -1,6 +1,6 @@
 # Phase 5 — the rigEditor ViewTab + workspace shell
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (kept as a build record; superseded by the general Asset editor — see this dir's README)
 **Depends on:** 2 (the preview scene), 4 (the subsurface bounds hook)
 
 ## Goal

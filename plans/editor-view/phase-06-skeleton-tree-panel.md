@@ -1,6 +1,6 @@
 # Phase 6 — the skeleton tree panel
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (kept as a build record; superseded by the general Asset editor — see this dir's README)
 **Depends on:** 1 (`get-rig`), 3 (the highlight channel), 5 (the workspace shell)
 
 ## Goal
