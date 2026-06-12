@@ -13,6 +13,21 @@ everything DX11-specific and the heavy OOP.
 
 ## Conventions (not optional)
 
+- **NO LEGACY. NO COMPAT SHIMS. EVER.** This is a clean-slate codebase (`main` is an intentional orphan
+  fresh start — there is nothing on disk, in the field, or downstream to be backward-compatible with).
+  There is exactly **one** way to do each thing, and one code path for it. When a change would break an
+  existing flow, command, file format, component, or test: **break it, then rebuild that flow on the new
+  design — in the same change.** This is absolute and overrides any instinct toward caution:
+  - **Never** keep an old code path alive "for back-compat" or "so callers don't break".
+  - **Never** add a second command / function / format / field that duplicates an existing one's purpose
+    just to avoid disturbing its callers. Replace the old one and update every caller.
+  - **Never** defer a cutover by leaving the superseded path running next to the new one ("additive for
+    now, retire later" is forbidden — *now* is when you retire it).
+  - If you ever catch the thought *"I won't do X because it would break Y"* — that is the signal to **do X
+    and fix Y**, not to preserve Y. Update every caller, delete the dead path, and fix the tests together.
+  A feature is **not done** while a superseded flow, command, or format still exists anywhere in the tree.
+  "I documented the deferral" does not count as done. Migration of existing user data is out of scope
+  (start a fresh project), so there is never a migration burden to hide behind.
 - **Code style:** `CONVENTIONS.md` (Go-flavored C++) — authoritative, the whole codebase follows it.
 - **Comments:** minimal. No inline noise, **no section/banner dividers ever**, brief `///` on exported
   declarations. No change-journey notes ("previously/used to/now that…") — say what the code does now,
