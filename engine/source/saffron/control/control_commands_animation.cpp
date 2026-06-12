@@ -53,6 +53,36 @@ namespace se
             return Err(std::format("no animation clip '{}'", name));
         }
 
+        // Resolve an AssetSelector (id-or-name) to its owning `.smodel` container id: the model's own id
+        // for a model, the container for a sub-asset, 0 for a standalone asset.
+        auto resolveContainer(EngineContext& ctx, const AssetSelector& asset) -> Result<Uuid>
+        {
+            const json& sel = asset.value;
+            const std::string name = sel.is_string() ? sel.get<std::string>() : std::string{};
+            u64 byId = 0;
+            if (sel.is_number_unsigned())
+            {
+                byId = sel.get<u64>();
+            }
+            else if (sel.is_number_integer())
+            {
+                const i64 v = sel.get<i64>();
+                byId = v >= 0 ? static_cast<u64>(v) : 0;
+            }
+            else
+            {
+                byId = std::strtoull(name.c_str(), nullptr, 10);
+            }
+            for (const AssetEntry& entry : ctx.assets.catalog.entries)
+            {
+                if (entry.id.value == byId || entry.name == name)
+                {
+                    return entry.type == AssetType::Model ? entry.id : entry.container;
+                }
+            }
+            return Err(std::format("no asset '{}'", name));
+        }
+
         auto wrapName(AnimationPlayerComponent::Wrap wrap) -> std::string
         {
             if (wrap == AnimationPlayerComponent::Wrap::Once)
@@ -101,6 +131,7 @@ namespace se
             out.show = opts.show;
             out.axes = opts.axes;
             out.jointSize = opts.jointSize;
+            out.highlightJoint = opts.highlightJoint;
             return out;
         }
 
@@ -169,16 +200,37 @@ namespace se
             });
 
         registerCommand<ListClipsParams, ListClipsResult>(
-            reg, "list-clips", "list-clips {entity} — the animation clips in the project catalog",
-            [](EngineContext& ctx, const ListClipsParams&) -> Result<ListClipsResult>
+            reg, "list-clips",
+            "list-clips {entity?, asset?} — animation clips: a model container's own, or the full catalog",
+            [](EngineContext& ctx, const ListClipsParams& params) -> Result<ListClipsResult>
             {
+                Uuid container{ 0 };
+                if (params.asset)
+                {
+                    auto resolved = resolveContainer(ctx, *params.asset);
+                    if (!resolved)
+                    {
+                        return Err(resolved.error());
+                    }
+                    container = *resolved;
+                    if (container.value == 0)
+                    {
+                        return Err(std::string{ "asset is not part of a model container" });
+                    }
+                }
                 ListClipsResult out;
                 for (const AssetEntry& entry : ctx.assets.catalog.entries)
                 {
-                    if (entry.type == AssetType::Animation)
+                    if (entry.type != AssetType::Animation)
                     {
-                        out.clips.push_back(AnimationClipDto{ WireUuid{ entry.id.value }, entry.name, entry.duration });
+                        continue;
                     }
+                    if (container.value != 0 && entry.container.value != container.value)
+                    {
+                        continue;
+                    }
+                    out.clips.push_back(
+                        AnimationClipDto{ WireUuid{ entry.id.value }, entry.name, entry.duration, entry.tracks });
                 }
                 return out;
             });
@@ -211,7 +263,9 @@ namespace se
                 p.speed = params.speed.value_or(1.0f);
                 p.wrap = params.loop.value_or(true) ? AnimationPlayerComponent::Wrap::Loop
                                                     : AnimationPlayerComponent::Wrap::Once;
-                p.playing = true;
+                // `paused` loads the clip at frame 0 without advancing (UE5's clip-pick semantics); the
+                // pose still previews in Edit so the rig shows frame 0.
+                p.playing = !params.paused.value_or(false);
                 p.previewInEdit = true;
                 ctx.sceneEdit.animationVersion += 1;
                 return stateOf(ctx, p);
@@ -300,6 +354,18 @@ namespace se
                     opts.jointSize = std::max(0.5f, *params.jointSize);
                 }
                 return skeletonOverlayState(opts);
+            });
+
+        // Tint one joint of the previewed rig's overlay, addressed by its get-rig node index. The rig
+        // editor's skeleton tree drives this instead of scene selection — selecting a bone entity would
+        // null the selection-keyed animation state and break the rig timeline. -1 clears the highlight.
+        registerCommand<SetSkeletonHighlightParams, SkeletonOverlayResult>(
+            reg, "set-skeleton-highlight",
+            "set-skeleton-highlight {joint} — tint a previewed rig's joint by its get-rig node index (-1 clears)",
+            [](EngineContext& ctx, const SetSkeletonHighlightParams& params) -> Result<SkeletonOverlayResult>
+            {
+                ctx.sceneEdit.skeletonOverlay.highlightJoint = params.joint < 0 ? -1 : params.joint;
+                return skeletonOverlayState(ctx.sceneEdit.skeletonOverlay);
             });
 
         registerCommand<GetFootIkParams, FootIkResult>(
