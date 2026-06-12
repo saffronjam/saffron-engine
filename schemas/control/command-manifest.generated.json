@@ -429,6 +429,20 @@
       "fixture": "skeleton-overlay-on"
     },
     {
+      "name": "set-skeleton-highlight",
+      "params": "SetSkeletonHighlightParams",
+      "result": "SkeletonOverlayResult",
+      "status": "typed",
+      "skip": "needs an active rig preview — covered in make e2e"
+    },
+    {
+      "name": "set-rig-preview-options",
+      "params": "SetRigPreviewOptionsParams",
+      "result": "RigPreviewOptionsResult",
+      "status": "typed",
+      "skip": "needs an active rig preview — covered in make e2e"
+    },
+    {
       "name": "get-foot-ik",
       "params": "GetFootIkParams",
       "result": "FootIkResult",
@@ -672,6 +686,27 @@
       "result": "AssetReferencesResult",
       "status": "typed",
       "skip": "requires an asset id from a prior import"
+    },
+    {
+      "name": "get-rig",
+      "params": "GetRigParams",
+      "result": "RigResult",
+      "status": "typed",
+      "skip": "needs an imported rig — covered in make e2e"
+    },
+    {
+      "name": "enter-rig-preview",
+      "params": "EnterRigPreviewParams",
+      "result": "EnterRigPreviewResult",
+      "status": "typed",
+      "skip": "needs an imported rig — covered in make e2e"
+    },
+    {
+      "name": "exit-rig-preview",
+      "params": "EmptyParams",
+      "result": "PlayStateResult",
+      "status": "typed",
+      "skip": "needs an active rig preview — covered in make e2e"
     },
     {
       "name": "clean-assets",

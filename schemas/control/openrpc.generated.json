@@ -1104,6 +1104,42 @@
       }
     },
     {
+      "name": "set-skeleton-highlight",
+      "summary": "tint a previewed rig's joint by its get-rig node index (-1 clears)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetSkeletonHighlightParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SkeletonOverlayResult"
+        }
+      }
+    },
+    {
+      "name": "set-rig-preview-options",
+      "summary": "set-rig-preview-options {floor?} — preview-scene settings (show floor)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetRigPreviewOptionsParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RigPreviewOptionsResult"
+        }
+      }
+    },
+    {
       "name": "get-foot-ik",
       "summary": "a rig's foot-IK enable, ground height, and chain count",
       "params": [
@@ -1730,6 +1766,60 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AssetReferencesResult"
+        }
+      }
+    },
+    {
+      "name": "get-rig",
+      "summary": "get-rig {asset} — a model's bone tree + clips, read from its .smodel container",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/GetRigParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RigResult"
+        }
+      }
+    },
+    {
+      "name": "enter-rig-preview",
+      "summary": "enter-rig-preview {asset} — open a model's rig in an isolated preview scene",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EnterRigPreviewParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/EnterRigPreviewResult"
+        }
+      }
+    },
+    {
+      "name": "exit-rig-preview",
+      "summary": "exit-rig-preview — close the rig preview and restore the authored scene + camera",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
         }
       }
     },
@@ -2495,12 +2585,16 @@
           },
           "duration": {
             "type": "number"
+          },
+          "tracks": {
+            "type": "integer"
           }
         },
         "required": [
           "id",
           "name",
-          "duration"
+          "duration",
+          "tracks"
         ]
       },
       "AnimationStateParams": {
@@ -2591,6 +2685,12 @@
           },
           "container": {
             "type": "string"
+          },
+          "duration": {
+            "type": "number"
+          },
+          "rigged": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -3423,6 +3523,52 @@
         "properties": {},
         "required": []
       },
+      "EnterRigPreviewParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      },
+      "EnterRigPreviewResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rigEntity": {
+            "type": "string"
+          },
+          "bones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RigBoneEntityDto"
+            }
+          },
+          "target": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "distance": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "rigEntity",
+          "bones",
+          "target",
+          "distance"
+        ]
+      },
       "EntityList": {
         "type": "object",
         "additionalProperties": false,
@@ -3708,6 +3854,25 @@
           "entity"
         ]
       },
+      "GetRigParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      },
       "GetScriptSchemaParams": {
         "type": "object",
         "additionalProperties": false,
@@ -3889,11 +4054,19 @@
                 "type": "integer"
               }
             ]
+          },
+          "asset": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
           }
         },
-        "required": [
-          "entity"
-        ]
+        "required": []
       },
       "ListClipsResult": {
         "type": "object",
@@ -4701,6 +4874,9 @@
           },
           "blend": {
             "type": "number"
+          },
+          "paused": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -4726,6 +4902,9 @@
           },
           "animationVersion": {
             "type": "integer"
+          },
+          "previewAsset": {
+            "type": "string"
           }
         },
         "required": [
@@ -4733,7 +4912,8 @@
           "playVersion",
           "sceneVersion",
           "hasPrimaryCamera",
-          "animationVersion"
+          "animationVersion",
+          "previewAsset"
         ]
       },
       "PreviewRenderParams": {
@@ -5337,6 +5517,88 @@
           "hdr",
           "exposureEv",
           "aa"
+        ]
+      },
+      "RigBoneDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent": {
+            "type": "integer"
+          },
+          "joint": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "name",
+          "parent",
+          "joint"
+        ]
+      },
+      "RigBoneEntityDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "entity": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "entity"
+        ]
+      },
+      "RigPreviewOptionsResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "floor": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "floor"
+        ]
+      },
+      "RigResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mesh": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "bones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RigBoneDto"
+            }
+          },
+          "clips": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnimationClipDto"
+            }
+          }
+        },
+        "required": [
+          "mesh",
+          "name",
+          "bones",
+          "clips"
         ]
       },
       "ScanAssetsResult": {
@@ -6129,6 +6391,16 @@
           "restir"
         ]
       },
+      "SetRigPreviewOptionsParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "floor": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
       "SetRtShadowsResult": {
         "type": "object",
         "additionalProperties": false,
@@ -6194,6 +6466,18 @@
         },
         "required": [
           "shadows"
+        ]
+      },
+      "SetSkeletonHighlightParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "joint": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "joint"
         ]
       },
       "SetSkeletonOverlayParams": {
@@ -6320,12 +6604,16 @@
           },
           "jointSize": {
             "type": "number"
+          },
+          "highlightJoint": {
+            "type": "integer"
           }
         },
         "required": [
           "show",
           "axes",
-          "jointSize"
+          "jointSize",
+          "highlightJoint"
         ]
       },
       "StepParams": {

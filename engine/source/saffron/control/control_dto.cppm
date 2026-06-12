@@ -673,6 +673,8 @@ export namespace se
         std::string path;
         std::optional<std::string> folder;
         std::optional<WireUuid> container;  // present for a sub-asset embedded in a .smodel
+        std::optional<f32> duration;        // present (animation rows): clip length in seconds
+        std::optional<bool> rigged;         // present (true) when the asset belongs to a rigged .smodel
     };
 
     struct AssetList
@@ -1246,6 +1248,7 @@ export namespace se
         i32 sceneVersion;       // echoed so a stop reads as a scene change
         bool hasPrimaryCamera;  // captured at enterPlay; false drives the editor warning
         i32 animationVersion;   // bumped by the animation commands (Phase 12 reconcile poll)
+        WireUuid previewAsset;  // the model being rig-previewed, 0 when none (Edit/Play/Preview triad)
     };
 
     struct AnimationClipDto
@@ -1253,11 +1256,53 @@ export namespace se
         WireUuid id;
         std::string name;
         f32 duration;
+        i32 tracks;  // animated joint-channel count (0 when unknown, e.g. the global list-clips catalog)
+    };
+
+    struct RigBoneDto
+    {
+        i32 index;
+        std::string name;
+        i32 parent;
+        bool joint;
+    };
+
+    struct GetRigParams
+    {
+        AssetSelector asset;
+    };
+
+    struct RigResult
+    {
+        WireUuid mesh;
+        std::string name;
+        std::vector<RigBoneDto> bones;
+        std::vector<AnimationClipDto> clips;
+    };
+
+    struct EnterRigPreviewParams
+    {
+        AssetSelector asset;
+    };
+
+    struct RigBoneEntityDto
+    {
+        i32 index;        // the get-rig node index this preview entity stands in for
+        WireUuid entity;  // the spawned preview-scene entity uuid for that joint
+    };
+
+    struct EnterRigPreviewResult
+    {
+        WireUuid rigEntity;                   // the spawned rig mesh entity (the timeline target)
+        std::vector<RigBoneEntityDto> bones;  // joint node index -> spawned preview-scene entity
+        Vec3 target;                          // the framed orbit pivot (rig bounding-sphere center)
+        f32 distance;                         // the framing distance from the target (orbit radius)
     };
 
     struct ListClipsParams
     {
-        EntitySelector entity;
+        std::optional<EntitySelector> entity;  // accepted for wire-compat; ignored (the catalog is global)
+        std::optional<AssetSelector> asset;    // filter to a model container's clips (omit for the full catalog)
     };
 
     struct ListClipsResult
@@ -1269,9 +1314,10 @@ export namespace se
     {
         EntitySelector entity;
         AssetSelector clip;
-        std::optional<f32> speed;  // default 1
-        std::optional<bool> loop;  // default true
-        std::optional<f32> blend;  // default 0 (transition seconds)
+        std::optional<f32> speed;    // default 1
+        std::optional<bool> loop;    // default true
+        std::optional<f32> blend;    // default 0 (transition seconds)
+        std::optional<bool> paused;  // default false; true loads the clip at frame 0 without playing
     };
 
     struct SeekAnimationParams
@@ -1315,6 +1361,22 @@ export namespace se
         bool show;
         bool axes;
         f32 jointSize;
+        i32 highlightJoint;  // get-rig node index of the tinted joint, -1 = none
+    };
+
+    struct SetSkeletonHighlightParams
+    {
+        i32 joint;  // a get-rig node index to tint in the preview overlay, -1 = clear
+    };
+
+    struct SetRigPreviewOptionsParams
+    {
+        std::optional<bool> floor;  // show the preview floor slab
+    };
+
+    struct RigPreviewOptionsResult
+    {
+        bool floor;
     };
 
     struct SetFootIkParams
@@ -1611,9 +1673,14 @@ export namespace se
     auto dtoToJson(const SelectionResult& value) -> Json;
     auto dtoToJson(const PlayStateResult& value) -> Json;
     auto dtoToJson(const AnimationClipDto& value) -> Json;
+    auto dtoToJson(const RigBoneDto& value) -> Json;
+    auto dtoToJson(const RigResult& value) -> Json;
+    auto dtoToJson(const RigBoneEntityDto& value) -> Json;
+    auto dtoToJson(const EnterRigPreviewResult& value) -> Json;
     auto dtoToJson(const ListClipsResult& value) -> Json;
     auto dtoToJson(const AnimationStateResult& value) -> Json;
     auto dtoToJson(const SkeletonOverlayResult& value) -> Json;
+    auto dtoToJson(const RigPreviewOptionsResult& value) -> Json;
     auto dtoToJson(const FootIkResult& value) -> Json;
     auto dtoToJson(const WorldTransformResult& value) -> Json;
     auto dtoToJson(const DeselectResult& value) -> Json;
@@ -1701,12 +1768,16 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<SetProbesParams>) -> Result<SetProbesParams>;
     auto parseDto(const Json& params, DtoTag<SetExposureParams>) -> Result<SetExposureParams>;
     auto parseDto(const Json& params, DtoTag<StepParams>) -> Result<StepParams>;
+    auto parseDto(const Json& params, DtoTag<GetRigParams>) -> Result<GetRigParams>;
+    auto parseDto(const Json& params, DtoTag<EnterRigPreviewParams>) -> Result<EnterRigPreviewParams>;
     auto parseDto(const Json& params, DtoTag<ListClipsParams>) -> Result<ListClipsParams>;
     auto parseDto(const Json& params, DtoTag<PlayAnimationParams>) -> Result<PlayAnimationParams>;
     auto parseDto(const Json& params, DtoTag<SeekAnimationParams>) -> Result<SeekAnimationParams>;
     auto parseDto(const Json& params, DtoTag<SetAnimationLoopParams>) -> Result<SetAnimationLoopParams>;
     auto parseDto(const Json& params, DtoTag<AnimationStateParams>) -> Result<AnimationStateParams>;
     auto parseDto(const Json& params, DtoTag<SetSkeletonOverlayParams>) -> Result<SetSkeletonOverlayParams>;
+    auto parseDto(const Json& params, DtoTag<SetSkeletonHighlightParams>) -> Result<SetSkeletonHighlightParams>;
+    auto parseDto(const Json& params, DtoTag<SetRigPreviewOptionsParams>) -> Result<SetRigPreviewOptionsParams>;
     auto parseDto(const Json& params, DtoTag<SetFootIkParams>) -> Result<SetFootIkParams>;
     auto parseDto(const Json& params, DtoTag<GetFootIkParams>) -> Result<GetFootIkParams>;
 }

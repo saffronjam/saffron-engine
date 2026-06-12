@@ -679,6 +679,7 @@ export interface PlayStateResult {
   sceneVersion: number;
   hasPrimaryCamera: boolean;
   animationVersion: number;
+  previewAsset: WireUuid;
 }
 
 export interface StepParams {
@@ -701,7 +702,8 @@ export interface AnimationStateResult {
 }
 
 export interface ListClipsParams {
-  entity: WireUuid | string | number;
+  entity?: WireUuid | string | number;
+  asset?: WireUuid | string | number;
 }
 
 export interface ListClipsResult {
@@ -712,6 +714,7 @@ export interface AnimationClipDto {
   id: WireUuid;
   name: string;
   duration: number;
+  tracks: number;
 }
 
 export interface PlayAnimationParams {
@@ -720,6 +723,7 @@ export interface PlayAnimationParams {
   speed?: number;
   loop?: boolean;
   blend?: number;
+  paused?: boolean;
 }
 
 export interface SeekAnimationParams {
@@ -736,12 +740,25 @@ export interface SkeletonOverlayResult {
   show: boolean;
   axes: boolean;
   jointSize: number;
+  highlightJoint: number;
 }
 
 export interface SetSkeletonOverlayParams {
   show?: boolean;
   axes?: boolean;
   jointSize?: number;
+}
+
+export interface SetSkeletonHighlightParams {
+  joint: number;
+}
+
+export interface SetRigPreviewOptionsParams {
+  floor?: boolean;
+}
+
+export interface RigPreviewOptionsResult {
+  floor: boolean;
 }
 
 export interface GetFootIkParams {
@@ -991,6 +1008,8 @@ export interface AssetEntryDto {
   path: string;
   folder?: string;
   container?: WireUuid;
+  duration?: number;
+  rigged?: boolean;
 }
 
 export interface ScanAssetsResult {
@@ -1057,6 +1076,40 @@ export interface AssetReferencesResult {
   referencedBy: string[];
   references: string[];
   footprint: number;
+}
+
+export interface GetRigParams {
+  asset: WireUuid | string | number;
+}
+
+export interface RigResult {
+  mesh: WireUuid;
+  name: string;
+  bones: RigBoneDto[];
+  clips: AnimationClipDto[];
+}
+
+export interface RigBoneDto {
+  index: number;
+  name: string;
+  parent: number;
+  joint: boolean;
+}
+
+export interface EnterRigPreviewParams {
+  asset: WireUuid | string | number;
+}
+
+export interface EnterRigPreviewResult {
+  rigEntity: WireUuid;
+  bones: RigBoneEntityDto[];
+  target: Vec3;
+  distance: number;
+}
+
+export interface RigBoneEntityDto {
+  index: number;
+  entity: WireUuid;
 }
 
 export interface CleanAssetsParams {
@@ -1397,6 +1450,8 @@ export interface CommandParamsMap {
   "stop-preview": AnimationStateParams;
   "get-skeleton-overlay": EmptyParams;
   "set-skeleton-overlay": SetSkeletonOverlayParams;
+  "set-skeleton-highlight": SetSkeletonHighlightParams;
+  "set-rig-preview-options": SetRigPreviewOptionsParams;
   "get-foot-ik": GetFootIkParams;
   "set-foot-ik": SetFootIkParams;
   "get-script-status": EmptyParams;
@@ -1432,6 +1487,9 @@ export interface CommandParamsMap {
   "reimport-model": ReimportModelParams;
   "model-info": ModelInfoParams;
   "asset-references": AssetReferencesParams;
+  "get-rig": GetRigParams;
+  "enter-rig-preview": EnterRigPreviewParams;
+  "exit-rig-preview": EmptyParams;
   "clean-assets": CleanAssetsParams;
   "delete-unused": DeleteUnusedParams;
   "rename-asset": RenameAssetParams;
@@ -1529,6 +1587,8 @@ export interface CommandResultMap {
   "stop-preview": AnimationStateResult;
   "get-skeleton-overlay": SkeletonOverlayResult;
   "set-skeleton-overlay": SkeletonOverlayResult;
+  "set-skeleton-highlight": SkeletonOverlayResult;
+  "set-rig-preview-options": RigPreviewOptionsResult;
   "get-foot-ik": FootIkResult;
   "set-foot-ik": FootIkResult;
   "get-script-status": ScriptStatusResult;
@@ -1564,6 +1624,9 @@ export interface CommandResultMap {
   "reimport-model": ReimportModelResult;
   "model-info": ModelInfoResult;
   "asset-references": AssetReferencesResult;
+  "get-rig": RigResult;
+  "enter-rig-preview": EnterRigPreviewResult;
+  "exit-rig-preview": PlayStateResult;
   "clean-assets": CleanReport;
   "delete-unused": DeleteUnusedResult;
   "rename-asset": AssetRef;

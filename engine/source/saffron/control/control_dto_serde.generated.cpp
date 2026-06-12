@@ -1663,11 +1663,23 @@ namespace se
         ListClipsParams out;
 
         {
-            auto value = requiredField(params, "entity", 0, true);
-            if (!value) { return Err(std::move(value.error())); }
-            auto parsed = readEntitySelector(**value, "entity");
-            if (!parsed) { return Err(std::move(parsed.error())); }
-            out.entity = std::move(*parsed);
+            auto value = optionalField(params, "entity", 0, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readEntitySelector(*value, "entity");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.entity = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "asset", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readAssetSelector(*value, "asset");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.asset = std::move(*parsed);
+            }
         }
         return out;
     }
@@ -1719,6 +1731,16 @@ namespace se
                 auto parsed = readF32(*value, "blend");
                 if (!parsed) { return Err(std::move(parsed.error())); }
                 out.blend = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "paused", 5, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "paused");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.paused = std::move(*parsed);
             }
         }
         return out;
@@ -1799,6 +1821,36 @@ namespace se
                 auto parsed = readF32(*value, "jointSize");
                 if (!parsed) { return Err(std::move(parsed.error())); }
                 out.jointSize = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetSkeletonHighlightParams>) -> Result<SetSkeletonHighlightParams>
+    {
+        SetSkeletonHighlightParams out;
+
+        {
+            auto value = requiredField(params, "joint", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readI32(**value, "joint");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.joint = std::move(*parsed);
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetRigPreviewOptionsParams>) -> Result<SetRigPreviewOptionsParams>
+    {
+        SetRigPreviewOptionsParams out;
+
+        {
+            auto value = optionalField(params, "floor", 0, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "floor");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.floor = std::move(*parsed);
             }
         }
         return out;
@@ -2467,6 +2519,34 @@ namespace se
     auto parseDto(const Json& params, DtoTag<AssetReferencesParams>) -> Result<AssetReferencesParams>
     {
         AssetReferencesParams out;
+
+        {
+            auto value = requiredField(params, "asset", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readAssetSelector(**value, "asset");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.asset = std::move(*parsed);
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<GetRigParams>) -> Result<GetRigParams>
+    {
+        GetRigParams out;
+
+        {
+            auto value = requiredField(params, "asset", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readAssetSelector(**value, "asset");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.asset = std::move(*parsed);
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<EnterRigPreviewParams>) -> Result<EnterRigPreviewParams>
+    {
+        EnterRigPreviewParams out;
 
         {
             auto value = requiredField(params, "asset", 0, true);
@@ -3566,6 +3646,7 @@ namespace se
         out["sceneVersion"] = value.sceneVersion;
         out["hasPrimaryCamera"] = value.hasPrimaryCamera;
         out["animationVersion"] = value.animationVersion;
+        out["previewAsset"] = dtoToJson(value.previewAsset);
         return out;
     }
 
@@ -3596,6 +3677,7 @@ namespace se
         out["id"] = dtoToJson(value.id);
         out["name"] = value.name;
         out["duration"] = value.duration;
+        out["tracks"] = value.tracks;
         return out;
     }
 
@@ -3605,6 +3687,14 @@ namespace se
         out["show"] = value.show;
         out["axes"] = value.axes;
         out["jointSize"] = value.jointSize;
+        out["highlightJoint"] = value.highlightJoint;
+        return out;
+    }
+
+    auto dtoToJson(const RigPreviewOptionsResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["floor"] = value.floor;
         return out;
     }
 
@@ -3819,6 +3909,8 @@ namespace se
         out["path"] = value.path;
         if (value.folder) { out["folder"] = *value.folder; }
         if (value.container) { out["container"] = dtoToJson(*value.container); }
+        if (value.duration) { out["duration"] = *value.duration; }
+        if (value.rigged) { out["rigged"] = *value.rigged; }
         return out;
     }
 
@@ -3880,6 +3972,44 @@ namespace se
         out["referencedBy"] = dtoVectorToJson(value.referencedBy);
         out["references"] = dtoVectorToJson(value.references);
         out["footprint"] = value.footprint;
+        return out;
+    }
+
+    auto dtoToJson(const RigResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["mesh"] = dtoToJson(value.mesh);
+        out["name"] = value.name;
+        out["bones"] = dtoVectorToJson(value.bones);
+        out["clips"] = dtoVectorToJson(value.clips);
+        return out;
+    }
+
+    auto dtoToJson(const RigBoneDto& value) -> Json
+    {
+        Json out = Json::object();
+        out["index"] = value.index;
+        out["name"] = value.name;
+        out["parent"] = value.parent;
+        out["joint"] = value.joint;
+        return out;
+    }
+
+    auto dtoToJson(const EnterRigPreviewResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["rigEntity"] = dtoToJson(value.rigEntity);
+        out["bones"] = dtoVectorToJson(value.bones);
+        out["target"] = dtoToJson(value.target);
+        out["distance"] = value.distance;
+        return out;
+    }
+
+    auto dtoToJson(const RigBoneEntityDto& value) -> Json
+    {
+        Json out = Json::object();
+        out["index"] = value.index;
+        out["entity"] = dtoToJson(value.entity);
         return out;
     }
 
