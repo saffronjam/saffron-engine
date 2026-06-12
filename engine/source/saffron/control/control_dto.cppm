@@ -936,6 +936,18 @@ export namespace se
         i32 width;
         i32 height;
         std::string base64;
+        bool pending;  // true: generation was enqueued off-thread — the client should retry
+    };
+
+    struct ThumbnailCacheParams
+    {
+        std::string action;  // "stats" | "clear"
+    };
+
+    struct ThumbnailCacheResult
+    {
+        i32 entries;  // cache entries counted (stats) or removed (clear)
+        i64 bytes;    // total bytes of those entries
     };
 
     struct QuitResult
@@ -1465,6 +1477,7 @@ export namespace se
     auto dtoToJson(const PathResult& value) -> Json;
     auto dtoToJson(const ScreenshotResult& value) -> Json;
     auto dtoToJson(const ThumbnailResult& value) -> Json;
+    auto dtoToJson(const ThumbnailCacheResult& value) -> Json;
     auto dtoToJson(const QuitResult& value) -> Json;
     auto dtoToJson(const EntityListEntry& value) -> Json;
     auto dtoToJson(const EntityList& value) -> Json;
@@ -1538,6 +1551,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<MaterialCompileParams>) -> Result<MaterialCompileParams>;
     auto parseDto(const Json& params, DtoTag<ScreenshotParams>) -> Result<ScreenshotParams>;
     auto parseDto(const Json& params, DtoTag<ThumbnailParams>) -> Result<ThumbnailParams>;
+    auto parseDto(const Json& params, DtoTag<ThumbnailCacheParams>) -> Result<ThumbnailCacheParams>;
     auto parseDto(const Json& params, DtoTag<CreateEntityParams>) -> Result<CreateEntityParams>;
     auto parseDto(const Json& params, DtoTag<EntityParams>) -> Result<EntityParams>;
     auto parseDto(const Json& params, DtoTag<SetParentParams>) -> Result<SetParentParams>;

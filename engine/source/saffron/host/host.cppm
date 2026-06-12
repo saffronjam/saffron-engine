@@ -820,6 +820,10 @@ export namespace se
             const bool editorSpawned = std::getenv("SAFFRON_EDITOR_NATIVE_VIEWPORT") != nullptr;
             const pid_t editorPid = editorSpawned ? getppid() : 0;
 
+            // Off-thread thumbnail generation: a cold-cache get-thumbnail enqueues here and replies
+            // pending rather than blocking the frame loop on decode + upload + render.
+            se::startThumbnailWorker(state->assets, app.renderer);
+
             se::Layer layer;
             layer.name = "HostLayer";
             layer.onUpdate = [state, &app, editorSpawned, editorPid](se::TimeSpan dt)
@@ -833,6 +837,8 @@ export namespace se
                 {
                     se::pollControl(*state->control, app.window, app.renderer, *state->editor, state->assets);
                 }
+                // Insert any thumbnails the worker finished this interval into the GPU caches.
+                se::drainThumbnailCompletions(state->assets);
                 // Animation runs every frame in both Edit (preview) and Play, before
                 // scripts so a script can still override a bone the same frame. It only
                 // writes runtime PoseOverrideComponents, never the authored rest pose.
@@ -919,6 +925,9 @@ export namespace se
         config.onExit = [state](se::App& app)
         {
             static_cast<void>(app);
+            // Drain + join the thumbnail worker before any teardown: it borrows the renderer, and run()
+            // calls waitGpuIdle/destroyRenderer only after onExit returns.
+            se::stopThumbnailWorker(state->assets);
             if (state->control != nullptr)
             {
                 se::destroyControlContext(state->control);

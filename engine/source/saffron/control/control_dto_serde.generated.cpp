@@ -2894,6 +2894,20 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<ThumbnailCacheParams>) -> Result<ThumbnailCacheParams>
+    {
+        ThumbnailCacheParams out;
+
+        {
+            auto value = requiredField(params, "action", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readString(**value, "action");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.action = std::move(*parsed);
+        }
+        return out;
+    }
+
     auto dtoToJson(const PingResult& value) -> Json
     {
         Json out = Json::object();
@@ -3831,6 +3845,15 @@ namespace se
         out["width"] = value.width;
         out["height"] = value.height;
         out["base64"] = value.base64;
+        out["pending"] = value.pending;
+        return out;
+    }
+
+    auto dtoToJson(const ThumbnailCacheResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["entries"] = value.entries;
+        out["bytes"] = value.bytes;
         return out;
     }
 

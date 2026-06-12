@@ -335,8 +335,10 @@ namespace se
             return cleared;
         }
 
-        // Resolves {asset:id|name, size?} to a base64 PNG preview (mesh = framed 3D render,
-        // texture = the image read back). Shared by get-thumbnail (128) + view-asset (512).
+        // Resolves {asset:id|name, size?} to a base64 PNG preview. The generation, disk cache, and
+        // off-thread worker all live in Saffron.Assets (requestThumbnail): a cache hit returns the PNG,
+        // a cold miss replies `pending` (the worker is generating) and the editor retries. Shared by
+        // get-thumbnail (128) + view-asset (512).
         auto thumbnailResult(EngineContext& ctx, const ThumbnailParams& params, u32 defaultSize)
             -> Result<ThumbnailResult>
         {
@@ -345,64 +347,20 @@ namespace se
             {
                 return Err(resolved.error());
             }
-            const AssetEntry* match = *resolved;
+            const Uuid id = (*resolved)->id;
             const u32 size = static_cast<u32>(params.size.value_or(static_cast<i32>(defaultSize)));
-
-            std::vector<u8> png;
-            if (match->type == AssetType::Mesh)
+            auto reply = requestThumbnail(ctx.assets, ctx.renderer, id, size);
+            if (!reply)
             {
-                auto mesh = loadMeshAsset(ctx.assets, ctx.renderer, match->id);
-                if (!mesh)
-                {
-                    return Err(std::string{ "mesh failed to load" });
-                }
-                auto bytes = encodeAssetThumbnailPng(ctx.renderer, mesh, size);
-                if (!bytes)
-                {
-                    return Err(bytes.error());
-                }
-                png = std::move(*bytes);
+                return Err(reply.error());
             }
-            else if (match->type == AssetType::Texture)
+            if (reply->pending)
             {
-                auto tex = loadTextureAsset(ctx.assets, ctx.renderer, match->id);
-                if (!tex)
-                {
-                    return Err(std::string{ "texture failed to load" });
-                }
-                auto bytes = encodeTextureThumbnailPng(ctx.renderer, tex, size);
-                if (!bytes)
-                {
-                    return Err(bytes.error());
-                }
-                png = std::move(*bytes);
+                return ThumbnailResult{ WireUuid{ id.value }, "png", 0, 0, std::string{}, true };
             }
-            else if (match->type == AssetType::Material)
-            {
-                auto loaded = loadMaterialAsset(ctx.assets, match->id);
-                if (!loaded)
-                {
-                    return Err(loaded.error());
-                }
-                const SubmeshMaterial sm = resolveMaterialAsset(ctx.assets, ctx.renderer, *loaded);
-                auto tex = renderMaterialPreview(ctx.renderer, sm, size);
-                if (!tex)
-                {
-                    return Err(tex.error());
-                }
-                auto bytes = encodeTextureThumbnailPng(ctx.renderer, *tex, size);
-                if (!bytes)
-                {
-                    return Err(bytes.error());
-                }
-                png = std::move(*bytes);
-            }
-            else
-            {
-                return Err(std::string{ "asset has no thumbnail" });
-            }
-            return ThumbnailResult{ WireUuid{ match->id.value }, "png", static_cast<i32>(size), static_cast<i32>(size),
-                                    base64Encode(png) };
+            return ThumbnailResult{ WireUuid{ id.value },           "png",
+                                    static_cast<i32>(reply->width), static_cast<i32>(reply->height),
+                                    base64Encode(reply->png),       false };
         }
     }
 
@@ -764,6 +722,7 @@ namespace se
                     std::error_code ec;
                     fileDeleted = std::filesystem::remove(path, ec);
                 }
+                removeThumbnailCacheForAsset(ctx.assets, entry.id);  // drop the asset's cached PNGs
                 ctx.sceneEdit.sceneVersion += 1;
                 return DeleteAssetResult{ WireUuid{ entry.id.value }, entry.name, std::move(cleared), fileDeleted };
             });
@@ -1150,7 +1109,7 @@ namespace se
                 {
                     return Err(png.error());
                 }
-                return PreviewRenderResult{ base64Encode(*png) };
+                return PreviewRenderResult{ base64Encode(png->bytes) };
             });
 
         registerCommand<MaterialSetGraphParams, MaterialSetGraphResult>(
@@ -1409,6 +1368,23 @@ namespace se
             reg, "view-asset", "view-asset {asset:id|name, size=512} — larger base64 PNG preview",
             [](EngineContext& ctx, const ThumbnailParams& params) -> Result<ThumbnailResult>
             { return thumbnailResult(ctx, params, 512); });
+
+        registerCommand<ThumbnailCacheParams, ThumbnailCacheResult>(
+            reg, "thumbnail-cache", "thumbnail-cache {action: stats|clear} — inspect or empty the disk cache",
+            [](EngineContext& ctx, const ThumbnailCacheParams& params) -> Result<ThumbnailCacheResult>
+            {
+                if (params.action == "clear")
+                {
+                    const ThumbnailCacheStats removed = clearThumbnailCacheDir(ctx.assets);
+                    return ThumbnailCacheResult{ static_cast<i32>(removed.entries), static_cast<i64>(removed.bytes) };
+                }
+                if (params.action == "stats" || params.action.empty())
+                {
+                    const ThumbnailCacheStats stats = thumbnailCacheStats(ctx.assets);
+                    return ThumbnailCacheResult{ static_cast<i32>(stats.entries), static_cast<i64>(stats.bytes) };
+                }
+                return Err(std::format("unknown action '{}' (stats|clear)", params.action));
+            });
 
         registerCommand<EmptyParams, QuitResult>(reg, "quit", "close the running app",
                                                  [](EngineContext& ctx, const EmptyParams&) -> Result<QuitResult>
