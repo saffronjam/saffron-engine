@@ -17,7 +17,7 @@ const shots: string[] = [];
 beforeAll(async () => {
   engine = await Engine.boot({ SAFFRON_AUTO_EMPTY_PROJECT: "1" });
   await engine.call("set-camera", { yaw: 0, pitch: 0 });
-  const imported = await engine.call<{ id: string; name: string }>("import-model", { path: FIXTURE });
+  const imported = await engine.importEntity(FIXTURE);
   meshId = imported.id;
   await engine.settle();
 });

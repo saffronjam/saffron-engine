@@ -1,7 +1,7 @@
-// Skeletal clip import over the control plane: a rigged+animated glTF imports, each clip
-// is baked to a `.sanim` sidecar and registered as an AssetType::Animation catalog entry,
-// and saving the project persists those entries. The clip sampling/IO math is covered by
-// the engine's animation + geometry self-tests; this file proves the import + catalog wire.
+// Skeletal clip import over the control plane: a rigged+animated glTF bakes into one `.smodel` whose
+// clip is an embedded Animation sub-asset (container-linked) in the catalog, and saving the project
+// persists that entry. The clip sampling/IO math is covered by the engine's animation + geometry
+// self-tests; this file proves the import + catalog wire.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -27,6 +27,7 @@ interface Asset {
   name: string;
   type: string;
   duration?: number;
+  container?: string;
 }
 
 /// Files of one extension anywhere under a directory.
@@ -46,9 +47,14 @@ test("importing a rigged+animated glTF registers an Animation clip asset", async
   expect(clips[0].name).toBe("Bend");
 });
 
-test("the clip is baked to a .sanim sidecar under the project assets", () => {
-  const sanims = findByExt(appdata, ".sanim");
-  expect(sanims.length).toBe(1);
+test("the clip is an embedded chunk of one .smodel, not a loose .sanim sidecar", async () => {
+  // Exactly one container on disk; no loose .sanim — the clip lives as a SANM chunk inside it.
+  expect(findByExt(appdata, ".smodel").length).toBe(1);
+  expect(findByExt(appdata, ".sanim").length).toBe(0);
+  // The Animation catalog row is a sub-asset of the model (container-linked), not a standalone file.
+  const { assets } = await engine.call<{ assets: Asset[] }>("list-assets");
+  const clip = assets.find((a) => a.type === "animation");
+  expect(clip?.container).toBeDefined();
 });
 
 test("save-project persists the Animation entry to project.json", async () => {
