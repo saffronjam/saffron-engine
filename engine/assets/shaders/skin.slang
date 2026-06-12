@@ -1,32 +1,27 @@
-// Compute skinning pre-pass. Deforms each skinned vertex once into a base-layout
-// Vertex buffer, so every graphics pass (scene, depth, shadow, AO, motion, RT BLAS)
-// reads it as an ordinary static mesh — no skinned vertex-shader permutation.
+// Compute skinning pre-pass. Deforms each skinned vertex once into a base-layout Vertex buffer, so
+// every graphics pass (scene, depth, shadow, AO, motion, RT BLAS) reads it as an ordinary static mesh
+// — no skinned vertex-shader permutation. One thread per vertex.
 //
-// One thread per vertex. The deformed position is the skin-matrix applied to the
-// bind pose, WITHOUT the instance model matrix: the graphics passes still apply
-// `inst.model` / `inst.normalMatrix`, exactly as they do for a static mesh, so the
-// result is identical to the old `vertexMainSkinned`.
+// The vertex + skin streams are read/written as raw byte buffers at the engine's tightly-packed
+// strides: se::Vertex is 32 B (position@0, normal@12, uv0@24) and se::VertexSkin is 24 B (joints@0,
+// weights@8). A typed StructuredBuffer<Vertex> would impose std430 padding — float3 takes 16-byte
+// alignment, giving a 48 B Vertex stride and weights at offset 16 — which does NOT match the engine
+// layout and shatters the mesh. ByteAddressBuffer.Load/Store use scalar packing, so the strides match
+// exactly without a global scalar-block-layout flag (which would disturb every other shader's buffers).
+//
+// The deformed position is the skin-matrix applied to the bind pose WITHOUT the instance model matrix:
+// the graphics passes still apply `inst.model` / `inst.normalMatrix`, exactly as for a static mesh.
 
-// Mirrors engine se::Vertex (32 B): position(12) + normal(12) + uv0(8).
-struct Vertex
-{
-    float3 position;
-    float3 normal;
-    float2 uv0;
-};
+[[vk::binding(0, 0)]] ByteAddressBuffer inVertices;             // static bind-pose stream (32 B stride)
+[[vk::binding(1, 0)]] ByteAddressBuffer inSkins;                // parallel skin influences (24 B stride)
+[[vk::binding(2, 0)]] StructuredBuffer<float4x4> jointMatrices;  // the frame's joint palette (64 B, matches glm)
+[[vk::binding(3, 0)]] RWByteAddressBuffer outVertices;          // deformed output, this frame (32 B stride)
 
-// Mirrors engine se::VertexSkin (24 B): u16x4 joints + float4 weights. Read without a
-// 16-bit-storage dependency by taking the joints as two packed u32 words.
-struct VertexSkin
-{
-    uint2 jointsPacked;
-    float4 weights;
-};
-
-[[vk::binding(0, 0)]] StructuredBuffer<Vertex> inVertices;       // static bind-pose stream
-[[vk::binding(1, 0)]] StructuredBuffer<VertexSkin> inSkins;      // parallel skin influences
-[[vk::binding(2, 0)]] StructuredBuffer<float4x4> jointMatrices;  // the frame's joint palette
-[[vk::binding(3, 0)]] RWStructuredBuffer<Vertex> outVertices;    // deformed output (this frame)
+static const uint VertexStride = 32u;      // sizeof(se::Vertex)
+static const uint SkinStride = 24u;        // sizeof(se::VertexSkin)
+static const uint NormalOffset = 12u;      // se::Vertex.normal
+static const uint UvOffset = 24u;          // se::Vertex.uv0
+static const uint WeightsOffset = 8u;      // se::VertexSkin.weights (after u16x4 joints)
 
 struct Push
 {
@@ -46,19 +41,26 @@ void computeMain(uint3 tid: SV_DispatchThreadID)
     {
         return;
     }
-    const Vertex v = inVertices[i];
-    const VertexSkin s = inSkins[i];
-    const uint4 joints = uint4(s.jointsPacked.x & 0xFFFFu, s.jointsPacked.x >> 16,
-                               s.jointsPacked.y & 0xFFFFu, s.jointsPacked.y >> 16);
-    const uint base = push.jointOffset;
-    const float4x4 skin = s.weights.x * jointMatrices[base + joints.x]
-                        + s.weights.y * jointMatrices[base + joints.y]
-                        + s.weights.z * jointMatrices[base + joints.z]
-                        + s.weights.w * jointMatrices[base + joints.w];
 
-    Vertex o;
-    o.position = mul(skin, float4(v.position, 1.0)).xyz;
-    o.normal = normalize(mul((float3x3)skin, v.normal));
-    o.uv0 = v.uv0;
-    outVertices[push.deformedOffset + i] = o;
+    const uint vBase = i * VertexStride;
+    const float3 position = inVertices.Load<float3>(vBase);
+    const float3 normal = inVertices.Load<float3>(vBase + NormalOffset);
+    const float2 uv0 = inVertices.Load<float2>(vBase + UvOffset);
+
+    const uint sBase = i * SkinStride;
+    const uint2 jointsPacked = inSkins.Load<uint2>(sBase);
+    const float4 weights = inSkins.Load<float4>(sBase + WeightsOffset);
+    const uint4 joints = uint4(jointsPacked.x & 0xFFFFu, jointsPacked.x >> 16,
+                               jointsPacked.y & 0xFFFFu, jointsPacked.y >> 16);
+
+    const uint base = push.jointOffset;
+    const float4x4 skin = weights.x * jointMatrices[base + joints.x]
+                        + weights.y * jointMatrices[base + joints.y]
+                        + weights.z * jointMatrices[base + joints.z]
+                        + weights.w * jointMatrices[base + joints.w];
+
+    const uint oBase = (push.deformedOffset + i) * VertexStride;
+    outVertices.Store<float3>(oBase, mul(skin, float4(position, 1.0)).xyz);
+    outVertices.Store<float3>(oBase + NormalOffset, normalize(mul((float3x3)skin, normal)));
+    outVertices.Store<float2>(oBase + UvOffset, uv0);
 }
