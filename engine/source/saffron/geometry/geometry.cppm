@@ -200,7 +200,7 @@ export namespace se
     auto decodeImageFromMemoryHdr(const std::vector<u8>& encoded) -> Result<DecodedImageFloat>;
 
     // In-place texture bakes applied at import so the runtime stays convention-agnostic.
-    void bakeDxToGlNormal(DecodedImage& image);     // DirectX (green=-Y) -> OpenGL (green=+Y)
+    void bakeDxToGlNormal(DecodedImage& image);      // DirectX (green=-Y) -> OpenGL (green=+Y)
     void bakeGlossToRoughness(DecodedImage& image);  // glossiness -> roughness (1 - x)
 
     auto saveMesh(const Mesh& mesh, const std::string& path) -> Result<void>;  // baked .smesh
@@ -453,8 +453,8 @@ namespace se
             readGltfTextureBytes(src.normal_texture, path, "normal", material.normalBytes, material.normalExt);
         material.hasOcclusion = readGltfTextureBytes(src.occlusion_texture, path, "occlusion", material.occlusionBytes,
                                                      material.occlusionExt);
-        material.hasEmissiveTex = readGltfTextureBytes(src.emissive_texture, path, "emissive", material.emissiveTexBytes,
-                                                       material.emissiveTexExt);
+        material.hasEmissiveTex = readGltfTextureBytes(src.emissive_texture, path, "emissive",
+                                                       material.emissiveTexBytes, material.emissiveTexExt);
         if (!src.has_pbr_metallic_roughness)
         {
             return material;

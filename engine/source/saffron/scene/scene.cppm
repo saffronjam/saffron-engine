@@ -192,11 +192,11 @@ export namespace se
         f32 roughness = 1.0f;
         glm::vec3 emissive{ 0.0f };
         f32 emissiveStrength = 1.0f;
-        bool unlit = false;  // skip lighting (albedo * base color only) — a distinct PSO
-        Uuid normalTexture;      // tangent-space normal map (OpenGL +Y convention)
-        Uuid occlusionTexture;   // ambient occlusion (AO in R)
-        Uuid emissiveTexture;    // emissive map (modulates the emissive factor)
-        Uuid heightTexture;      // height/displacement (R) for parallax occlusion mapping
+        bool unlit = false;     // skip lighting (albedo * base color only) — a distinct PSO
+        Uuid normalTexture;     // tangent-space normal map (OpenGL +Y convention)
+        Uuid occlusionTexture;  // ambient occlusion (AO in R)
+        Uuid emissiveTexture;   // emissive map (modulates the emissive factor)
+        Uuid heightTexture;     // height/displacement (R) for parallax occlusion mapping
         f32 normalStrength = 1.0f;
         glm::vec2 uvTiling{ 1.0f };
         glm::vec2 uvOffset{ 0.0f };

@@ -36,8 +36,7 @@ namespace se
             reg, "MaterialSet", [](Scene&, Entity) {}, materialSetComponentToJson, materialSetComponentFromJson, true);
 
         registerComponent<MaterialAssetComponent>(
-            reg, "MaterialAsset", [](Scene&, Entity) {},
-            [](const MaterialAssetComponent& c) -> nlohmann::json
+            reg, "MaterialAsset", [](Scene&, Entity) {}, [](const MaterialAssetComponent& c) -> nlohmann::json
             { return nlohmann::json{ { "material", std::to_string(c.material.value) } }; },
             [](MaterialAssetComponent& c, const nlohmann::json& j) -> Result<void>
             {
