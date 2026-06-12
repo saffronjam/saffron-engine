@@ -1,4 +1,4 @@
-/// Shared seam + helpers for the timeline, factored from TimelinePanel so the dock and the rig editor
+/// Shared seam + helpers for the timeline, factored from TimelinePanel so the dock and the asset editor
 /// can each mount the same Transport + Surface against a different target (scene selection vs preview
 /// rig). Command sinks stay `client.*` (both targets are entities in the active scene — the commands
 /// are identical); only the id + gate differ.
@@ -13,8 +13,8 @@ export const TRACK_HEADER_WIDTH = 140;
 export const STEP_SEC = 1 / 30;
 
 /// What the timeline drives: the command target id, the polled state mirror (playhead/clip/wrap), the
-/// clips for the Transport's clip Select (the dock; the rig editor passes [] and hides it — its clip
-/// list panel owns picking), and the rig gate (dock derives it from the inspect components, the rig
+/// clips for the Transport's clip Select (the dock; the asset editor passes [] and hides it — its clip
+/// list panel owns picking), and the rig gate (dock derives it from the inspect components, the asset
 /// editor from preview-active).
 export interface TimelineTarget {
   entityId: string | null;

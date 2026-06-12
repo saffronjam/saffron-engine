@@ -1,6 +1,6 @@
 /// The timeline transport bar: jump/step/play-pause/loop + an optional clip Select. Target-agnostic —
 /// it reads the polled state mirror from `target` and commands `target.entityId`. The dock shows the
-/// clip Select; the rig editor hides it (its clip list panel owns picking). A move out of TimelinePanel
+/// clip Select; the asset editor hides it (its clip list panel owns picking). A move out of TimelinePanel
 /// — identical DOM/classes.
 import {
   ChevronFirst,
@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { STEP_SEC, type TimelineTarget, guard } from "./shared";
 
 export function TimelineTransport({
@@ -64,10 +65,40 @@ export function TimelineTransport({
     }
   };
 
+  const loopButton = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant={looping ? "default" : "ghost"}
+          onClick={onToggleLoop}
+          disabled={!enabled}
+          aria-pressed={looping}
+          aria-label="Loop"
+        >
+          <Repeat />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{looping ? "Looping (click to play once)" : "Loop"}</TooltipContent>
+    </Tooltip>
+  );
+
   return (
-    <div className="flex h-9 flex-none items-center gap-2 border-b border-border px-2">
+    <div
+      className={cn(
+        "flex h-9 flex-none items-center gap-2 border-b border-border px-2",
+        // Asset editor (no clip Select): center the button group; the loop button is anchored to the
+        // group's right edge (absolute left-full) so it sits just right of the centered group without
+        // shifting its centering. The dock keeps its left-aligned flow with the loop pinned far-right.
+        showClipSelect ? "" : "justify-center",
+      )}
+    >
       <div
-        className="flex items-center gap-0.5 rounded-md border border-border p-0.5"
+        className={cn(
+          "flex items-center gap-0.5",
+          showClipSelect ? "rounded-md border border-border p-0.5" : "relative",
+        )}
         role="group"
         aria-label="Transport"
       >
@@ -132,6 +163,11 @@ export function TimelineTransport({
         >
           <ChevronLast />
         </Button>
+        {showClipSelect ? null : (
+          <div className="absolute left-full top-1/2 ml-2 flex -translate-y-1/2 items-center">
+            {loopButton}
+          </div>
+        )}
       </div>
 
       {showClipSelect && enabled && clips.length > 0 ? (
@@ -152,24 +188,7 @@ export function TimelineTransport({
         </Select>
       ) : null}
 
-      <div className="ml-auto flex items-center gap-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              size="icon-sm"
-              variant={looping ? "default" : "ghost"}
-              onClick={onToggleLoop}
-              disabled={!enabled}
-              aria-pressed={looping}
-              aria-label="Loop"
-            >
-              <Repeat />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{looping ? "Looping (click to play once)" : "Loop"}</TooltipContent>
-        </Tooltip>
-      </div>
+      {showClipSelect ? <div className="ml-auto flex items-center gap-2">{loopButton}</div> : null}
     </div>
   );
 }

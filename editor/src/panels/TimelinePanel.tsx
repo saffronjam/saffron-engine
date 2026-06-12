@@ -1,8 +1,8 @@
-/// The bottom-dock Timeline: a read-only, canvas-rendered sequencer for the selected rig. A thin
+/// The bottom-dock Timeline: a read-only, canvas-rendered sequencer for the selected entity. A thin
 /// composition over the shared TimelineTransport + TimelineSurface (components/timeline/), built from
 /// the dock's four store reads (selection, animation state/clips, inspect components for the rig gate).
-/// The rig editor mounts the same pieces against the preview rig (a different TimelineTarget); the two
-/// never render simultaneously (the dock is hidden while a non-scene tab is active).
+/// The asset editor mounts the same pieces against the previewed model (a different TimelineTarget); the
+/// two never render simultaneously (the dock is hidden while a non-scene tab is active).
 ///
 /// Keyframe AUTHORING is out of scope; the lane renderer already has a `diamonds` mode so it drops in
 /// later without a layout rewrite.
