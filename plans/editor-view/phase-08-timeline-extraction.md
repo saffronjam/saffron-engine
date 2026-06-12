@@ -1,6 +1,6 @@
 # Phase 8 — timeline extraction
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (kept as a build record; superseded by the general Asset editor — see this dir's README)
 **Depends on:** — (a self-contained timeline refactor)
 
 ## Goal

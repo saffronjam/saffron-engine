@@ -1,6 +1,6 @@
 # Phase 7 — clip list + details panel
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (kept as a build record; superseded by the general Asset editor — see this dir's README)
 
 **Depends on:** phase 1 (the `get-rig` / `get-animation-state` / `play-animation` control surface), phase 5 (the rig-editor workspace shell that hosts the right pane).
 
