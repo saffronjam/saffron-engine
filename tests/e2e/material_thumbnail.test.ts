@@ -15,7 +15,7 @@ afterAll(async () => {
 
 test("get-thumbnail renders a material preview PNG", async () => {
   const m = await engine.call<{ id: string }>("material-create", { name: "Thumb" });
-  const thumb = await engine.call<{ base64: string; format: string }>("get-thumbnail", {
+  const thumb = await engine.getThumbnail<{ base64: string; format: string }>("get-thumbnail", {
     asset: m.id,
     size: 96,
   });

@@ -132,6 +132,29 @@ export class Engine {
     });
   }
 
+  /// Fetch a thumbnail, transparently retrying the `pending` reply the engine sends while its
+  /// worker thread generates a cold-cache entry (mirrors the editor's backoff). Resolves the final
+  /// PNG reply; rejects on an engine error or after `timeoutMs`.
+  async getThumbnail<T = { base64: string; width: number; height: number; format: string }>(
+    cmd: "get-thumbnail" | "view-asset",
+    params: Record<string, unknown>,
+    timeoutMs = 10_000,
+  ): Promise<T> {
+    const start = Date.now();
+    let delayMs = 30;
+    for (;;) {
+      const reply = await this.call<T & { pending?: boolean }>(cmd, params);
+      if (!reply.pending) {
+        return reply;
+      }
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`timeout waiting for ${cmd} to resolve (still pending)`);
+      }
+      await delay(delayMs);
+      delayMs = Math.min(delayMs * 2, 500);
+    }
+  }
+
   /// Let the engine run a few render frames so deferred GPU work + validation surface.
   async settle(ms = 300): Promise<void> {
     await delay(ms);
