@@ -1,0 +1,5 @@
+- Mouse buttons back and forward should work in the UI.
+- Undo/redo for edits, per main-tab basis.
+- Improve PBR effect, seems a bit foggy.
+- Physics 3D bodies for entities with wireframe representation.
+- Physics-based two-way bound animations after physics.
