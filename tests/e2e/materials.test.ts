@@ -36,7 +36,7 @@ async function slotsOf(id: string): Promise<MaterialSlot[]> {
 let meshId = "";
 
 test("a two-material glTF imports as a MaterialSet preserving each slot's factors", async () => {
-  const imported = await engine.call<EntityRef>("import-model", { path: FIXTURE });
+  const imported = await engine.importEntity(FIXTURE, "Mesh");
   meshId = imported.id;
   await engine.settle();
 
@@ -65,7 +65,7 @@ test("the MaterialSet slots survive a project save + reload", async () => {
   await engine.call("save-project");
   await engine.call("reload-project");
   await engine.settle();
-  // Reload replaces the scene with fresh entities; import-model names the entity "Mesh".
+  // Reload replaces the scene with fresh entities; the model was instantiated as an entity named "Mesh".
   const list = await engine.call<{ entities: { id: string; name: string }[] }>("list-entities");
   const entity = list.entities.find((e) => e.name === "Mesh");
   expect(entity).toBeDefined();
@@ -83,7 +83,7 @@ function materialOf(components: InspectResult["components"]): { metallicRoughnes
 }
 
 test("a glTF metallic-roughness texture is imported onto the Material", async () => {
-  const imported = await engine.call<EntityRef>("import-model", { path: MAPPED });
+  const imported = await engine.importEntity(MAPPED);
   await engine.settle();
   const info = await engine.call<InspectResult>("inspect", { entity: imported.id });
   const mr = materialOf(info.components).metallicRoughnessTexture;

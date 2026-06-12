@@ -45,7 +45,7 @@ test("a codegen material compiles a übershader variant and renders on an entity
   const project = await engine.call<{ root: string }>("get-project");
   const root = isAbsolute(project.root) ? project.root : join(REPO, project.root);
 
-  const e = await engine.call<EntityRef>("import-model", { path: MAPPED });
+  const e = await engine.importEntity(MAPPED);
   await engine.call("set-camera", { position: { x: 0.35, y: 0.35, z: 2 }, yaw: 0, pitch: 0 });
   await engine.settle(300);
   const before = await screenshot("before");

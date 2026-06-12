@@ -44,7 +44,7 @@ async function screenshot(tag: string): Promise<Buffer> {
 }
 
 test("the imported metallic-roughness texture changes the shaded pixels", async () => {
-  const e = await engine.call<EntityRef>("import-model", { path: MAPPED });
+  const e = await engine.importEntity(MAPPED);
   // Frame the fixture's triangle (spans x,y in [0,1], facing +Z) head-on.
   await engine.call("set-camera", { position: { x: 0.35, y: 0.35, z: 2 }, yaw: 0, pitch: 0 });
   await engine.settle(300);
