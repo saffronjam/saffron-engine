@@ -1,6 +1,7 @@
-# Phase 5 — preview furnishing + chrome
+# Phase 3 — preview furnishing + chrome
 
 **Status:** NOT STARTED
+**Depends on:** 2 (the preview scene); `plans/saffron-models` for `instantiateModel`.
 
 ## Goal
 
@@ -9,15 +10,15 @@ lighting and environment, the camera framed on the rig, a **bone overlay keyed t
 with a selectable highlighted joint** — and the Edit-mode chrome (billboards, manipulation gizmo,
 camera frustums) suppressed. UE5's Preview Scene Settings (floor/HDRI/light rig) is the reference;
 one good fixed furnishing is v1 — no profiles. This phase also owns the engine-side overlay change
-the skeleton tree (phase 8) needs: today `buildSkeletonOverlay` keys off `editor.selected` and only
+the skeleton tree (phase 6) needs: today `buildSkeletonOverlay` keys off `editor.selected` and only
 draws when *that* entity carries `SkinnedMeshComponent`, with no per-joint highlight — both have to
 change for a rig editor where clicking a bone must highlight a joint without killing the overlay.
 
 ## What exists to build on
 
-- A fresh `Scene` has only defaults — `spawnSkinnedModel` creates just the rig (phase 4); the
-  environment block (`scene.environment`) drives sky/ambient and is serialized per scene, so the
-  preview scene's environment is free to differ from the authored one.
+- A fresh `Scene` has only defaults — `instantiateModel` expands just the rig from its `.smodel`
+  container (phase 2); the environment block (`scene.environment`) drives sky/ambient and is
+  serialized per scene, so the preview scene's environment is free to differ from the authored one.
 - The chrome: `submitSceneEditOverlay(..., bool editChrome)` (`host.cppm:581-594`) draws frustums +
   billboards + the manipulation gizmo only when `editChrome` is true; the call site passes
   `playState == Edit` (`host.cppm:901`). The skeleton overlay draws in **every** state
@@ -27,10 +28,10 @@ change for a rig editor where clicking a bone must highlight a joint without kil
   unless `editor.selected` is valid **and** carries `SkinnedMeshComponent`, and draws every joint
   in one uniform `JointColor` — there is **no** per-joint highlight, and a bone entity (which has
   `BoneComponent`, not `SkinnedMeshComponent`) would make it vanish. This is the gap this phase
-  closes for phase 8.
+  closes for phase 6.
 - The camera: `renderCameraView(editor)` picks the fly-cam in Edit, the scene primary camera in
   Play (`scene_edit_play.cpp:165-178`); the camera is `ctx.sceneEdit.camera`, stashed/restored
-  engine-side across enter/exit (phase 4). The thumbnail path has the bounding-sphere framing math
+  engine-side across enter/exit (phase 2). The thumbnail path has the bounding-sphere framing math
   (`renderer_thumbnail.cpp:210-223` — 3/4 view, distance from the bounding radius).
 - **There is no grid pass** — verified: no grid shader or geometry anywhere; the floor must be real
   geometry or deferred.
@@ -41,7 +42,7 @@ change for a rig editor where clicking a bone must highlight a joint without kil
 
 ## Work
 
-### 1. Furnish on enter (extends phase 4's `enter-rig-preview`)
+### 1. Furnish on enter (extends phase 2's `enter-rig-preview`)
 
 - **Floor**: one flattened-cube entity under the rig (scaled to ~4× the rig's bounding radius,
   neutral material), provided via a **pre-seeded `meshRefByUuid` entry for a reserved cube uuid**
@@ -53,8 +54,8 @@ change for a rig editor where clicking a bone must highlight a joint without kil
   environment's procedural sky with moderate ambient — pick values once, validate visually against
   the leg/SimpleSkin rigs.
 - **Camera**: frame the rig with the thumbnail math (bounding sphere → 3/4 view at
-  `radius / tan(fovy/2) * 1.3`) by writing `ctx.sceneEdit.camera` on enter — **after** phase 4 has
-  stashed it into `savedCamera`. The editor's orbit (phase 7) takes over from there; exit restores
+  `radius / tan(fovy/2) * 1.3`) by writing `ctx.sceneEdit.camera` on enter — **after** phase 2 has
+  stashed it into `savedCamera`. The editor's orbit (phase 5) takes over from there; exit restores
   the stash, so the framing never touches the saved `editorCamera`.
 
 ### 2. Chrome policy
@@ -65,17 +66,17 @@ change for a rig editor where clicking a bone must highlight a joint without kil
 (flip `ctx.sceneEdit.skeletonOverlay.show` on enter, restore on exit) — bones-visible is the
 expected first frame of a rig editor (UE5 Character > Bones).
 
-### 3. Rig-keyed overlay + highlighted joint (the engine change phase 8 needs)
+### 3. Rig-keyed overlay + highlighted joint (the engine change phase 6 needs)
 
 `buildSkeletonOverlay` must stop keying off `editor.selected`: while a preview is active, draw the
 overlay for the **previewed rig** (`SceneEditContext.previewRigEntity`, the spawned rig mesh entity
-stored by phase 4) regardless of the current selection — so selecting/highlighting a bone does not
+stored by phase 2) regardless of the current selection — so selecting/highlighting a bone does not
 blank the overlay.
 Add a **highlighted-joint index** to `SkeletonOverlayOptions` (−1 = none), drawn in a distinct
 tint, set by a new `set-skeleton-highlight { joint }` (or an `index` field on
-`set-skeleton-overlay`) — this is the channel phase 8's tree click drives, instead of changing the
+`set-skeleton-overlay`) — this is the channel phase 6's tree click drives, instead of changing the
 scene selection (which would null the selection-keyed `animationState` and break the rig timeline,
-phase 11). Outside preview, the overlay keeps its current `editor.selected` behavior.
+phase 9). Outside preview, the overlay keeps its current `editor.selected` behavior.
 
 ### 4. Floor toggle
 
@@ -92,16 +93,16 @@ toggles already exist (`set-skeleton-overlay`).
   preview screenshot differs from an Edit-with-selection screenshot of the same rig spawned
   normally); **highlight a joint then select a bone entity → the overlay still renders** (proving
   it keys off the rig, not the selection) and the highlighted joint's screenshot differs; the
-  byte-identity save round-trip (phase 4) re-run here now that the camera is framed — proving the
+  byte-identity save round-trip (phase 2) re-run here with the camera framed — proving the
   engine-side camera restore holds with framing applied; validation-clean log.
 - Visual sanity on both fixtures (`leg.gltf`, SimpleSkin): mesh lit from a sane angle and **textured
-  per the imported material** (not flat white — the `.srig` material payload), floor under the
+  per the imported material** (not flat white — the container's embedded `.smat` materials), floor under the
   feet, bones visible.
 - `docs/`: the preview-scene page gains the furnishing + chrome policy.
 
 ## Notes / gotchas
 
-- The furnishing entities live in the preview scene only — they can never leak (phase 4's
+- The furnishing entities live in the preview scene only — they can never leak (phase 2's
   byte-identity e2e already proves it), but keep them **name-tagged** so generic UI/entity-list
   surfaces can exclude them (the skeleton tree filters by construction — it renders `get-rig` data,
   not scene entities — so the tag is for debuggability, not the tree).

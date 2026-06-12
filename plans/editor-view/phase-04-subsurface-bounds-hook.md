@@ -1,15 +1,15 @@
-# Phase 6 — the subsurface bounds hook
+# Phase 4 — the subsurface bounds hook
 
 **Status:** NOT STARTED
+**Depends on:** — (a self-contained frontend refactor)
 
 ## Goal
 
 A pure editor refactor with **no behavior change**: extract the viewport's bounds-emission machinery
-out of `ViewportPanel` into a reusable `useSubsurfaceBounds(hostRef)` hook, so phase 7 can glue the
-engine's Wayland subsurface into the rig editor's preview pane. The research verified the transport
-sink is a singleton but the emitter is not — any component may drive `set_viewport_bounds`, and the
-parked dock's degenerate rect no-ops — so this is the entire frontend transport cost of the live
-preview.
+out of `ViewportPanel` into a reusable `useSubsurfaceBounds(hostRef)` hook, so phase 5 can glue the
+engine's Wayland subsurface into the rig editor's preview pane. The transport sink is a singleton but
+the emitter is not — any component may drive `set_viewport_bounds`, and the parked dock's degenerate
+rect no-ops — so this is the entire frontend transport cost of the live preview.
 
 ## What exists to build on
 
@@ -61,7 +61,7 @@ the reason no arbitration/locking is needed.
 - This is the highest-risk *kind* of change in the editor (the subsurface desync failure mode is
   visible and ugly), in the lowest-risk *form* — a move, not a rewrite. Resist improving the logic
   while moving it; any throttle/debounce tuning is a separate change.
-- `AssetPreview` (`AssetViewer.tsx:61-66`) also writes `viewportHidden` on mount/unmount — that
+- `AssetPreview` (`AssetViewer.tsx:63-68`) also writes `viewportHidden` on mount/unmount — that
   redundancy is unrelated to this hook; leave it.
 - The stale "reparented X11 child" comment in `AssetViewer.tsx:3-6` can be corrected if touched,
   but do not expand scope otherwise.

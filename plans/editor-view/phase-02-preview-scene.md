@@ -1,11 +1,12 @@
-# Phase 4 — the preview scene
+# Phase 2 — the preview scene
 
 **Status:** NOT STARTED
+**Depends on:** plans/saffron-models (the `.smodel` container + `instantiateModel`)
 
 ## Goal
 
 The engine-side stage: a **separate preview `Scene`** owned by `SceneEditContext`, entered and left
-over the control plane, holding nothing but the previewed rig (+ phase 5's furnishing). Because it
+over the control plane, holding nothing but the previewed rig (plus phase 3's furnishing). Because it
 routes through `activeScene`, the render path, compute skinning, the animation evaluator, and every
 entity-addressed command retarget to it with no new wiring — and the authored scene cannot leak,
 because `save-project` serializes `ctx.sceneEdit.scene` explicitly. This is the play-mode pattern,
@@ -26,14 +27,14 @@ replicated.
 - The open/close checklist: `enterPlay` (`scene_edit_play.cpp:75-106`) / `stopPlay`
   (`scene_edit_play.cpp:143-163`) — duplicate/drop the scene, re-resolve selection by uuid, drop
   smoothing queues, bump `sceneVersion`.
-- Spawning: `spawnSkinnedModel` (`assets.cppm:2095-2169`) consumes an `ImportResult` assembled from
-  phase 1's `ImportedRig` (nodes + skinDesc + the `RigMaterial` table) plus the mesh uuid and the
-  phase-2 linked clip uuids. Note `spawnSkinnedModel` also calls `applyImportedMaterials`
-  (`assets.cppm:2155`) — that is why phase 1 persists materials, so the preview is textured, not
-  flat white.
+- Spawning: use `plans/saffron-models`' `instantiateModel(scene, assets, renderer, modelId, name)`
+  (saffron-models phase 7) to expand the rig's `.smodel` hierarchy into the fresh preview scene —
+  nodes/skin/materials/clips all come from the container, so the preview is textured (materials are
+  embedded `.smat` chunks resolved by sub-id), not flat white. (`instantiateModel` reuses
+  `spawnSkinnedModel`/`relinkHierarchy` internally, so the spawned shape is unchanged.)
 - The camera persists into the project: `save-project` writes `doc["editorCamera"]` from
   `ctx.sceneEdit.camera` (`control_commands_asset.cpp:1305-1306`, `assets.cppm:513-515`) — there is
-  one global fly-cam, so framing the preview (phase 5) and orbiting it (phase 7) mutate the saved
+  one global fly-cam, so framing the preview (phase 3) and orbiting it (phase 5) mutate the saved
   camera; the byte-identity invariant requires restoring it engine-side on exit.
 - The state-sync seam: `get-selection` carries `animationVersion`
   (`control_commands_scene.cpp:909-925`); the editor's poll gates `refreshAnimation(selectedId)` on
@@ -46,8 +47,8 @@ replicated.
 ### 1. `previewScene` + the `activeScene` branch
 
 `std::optional<Scene> previewScene` on `SceneEditContext`, plus `previewAsset` (`Uuid`, what is
-being previewed), **`Entity previewRigEntity`** (the spawned rig mesh entity — the handle phase 5's
-overlay and phase 4's enter-result both need; a context field, not just a wire value), and a
+being previewed), **`Entity previewRigEntity`** (the spawned rig mesh entity — the handle phase 3's
+overlay and this phase's enter-result both need; a context field, not just a wire value), and a
 `SceneEditCamera savedCamera` for the stash/restore (below). Extend `activeScene` — never add a
 second accessor (`sceneedit/AGENTS.md`).
 
@@ -70,24 +71,23 @@ the editor toasts.
 
 ### 2. `enter-rig-preview {asset}` / `exit-rig-preview`
 
-Enter: resolve the asset (mesh or clip → its rig via the phase-2 links), `loadRigAsset`, construct a
-fresh `Scene`, assemble the `ImportResult` (rig + materials + mesh uuid + linked clip uuids) and
-`spawnSkinnedModel` into it, `relinkHierarchy`, **store the spawned rig mesh entity in
-`previewRigEntity`** and select it, set the player's clip to the requested one (when opened from a
-clip asset). **Stash `ctx.sceneEdit.camera` into `savedCamera`** before phase 5 frames it. Exit:
+Enter: resolve the asset (a model, or a clip sub-asset → its owning container), construct a fresh
+`Scene`, **`instantiateModel(previewScene, assets, renderer, modelId, …)`** (saffron-models phase 7)
+to spawn the rig into it, **store the spawned rig mesh entity in `previewRigEntity`** and select it,
+set the player's clip to the requested one (when opened from a clip sub-asset). **Stash `ctx.sceneEdit.camera` into `savedCamera`** before phase 3 frames it. Exit:
 drop the scene, **restore `ctx.sceneEdit.camera` from `savedCamera`**, clear `previewRigEntity`,
 restore the authored scene's selection by uuid (the `stopPlay` checklist: smoothing queues,
 selection re-resolve). Both bump `sceneVersion` + `animationVersion` so the editor's
 Hierarchy/Inspector/Timeline refetch across the swap. The camera stash/restore lives **engine-side**
 so the byte-identity invariant holds even for CLI-driven enter/exit with no editor in the loop (a
-`set-skeleton-overlay.show` stash mirrors this — phase 5).
+`set-skeleton-overlay.show` stash mirrors this — phase 3).
 
 **The enter result DTO** (the one new payload later phases consume — authored here): naming, used
-consistently across phases 4/7/8/11 — **`rigEntity`** = the spawned rig mesh *entity* uuid,
-**`rigMeshId`** = the rig's *mesh asset* uuid (phase 7's tab key); they are different values, do not
+consistently across phases 2/5/6/9 — **`rigEntity`** = the spawned rig mesh *entity* uuid,
+**`rigMeshId`** = the rig's *mesh asset* uuid (phase 5's tab key); they are different values, do not
 conflate. `EnterRigPreviewResult { WireUuid rigEntity; std::vector<RigBoneEntityDto> bones; }` where
 `RigBoneEntityDto { i32 index; WireUuid entity; }` maps each `get-rig` bone index to its spawned
-preview-scene entity uuid. Phase 8 (bone highlighting) reads `bones`; phase 11 reads `rigEntity` as
+preview-scene entity uuid. Phase 6 (bone highlighting) reads `bones`; phase 9 reads `rigEntity` as
 its timeline target.
 
 Report the preview state in `get-play-state` (one new field, e.g. `previewAsset: WireUuid`,
@@ -103,8 +103,8 @@ exit (mirroring `clearOverrides` behavior) so a re-entered preview starts clean.
 ## Validation (done criteria)
 
 - `make engine` + `make prepare-for-commit` clean. **Contract test**: `enter-rig-preview` /
-  `exit-rig-preview` / `set-skeleton-highlight` are **skip-listed** (they need an imported `.srig`
-  the harness can't create — same posture as phase 2); the DTO codegen still lands here and the
+  `exit-rig-preview` / `set-skeleton-highlight` are **skip-listed** (they need an imported `.smodel`
+  rig the harness can't create — same posture as saffron-models' import commands); the DTO codegen still lands here and the
   `get-play-state` `previewAsset` field rides its existing fixture; assert the
   `EnterRigPreviewResult` / `get-play-state` shapes via `make e2e` (which imports `leg.gltf`).
 - `make e2e` (the headline invariant): save the authored scene to JSON, `enter-rig-preview` on the
@@ -125,7 +125,7 @@ exit (mirroring `clearOverrides` behavior) so a re-entered preview starts clean.
 ## Notes / gotchas
 
 - **The preview takes over the single viewport stream** — by design, exactly like play mode. The
-  frame published while previewing is the preview scene; the scene tab is parked anyway (phase 7).
+  frame published while previewing is the preview scene; the scene tab is parked anyway (phase 5).
 - `previewInEdit` gating (`animation.cpp:589-594`): the spawned player must end up previewable —
   `play-animation`/`seek-animation` set the flag, so the editor's first transport action arms it;
   `enter-rig-preview` itself should leave the rig in the stopped rest pose (UE5 opens clips
@@ -133,5 +133,5 @@ exit (mirroring `clearOverrides` behavior) so a re-entered preview starts clean.
 - Keep `enter-rig-preview` idempotent-ish: entering while already previewing a different asset
   swaps the preview (drop + respawn) rather than erroring — that is how the editor switches assets
   with one tab open.
-- An asset with no `.srig` errors with the exact string the editor keys the migration affordance on
-  (phase 3) — make it stable and tested.
+- An asset that is not a rigged model (no skin in its `.smodel`) errors with a stable string the
+  editor toasts; the fix is to re-import the asset.

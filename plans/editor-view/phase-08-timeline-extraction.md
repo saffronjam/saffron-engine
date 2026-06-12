@@ -1,15 +1,16 @@
-# Phase 10 — timeline extraction
+# Phase 8 — timeline extraction
 
 **Status:** NOT STARTED
+**Depends on:** — (a self-contained timeline refactor)
 
 ## Goal
 
-A pure editor refactor with **no behavior change**: split the Phase-12 (animations plan)
-`TimelinePanel` into target-agnostic pieces the rig editor can also mount. The dock Timeline is
-coupled to the global selection through exactly four store reads; everything below them — the
-canvas, the scrub pipeline, the transport — is already target-agnostic. After this phase the dock
-panel renders the shared pieces against the selection exactly as today, and phase 11 mounts the
-same pieces against the preview rig.
+A pure editor refactor with **no behavior change**: split the animations plan's `TimelinePanel` into
+target-agnostic pieces the rig editor can also mount. The dock Timeline is coupled to the global
+selection through exactly four store reads; everything below them — the canvas, the scrub pipeline,
+the transport — is already target-agnostic. After this phase the dock panel renders the shared
+pieces against the selection exactly as today, and phase 9 mounts the same pieces against the
+preview rig.
 
 **Do not mount the dock's panel instance in the rig editor** — the tabsystem-revamp will portal
 dock panels into per-panel hosts, and a second mount of the same panel id would fight its
@@ -30,7 +31,7 @@ render-once registry (README coordination rules). Shared components, two mounts.
   `applyPlayhead` — the piece that becomes source-injected.
 - The state source today: `refreshAnimation(selectedId)` (`store.ts:1216-1240`) filled by the
   poll's `animationVersion` gate (`store.ts:1410-1416`); the preview rig rides the **same** path
-  because entering the preview selects it (phase 4) — the source interface must still be explicit
+  because entering the preview selects it (phase 2) — the source interface must still be explicit
   so the two mounts don't share UI state (active scrub, loop optimism).
 
 ## Work
@@ -43,8 +44,8 @@ A props interface, not a context (two mounts, no tree sharing):
 interface TimelineTarget {
   entityId: string | null;            // command target (scene selection / preview rig)
   state: AnimationStateResult | null; // playhead/clip/wrap mirror
-  clips: AnimationClipDto[];          // for the clip Select (dock) — rig editor hides it (phase 9 owns picking)
-  enabled: boolean;                   // replaces the componentsBySelected rig gate
+  clips: AnimationClipDto[];          // for the clip Select (dock) — rig editor hides it (phase 7 owns picking)
+  enabled: boolean;                   // the rig gate — dock derives it from componentsBySelected, rig editor from preview-active
 }
 ```
 
@@ -72,7 +73,7 @@ per-mount via `useMemo([])`) — verify nothing module-level leaks between mount
 - `bun run check` + `bun run lint` clean; no new warnings.
 - **No behavior change** in the dock: select a rig → tracks/clip/duration appear; play/scrub/loop
   round-trip; deselect → empty state; the render-frequency property holds (playhead advances with
-  zero React re-renders — re-verify with the dev render logger, the original Phase-12 gotcha).
+  zero React re-renders — re-verify with the dev render logger, the original animations-plan gotcha).
 - `make e2e` unaffected.
 
 ## Notes / gotchas
