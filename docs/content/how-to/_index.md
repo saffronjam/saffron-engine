@@ -20,3 +20,4 @@ How-to guides are task-focused recipes for a known goal: each page states the st
 | `drive-the-editor-from-the-cli` | the `se` CLI: select, set-transform, render-stats, screenshot |
 | `write-a-slang-shader` | add a `.slang`, wire it into the CMake compile, use the PSO |
 | `toggle-render-features` | `se set-aa` / `set-clustered` / `set-ssao` / `set-gi` / `set-depth-prepass` |
+| `clean-unused-assets` | the deliberate cleanup workflow: `se clean-assets` (dry-run) → `delete-unused --confirm` |
