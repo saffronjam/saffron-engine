@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { client } from "../control/client";
 import { useEditorStore } from "../state/store";
+import { errorText } from "../lib/flash";
 import { FrameTimeGraph } from "../components/FrameTimeGraph";
 import { MetricsRefreshControl } from "../components/MetricsRefreshControl";
 import {
@@ -463,14 +464,3 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-/// Normalize a rejected control call into a readable message. The Rust passthrough
-/// rejects with the engine's error string (e.g. "ray tracing not supported …").
-function errorText(err: unknown): string {
-  if (typeof err === "string") {
-    return err;
-  }
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
-}

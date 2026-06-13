@@ -30,7 +30,7 @@ function series(label: string, stroke: string): uPlot.Series {
 }
 
 /// Round up to the nearest 1 / 2 / 5 × 10^k — so the axis snaps to stable levels.
-function niceCeil(v: number): number {
+export function niceCeil(v: number): number {
   if (v <= 0) {
     return 1;
   }
