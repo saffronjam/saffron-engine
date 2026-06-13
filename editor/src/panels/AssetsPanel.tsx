@@ -1,10 +1,9 @@
-/// The Assets panel: the React port of the C++ `assetCatalogPanel`
-/// (editor_panels.cpp:226-325). A folder tree sidebar plus a responsive tile grid
-/// over `store.assets`, navigated through a back/forward history and clickable
+/// The Assets panel: a folder tree sidebar plus a responsive tile grid over
+/// `store.assets`, navigated through a back/forward history and clickable
 /// breadcrumbs, with an Import button (Tauri file dialog), an OS file-drop target,
-/// and the View modal. Imports route by extension (parity with `importToCatalog`,
-/// editor_app.cppm:188-205): images → import-texture (no spawn), everything else →
-/// import-model (spawns + selects an entity, matching `se import-model`).
+/// and the View modal. Imports route by extension: images → import-texture (no
+/// spawn), everything else → import-model (spawns + selects an entity, like
+/// `se import-model`).
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   DragEvent as ReactDragEvent,
@@ -68,7 +67,7 @@ import {
 } from "@/components/ui/context-menu";
 
 /// Image extensions that import as a catalog texture; everything else is imported
-/// as a model (parity with editor_app.cppm:201).
+/// as a model.
 const TEXTURE_EXTS = new Set(["png", "jpg", "jpeg", "hdr", "tga", "bmp"]);
 
 /// Model + image extensions offered in the file dialog.
@@ -1149,8 +1148,8 @@ function AssetDetailOverlay({ orientation }: { orientation: "right" | "bottom" }
 }
 
 /// The clickable path: Root plus one segment per folder level, each navigating to
-/// its prefix and accepting an asset drop (the move-to-root affordance the old Root
-/// tile provided).
+/// its prefix and accepting an asset drop (the Root crumb is the move-to-root
+/// affordance).
 function Breadcrumbs({
   currentFolder,
   onNavigate,

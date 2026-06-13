@@ -9,22 +9,13 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { client } from "../control/client";
-import { useEditorStore } from "../state/store";
+import { base64ToBlob, useEditorStore } from "../state/store";
 import type { AssetEntry } from "../protocol";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 /// Preview render size (px), matching the C++ View re-render.
 const VIEW_SIZE = 512;
-
-function base64ToBlobUrl(b64: string): string {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i);
-  }
-  return URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
-}
 
 export interface AssetViewerProps {
   /// The asset to preview, or null when the modal is closed.
@@ -84,7 +75,7 @@ export function AssetPreview({ entry, className }: { entry: AssetEntry; classNam
             return;
           }
           if (!thumb.pending) {
-            created = base64ToBlobUrl(thumb.base64);
+            created = URL.createObjectURL(base64ToBlob(thumb.base64));
             setUrl(created);
             setStatus("ready");
             return;

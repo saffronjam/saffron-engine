@@ -49,8 +49,8 @@ const ZOOM_PER_WHEEL = 1.1;
 const ORBIT_TAU_S = 0.025;
 const ORBIT_EPS_DEG = 0.01;
 const ORBIT_EPS_DIST_FRAC = 0.0005;
-/// Zoom bounds relative to the engine-framed distance, so a small model can be dollied in close (the old
-/// fixed 0.2 floor exceeded a small model's framed distance) while a ceiling stops it flying away.
+/// Zoom bounds relative to the engine-framed distance, so a small model can be dollied in close while a
+/// ceiling stops it flying away (scaling the floor to the model lets a tiny one zoom past a fixed limit).
 const ZOOM_MIN_FRAC = 0.02;
 const ZOOM_MAX_FRAC = 8;
 const ZOOM_MIN_ABS = 0.001;
@@ -246,10 +246,10 @@ export function AssetEditorWorkspace({ assetId, active }: { assetId: string; act
     void client.setSkeletonHighlight(joint).catch((err: unknown) => notifyError(errorText(err)));
   }, []);
 
-  // Capability gating through the dock model, not a render branch (NO-COMPAT): once the
-  // model's capabilities are known, open the panels it supports (rig → skeleton; clips →
-  // clips + the timeline) and close the rest. Their leaves are persistent, so DockRoot
-  // collapses an empty one — a static model shows just the preview. `preview` is always open.
+  // Capability gating runs through the dock model, not a render branch: once the model's
+  // capabilities are known, open the panels it supports (rig → skeleton; clips → clips +
+  // the timeline) and close the rest. Their leaves are persistent, so DockRoot collapses
+  // an empty one — a static model shows just the preview. `preview` is always open.
   useEffect(() => {
     if (!ready) {
       return;
