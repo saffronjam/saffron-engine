@@ -1,0 +1,387 @@
+/// The tab-strip drag machine, extracted verbatim from the titlebar's view tabs and
+/// parameterized so every strip (the main view tabs and the compact dock strips) shares
+/// one implementation. Pointer-capture drag with a 4 px latch, a single centers snapshot
+/// at drag start, a transform-only live reorder preview (neighbors shift by the dragged
+/// tab's width), click-vs-drag activation, and a WAAPI FLIP settle on drop. The model is
+/// never mutated until drop, so every cancel path is free.
+///
+/// For `domain: "dock"` strips with a `leafId`, the machine also tears out: once the pointer
+/// escapes the strip band vertically it hands the drag to `dockDrag` (a cursor ghost + a
+/// drop overlay), and on release commits via `onDrop` instead of `onReorder`. Tear-out keeps
+/// the same pointer capture, so the source strip keeps driving the drag the whole time.
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent } from "react";
+import type { DockNodeId, DockPanelId, DropTarget } from "../../state/dockLayout";
+import { beginDockDrag, cancelDockDrag, endDockDrag, moveDockDrag } from "./dockDrag";
+
+const TAB_DRAG_THRESHOLD_PX = 4;
+/// Vertical escape past the strip band that tears a dock tab out; un-tears within the smaller
+/// hysteresis band so a jitter at the edge does not flap.
+const TEAR_OUT_PX = 32;
+const TEAR_HYSTERESIS_PX = 8;
+
+interface StripBox {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+interface TabDragState {
+  id: string;
+  pointerId: number;
+  startX: number;
+  currentX: number;
+  dragging: boolean;
+  torn: boolean;
+  startIndex: number;
+  previewIndex: number;
+  width: number;
+  order: string[];
+  centers: Record<string, number>;
+  stripBox: StripBox;
+}
+
+export interface UseTabStripDragOptions {
+  /// Tear-out exists only for "dock" strips with a `leafId`; "view" tabs never leave the strip.
+  domain: "view" | "dock";
+  /// The source leaf id (dock strips) — used as the tear-out origin and drop fallback.
+  leafId?: DockNodeId;
+  /// Ids that are both excluded as insertion targets and non-draggable (e.g. the scene tab).
+  pinnedIds?: string[];
+  isDraggable?(id: string): boolean;
+  /// A press whose target matches this never arms a drag; defaults to the close affordance.
+  shouldIgnoreDragStart?(target: Element): boolean;
+  /// Commit a same-strip reorder; `index` is in the without-moving-tab space.
+  onReorder(id: string, index: number): void;
+  /// The pointerup-without-threshold (click) path.
+  onActivate(id: string): void;
+  /// Commit a torn-out drop to a cross-dock target (dock strips only).
+  onDrop?(id: string, target: DropTarget): void;
+}
+
+export interface TabStripDragHandlers {
+  onPointerDown(event: PointerEvent<HTMLButtonElement>): void;
+  onPointerMove(event: PointerEvent<HTMLButtonElement>): void;
+  onPointerUp(event: PointerEvent<HTMLButtonElement>): void;
+  onPointerCancel(event: PointerEvent<HTMLButtonElement>): void;
+  onLostPointerCapture(event: PointerEvent<HTMLButtonElement>): void;
+}
+
+export interface UseTabStripDragApi {
+  handlersFor(id: string): TabStripDragHandlers;
+  styleFor(id: string): CSSProperties | undefined;
+  registerTabRef(id: string, el: HTMLButtonElement | null): void;
+  /// Resolved draggability (pinnedIds + isDraggable): the strip routes activation for
+  /// non-draggable tabs through onClick, draggable ones through the click-vs-drag pointerup.
+  canDrag(id: string): boolean;
+  /// A threshold-crossed drag is live in this strip.
+  dragging: boolean;
+  /// The armed/dragged tab id (null when idle).
+  draggedId: string | null;
+  /// The dragged tab has torn out (ghosting in place, the cursor ghost is live).
+  torn: boolean;
+}
+
+function defaultShouldIgnoreDragStart(target: Element): boolean {
+  return target.closest("[data-tab-close='true']") !== null;
+}
+
+export function useTabStripDrag(
+  itemIds: string[],
+  options: UseTabStripDragOptions,
+): UseTabStripDragApi {
+  const [tabDrag, setTabDrag] = useState<TabDragState | null>(null);
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const settleRef = useRef<Map<string, number> | null>(null);
+  const pinned = options.pinnedIds ?? [];
+  const shouldIgnore = options.shouldIgnoreDragStart ?? defaultShouldIgnoreDragStart;
+  const canTearOut = options.domain === "dock" && options.leafId !== undefined;
+
+  const canDrag = (id: string): boolean => {
+    if (pinned.includes(id)) {
+      return false;
+    }
+    return options.isDraggable?.(id) ?? true;
+  };
+
+  const reset = (): void => {
+    setTabDrag((current) => {
+      if (current?.torn) {
+        cancelDockDrag();
+      }
+      return null;
+    });
+  };
+
+  // Escape cancels a torn drag (pointer capture never delivers keyboard events).
+  useEffect(() => {
+    if (!tabDrag?.torn) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      cancelDockDrag();
+      tabRefs.current.get(tabDrag.id)?.releasePointerCapture(tabDrag.pointerId);
+      setTabDrag(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [tabDrag?.torn, tabDrag?.id, tabDrag?.pointerId]);
+
+  // FLIP settle for a tab drop. The drop render reorders the DOM, clears the drag
+  // transforms, and re-enables transitions in one commit — left alone, the browser
+  // would transition each moved tab from `new slot + old drag transform`, a phantom
+  // slide from the wrong side. Suppress transitions before the first rect read (style
+  // writes do not force a recalc), so removing the transform commits without starting
+  // an animation and measures true final layout; then WAAPI-settle each tab that would
+  // jump from its pre-drop visual position. Neighbors have zero diff (the preview
+  // already placed them), so only the dragged tab settles, from under the cursor.
+  useLayoutEffect(() => {
+    const before = settleRef.current;
+    if (!before) {
+      return;
+    }
+    settleRef.current = null;
+    const nodes = [...tabRefs.current.entries()];
+    for (const [, node] of nodes) {
+      node.style.transition = "none";
+    }
+    const settles: [HTMLButtonElement, number][] = [];
+    for (const [id, node] of nodes) {
+      const left = before.get(id);
+      if (left === undefined) {
+        continue;
+      }
+      const diff = left - node.getBoundingClientRect().left;
+      if (Math.abs(diff) >= 0.5) {
+        settles.push([node, diff]);
+      }
+    }
+    for (const [, node] of nodes) {
+      node.style.transition = "";
+    }
+    for (const [node, diff] of settles) {
+      node.animate([{ transform: `translateX(${diff}px)` }, { transform: "none" }], {
+        duration: 150,
+        easing: "ease-out",
+      });
+    }
+  });
+
+  const registerTabRef = (id: string, node: HTMLButtonElement | null): void => {
+    if (node) {
+      tabRefs.current.set(id, node);
+    } else {
+      tabRefs.current.delete(id);
+    }
+  };
+
+  const insertionIndexForPointer = (drag: TabDragState, x: number): number => {
+    const withoutMoving = drag.order.filter((id) => id !== drag.id);
+    for (let i = 0; i < withoutMoving.length; i += 1) {
+      const id = withoutMoving[i];
+      if (pinned.includes(id)) {
+        continue;
+      }
+      const center = drag.centers[id];
+      if (center === undefined) {
+        continue;
+      }
+      if (x < center) {
+        return i;
+      }
+    }
+    return withoutMoving.length;
+  };
+
+  const beginDrag = (id: string, event: PointerEvent<HTMLButtonElement>): void => {
+    if (!canDrag(id) || event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && shouldIgnore(target)) {
+      return;
+    }
+    const node = tabRefs.current.get(id);
+    if (!node) {
+      return;
+    }
+    const order = [...itemIds];
+    const startIndex = order.indexOf(id);
+    if (startIndex < 0) {
+      return;
+    }
+    const centers: Record<string, number> = {};
+    for (const candidate of order) {
+      const tabNode = tabRefs.current.get(candidate);
+      if (tabNode) {
+        const rect = tabNode.getBoundingClientRect();
+        centers[candidate] = rect.left + rect.width / 2;
+      }
+    }
+    const nodeRect = node.getBoundingClientRect();
+    const stripRect = (node.parentElement ?? node).getBoundingClientRect();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setTabDrag({
+      id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      currentX: event.clientX,
+      dragging: false,
+      torn: false,
+      startIndex,
+      previewIndex: startIndex,
+      width: nodeRect.width,
+      order,
+      centers,
+      stripBox: {
+        top: stripRect.top,
+        bottom: stripRect.bottom,
+        left: stripRect.left,
+        right: stripRect.right,
+      },
+    });
+  };
+
+  const moveDrag = (event: PointerEvent<HTMLButtonElement>): void => {
+    if (!tabDrag) {
+      return;
+    }
+    const delta = event.clientX - tabDrag.startX;
+    const dragging = tabDrag.dragging || Math.abs(delta) >= TAB_DRAG_THRESHOLD_PX;
+    const pointer = { x: event.clientX, y: event.clientY };
+
+    if (canTearOut && dragging) {
+      const { top, bottom, left, right } = tabDrag.stripBox;
+      if (tabDrag.torn) {
+        const reentered =
+          event.clientY >= top - TEAR_HYSTERESIS_PX &&
+          event.clientY <= bottom + TEAR_HYSTERESIS_PX &&
+          event.clientX >= left &&
+          event.clientX <= right;
+        if (reentered) {
+          cancelDockDrag();
+          setTabDrag({
+            ...tabDrag,
+            torn: false,
+            currentX: event.clientX,
+            previewIndex: insertionIndexForPointer(tabDrag, event.clientX),
+          });
+          return;
+        }
+        moveDockDrag(pointer);
+        setTabDrag({ ...tabDrag, currentX: event.clientX });
+        return;
+      }
+      const escaped = event.clientY < top - TEAR_OUT_PX || event.clientY > bottom + TEAR_OUT_PX;
+      if (escaped) {
+        const node = tabRefs.current.get(tabDrag.id);
+        beginDockDrag({
+          panelId: tabDrag.id as DockPanelId,
+          fromLeafId: options.leafId as DockNodeId,
+          ghostWidth: tabDrag.width,
+          ghostLabel: node?.textContent?.trim() ?? tabDrag.id,
+          pointer,
+        });
+        moveDockDrag(pointer);
+        setTabDrag({ ...tabDrag, torn: true, dragging: true, currentX: event.clientX });
+        return;
+      }
+    }
+
+    setTabDrag({
+      ...tabDrag,
+      currentX: event.clientX,
+      dragging,
+      previewIndex: dragging
+        ? insertionIndexForPointer(tabDrag, event.clientX)
+        : tabDrag.previewIndex,
+    });
+  };
+
+  const endDrag = (id: string, event: PointerEvent<HTMLButtonElement>): void => {
+    if (!tabDrag || tabDrag.id !== id) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (tabDrag.torn) {
+      const target = endDockDrag();
+      setTabDrag(null);
+      if (target) {
+        options.onDrop?.(tabDrag.id, target);
+      }
+      return;
+    }
+
+    const activate = !tabDrag.dragging;
+    const nextIndex = tabDrag.previewIndex;
+    if (tabDrag.dragging) {
+      const lefts = new Map<string, number>();
+      for (const [tabId, node] of tabRefs.current) {
+        lefts.set(tabId, node.getBoundingClientRect().left);
+      }
+      settleRef.current = lefts;
+    }
+    setTabDrag(null);
+    if (activate) {
+      options.onActivate(id);
+    } else {
+      options.onReorder(tabDrag.id, nextIndex);
+    }
+  };
+
+  const styleFor = (id: string): CSSProperties | undefined => {
+    if (!tabDrag?.dragging) {
+      return undefined;
+    }
+    if (tabDrag.torn) {
+      // The dragged tab ghosts in place; the cursor ghost carries it. Neighbors part via
+      // the dockDrag preview the strip renders, not here.
+      return id === tabDrag.id ? { opacity: 0.4 } : undefined;
+    }
+    if (id === tabDrag.id) {
+      return { transform: `translateX(${tabDrag.currentX - tabDrag.startX}px)` };
+    }
+    const index = tabDrag.order.indexOf(id);
+    if (
+      tabDrag.previewIndex > tabDrag.startIndex &&
+      index > tabDrag.startIndex &&
+      index <= tabDrag.previewIndex
+    ) {
+      return { transform: `translateX(-${tabDrag.width}px)` };
+    }
+    if (
+      tabDrag.previewIndex < tabDrag.startIndex &&
+      index >= tabDrag.previewIndex &&
+      index < tabDrag.startIndex
+    ) {
+      return { transform: `translateX(${tabDrag.width}px)` };
+    }
+    return undefined;
+  };
+
+  const handlersFor = (id: string): TabStripDragHandlers => ({
+    onPointerDown: (event) => beginDrag(id, event),
+    onPointerMove: moveDrag,
+    onPointerUp: (event) => endDrag(id, event),
+    onPointerCancel: reset,
+    onLostPointerCapture: reset,
+  });
+
+  return {
+    handlersFor,
+    styleFor,
+    registerTabRef,
+    canDrag,
+    dragging: tabDrag?.dragging ?? false,
+    draggedId: tabDrag?.id ?? null,
+    torn: tabDrag?.torn ?? false,
+  };
+}
