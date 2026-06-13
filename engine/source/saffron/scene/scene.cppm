@@ -597,8 +597,8 @@ export namespace se
             {
                 return;
             }
-            if (scene.registry.all_of<SkinnedMeshComponent>(handle)
-                || scene.registry.all_of<AnimationPlayerComponent>(handle))
+            if (scene.registry.all_of<SkinnedMeshComponent>(handle) ||
+                scene.registry.all_of<AnimationPlayerComponent>(handle))
             {
                 found = Entity{ handle };
                 return;
