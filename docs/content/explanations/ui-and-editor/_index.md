@@ -27,7 +27,9 @@ Every editor operation rides the JSON-over-unix-socket [control protocol](../too
 | `asset-pickers-and-drag-drop` | the AssetPicker uuid combo, type-gated HTML5 drag-drop | `AssetPicker.tsx` · `AssetTile.tsx` |
 | `assets-panel-and-thumbnails` | the React asset browser, virtual folders, asset tabs, `get-thumbnail` base64 PNG + blob-URL cache, import dialog | `AssetsPanel.tsx` · `AssetTile.tsx` · `AssetViewer.tsx` |
 | `selection` | select/get-selection/deselect, the version-stamped reconcile round-trip, optimistic select | `state/store.ts` · `ViewportPanel.tsx` |
-| `theme-and-fonts` | shadcn theme tokens, font defaults, the resizable dock | `styles.css` · `Layout.tsx` |
+| `undo-redo` | editor-only inverse-command + per-tab snapshot history, gesture grouping, mouse Back/Forward + Alt-arrow nav suppression, invalidation, the extension recipe | `lib/undo.ts` · `useTabSnapshotHistory.ts` · `state/store.ts` |
+| [`dock-system`](dock-system/) | the per-kind dock tree (`dockLayouts` keyed `scene`/`assetEditor`), per-main-tab isolation (disjoint `DockPanelId` spaces + active-island-only `[data-dock-leaf]` registry), the shared `TabStrip` + tear-out drag, the portal host, the locked live-subsurface leaves, the asset editor as a dock island, per-project persistence | `state/dockLayout.ts` · `components/dock/DockRoot.tsx` · `DockPanelsHost.tsx` · `dockDrag.ts` |
+| `theme-and-fonts` | shadcn theme tokens, font defaults (the layout itself lives in `dock-system`) | `styles.css` |
 | `mesh-thumbnails` | the engine `renderMeshThumbnail` 3/4 preview, read back as a base64 PNG | `renderer_thumbnail.cpp` |
 | [`metrics-dashboard`](metrics-dashboard/) | the gated metrics poll, the uPlot live frame-time graph, per-pass + VRAM views, shared thresholds, the alarm toasts/log/badge | `RenderStatsPanel.tsx` · `FrameTimeGraph.tsx` · `state/store.ts` |
 | [`profiler-panel`](profiler-panel/) | the capture tab beside Stats, the Start/Stop state machine, the table/flame/icicle views + cross-highlight, Chrome-Trace + Perfetto export | `ProfilerPanel.tsx` · `CaptureControls.tsx` · `lib/captureTree.ts` |

@@ -41,11 +41,15 @@ The theme defaults to system sans and monospace stacks. Roboto and Roboto Mono r
 
 `--font-sans` and `--font-mono` are exported through `@theme inline`, which lets Tailwind utilities use the app-level font choices consistently. Data-heavy fields can still use `font-mono` for aligned numbers and ids.
 
-## Layout: a resizable dock
+## The dock surfaces
 
-The dock is reproduced with `react-resizable-panels` (shadcn's `resizable`): a full-height Hierarchy plus tabbed Inspector/Environment/Stats column on the left, and a right region stacking the [Viewport](../viewport-panel/) over the Assets browser. The split ratios are right-region bottom 0.28 and a 0.45/0.55 split within the left column. Render Stats is tabbed next to Inspector and Environment. The viewport is composited under the transparent webview (see [viewport compositing](../viewport-compositing/)), so any layout change that moves the viewport rect must re-glue the subsurface through the layout-settled bus.
-
-A **bottom dock** stacks below the Viewport/Assets pair when opened (the Topbar timeline button), with its own closeable tab strip — empty until the timeline lands, and it vanishes once its last tab closes so the viewport reclaims the height. It is a third panel inside the same right vertical group, so `react-resizable-panels` persists its split. Opening, closing, or resizing it fires `emitLayoutSettled` (the open/close case forced on the next frame) so the viewport subsurface re-glues to the new bounds.
+Every editor surface paints with these tokens, and they are arranged by the
+[dock system](../dock-system/): a tree of resizable splits and tab groups, built on
+`react-resizable-panels` (shadcn's `resizable`), one tree per dockspace-bearing main tab. That
+page is the authoritative account of the layout — the tab strip, drag-to-dock, the portal host,
+the locked viewport leaf, and persistence. The theme's only stake in it is that each leaf body
+paints `bg-background` so the live viewport shows through only the one transparent (locked)
+leaf, never a sibling panel.
 
 ## In the code
 
@@ -53,12 +57,11 @@ A **bottom dock** stacks below the Viewport/Assets pair when opened (the Topbar 
 |---|---|---|
 | shadcn tokens | `editor/src/styles.css` | `:root` / `.dark` vars, `@theme inline` |
 | Font defaults | `editor/src/styles.css` | `@font-face`, `--font-sans` / `--font-mono` |
-| The dock layout | `editor/src/app/Layout.tsx` | `Layout`, `LeftBottomTabs`, the panel split sizes |
-| The bottom dock | `editor/src/panels/BottomDock.tsx` | `BottomDock`, `BOTTOM_TOOL_LABEL` |
 | Layout-settled bus | `editor/src/app/layoutBus.ts` | `emitLayoutSettled`, `onLayoutSettled` |
 
 ## Related
 
+- [Dock system](../dock-system/) — the resizable split-and-tab layout these tokens dress
 - [Tauri editor and the viewport bridge](../tauri-editor-and-viewport-bridge/) — the shell the theme dresses
 - [Viewport panel](../viewport-panel/) — the panel that fills the dock center
 - [Inspector](../inspector/) — uses the mono font for its data fields
