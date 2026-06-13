@@ -4,8 +4,7 @@
 /// The asset editor mounts the same pieces against the previewed model (a different TimelineTarget); the
 /// two never render simultaneously (the dock is hidden while a non-scene tab is active).
 ///
-/// Keyframe AUTHORING is out of scope; the lane renderer already has a `diamonds` mode so it drops in
-/// later without a layout rewrite.
+/// Keyframe AUTHORING is out of scope; the lane renderer draws read-only clip bars.
 import { useEditorStore } from "../state/store";
 import { TimelineTransport } from "../components/timeline/TimelineTransport";
 import { TimelineSurface } from "../components/timeline/TimelineSurface";

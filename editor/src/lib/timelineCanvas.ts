@@ -5,9 +5,8 @@
 /// per-tick React re-render of the panel would fight the render-frequency work — the playhead
 /// advancing every poll must touch only this canvas, not the component tree.
 ///
-/// The lane renderer draws clip BARS today; a `diamonds` draw mode is stubbed so a future
-/// keyframe-authoring lane (Phase 13+) drops in without restructuring the layout or the
-/// view transform. Area-virtualized: only ticks and bars overlapping the visible width draw.
+/// The lane renderer draws clip bars. Area-virtualized: only ticks and bars overlapping the
+/// visible width draw.
 
 /// Fixed dark-theme palette (the app is dark-only) — the 2D canvas cannot reliably read the
 /// oklch theme tokens, mirroring `GRAPH_COLORS` in `perfThresholds.ts`.
@@ -20,8 +19,6 @@ const COLORS = {
   clipBorder: "rgba(255,255,255,0.22)",
   clipLabel: "rgba(255,255,255,0.92)",
   playhead: "#e5e7eb",
-  diamondFill: "#fbbf24",
-  diamondBorder: "rgba(0,0,0,0.55)",
 } as const;
 
 /// One track row. `accent` is the type-color swatch shown in the header and tinting the bar.
@@ -38,23 +35,12 @@ export interface TimelineClip {
   duration: number;
 }
 
-/// A future keyframe (seconds) on a track — drawn as a diamond in `diamonds` mode. Unused by
-/// the read-only v1; the type + draw path exist so authoring lands without a renderer rewrite.
-export interface TimelineKey {
-  trackId: string;
-  time: number;
-}
-
-export type LaneMode = "bars" | "diamonds";
-
 export interface TimelineModel {
   /// Total timeline length in seconds (the ruler/lane horizontal extent).
   duration: number;
   /// Track rows top-to-bottom; index → vertical lane.
   tracks: TimelineTrack[];
   clips: TimelineClip[];
-  keys: TimelineKey[];
-  mode: LaneMode;
 }
 
 const RULER_HEIGHT = 22;
@@ -66,11 +52,11 @@ const TARGET_TICK_PX = 64;
 const TICK_STEPS_MS = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000];
 
 function emptyModel(): TimelineModel {
-  return { duration: 1, tracks: [], clips: [], keys: [], mode: "bars" };
+  return { duration: 1, tracks: [], clips: [] };
 }
 
 /// Pick the ms tick step that yields the widest spacing still under the px target.
-function chooseTickStepMs(durationSec: number, widthPx: number): number {
+export function chooseTickStepMs(durationSec: number, widthPx: number): number {
   const pxPerMs = widthPx / Math.max(durationSec * 1000, 1);
   for (const step of TICK_STEPS_MS) {
     if (step * pxPerMs >= TARGET_TICK_PX) {
@@ -80,7 +66,7 @@ function chooseTickStepMs(durationSec: number, widthPx: number): number {
   return TICK_STEPS_MS[TICK_STEPS_MS.length - 1];
 }
 
-function formatTick(ms: number): string {
+export function formatTick(ms: number): string {
   if (ms === 0) {
     return "0ms";
   }
@@ -119,7 +105,7 @@ export class TimelineCanvas {
   }
 
   /// Seconds → x in CSS px across the full content width (the lane is not horizontally
-  /// scrolled in v1 — the clip fits the panel; the transform centralizes a future zoom/pan).
+  /// scrolled — the clip fits the panel; the transform centralizes any zoom/pan).
   secToX(sec: number): number {
     const d = Math.max(this.model.duration, 0.0001);
     return (sec / d) * this.widthCss;
@@ -231,10 +217,6 @@ export class TimelineCanvas {
       ctx.stroke();
     }
 
-    if (model.mode === "diamonds") {
-      this.drawDiamonds();
-      return;
-    }
     this.drawBars();
   }
 
@@ -285,34 +267,6 @@ export class TimelineCanvas {
     }
   }
 
-  /// Future authoring lane: one diamond per keyframe. Wired but unused by the v1 viewer.
-  private drawDiamonds(): void {
-    const { ctx, model, widthCss } = this;
-    const r = 4;
-    for (const key of model.keys) {
-      const row = this.rowOf(key.trackId);
-      if (row < 0) {
-        continue;
-      }
-      const x = this.secToX(key.time);
-      if (x < -r || x > widthCss + r) {
-        continue;
-      }
-      const cy = RULER_HEIGHT + row * ROW_HEIGHT + ROW_HEIGHT / 2;
-      ctx.beginPath();
-      ctx.moveTo(x, cy - r);
-      ctx.lineTo(x + r, cy);
-      ctx.lineTo(x, cy + r);
-      ctx.lineTo(x - r, cy);
-      ctx.closePath();
-      ctx.fillStyle = COLORS.diamondFill;
-      ctx.fill();
-      ctx.strokeStyle = COLORS.diamondBorder;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-  }
-
   private drawPlayhead(): void {
     const { ctx, heightCss } = this;
     const x = Math.round(this.secToX(this.playheadSec)) + 0.5;
@@ -346,7 +300,7 @@ export class TimelineCanvas {
 }
 
 /// Blend a hex or rgb(a) color toward transparent (canvas fills want an explicit alpha string).
-function withAlpha(color: string, alpha: number): string {
+export function withAlpha(color: string, alpha: number): string {
   const hex = color.trim();
   if (hex.startsWith("#")) {
     const n = hex.slice(1);

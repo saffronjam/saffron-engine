@@ -2,7 +2,7 @@
 /// footer. Owns its own TimelineCanvas, scrub pipeline, and driving subscription (per-mount via
 /// useMemo([]) / a mount effect — nothing module-level leaks between the dock and asset-editor mounts).
 /// Motion stays imperative (the playhead advances on the canvas, not via React); the command target +
-/// rig gate are injected through `target`. A move out of TimelinePanel — identical DOM/classes.
+/// rig gate are injected through `target`.
 ///
 /// The canvas reads the store's animationState slice imperatively (the no-re-render playhead path);
 /// both mounts share that slice because the relevant entity (scene selection / previewed model) is the
@@ -108,8 +108,6 @@ export function TimelineSurface({ target }: { target: TimelineTarget }) {
         duration: Math.max(dur, 0.0001),
         tracks: trackList,
         clips,
-        keys: [],
-        mode: "bars",
       };
       engine.setModel(model);
       const header = headerHostRef.current;
@@ -257,7 +255,6 @@ export function TimelineSurface({ target }: { target: TimelineTarget }) {
     hostRelayRef.current?.();
   }, [enabled]);
 
-  // --- scrub ---
   const beginScrub = (clientX: number): void => {
     const engine = engineRef.current;
     if (!engine) {
