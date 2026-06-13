@@ -90,6 +90,7 @@ export type {
   AssetPreviewResult,
   AssetPreviewOptionsResult,
   SkeletonOverlayResult,
+  DebugOverlaysResult,
   PickSkeletonJointResult,
   ScreenshotParams,
   ScreenshotResult,

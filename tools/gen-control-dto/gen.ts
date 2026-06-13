@@ -83,6 +83,18 @@ const enumWireNames = new Map<string, Record<string, string>>([
     { Off: "off", Fxaa: "fxaa", Taa: "taa", Msaa2: "msaa2", Msaa4: "msaa4", Msaa8: "msaa8" },
   ],
   ["GiModeDto", { Off: "off", Ddgi: "ddgi" }],
+  [
+    "ViewModeDto",
+    {
+      Lit: "lit",
+      Wireframe: "wireframe",
+      Albedo: "albedo",
+      Normal: "normal",
+      Roughness: "roughness",
+      Metallic: "metallic",
+      Emissive: "emissive",
+    },
+  ],
   ["AssetSlotDto", { Mesh: "mesh", Albedo: "albedo", MetallicRoughness: "metallic-roughness", Normal: "normal", Occlusion: "occlusion", Emissive: "emissive", Height: "height" }],
   ["ScreenshotTargetDto", { Viewport: "viewport", Window: "window" }],
   ["AssetTypeDto", { Mesh: "mesh", Texture: "texture", Other: "other", Animation: "animation", Material: "material", Model: "model" }],
@@ -167,6 +179,12 @@ const commands: CommandDef[] = [
     params: "SetAaParams",
     result: "SetAaResult",
     summary: "set anti-aliasing mode",
+  },
+  {
+    name: "set-view-mode",
+    params: "SetViewModeParams",
+    result: "SetViewModeResult",
+    summary: "set the debug render-output mode {lit|wireframe|albedo|normal|roughness|metallic|emissive}",
   },
   {
     name: "set-clustered",
@@ -425,6 +443,18 @@ const commands: CommandDef[] = [
     params: "SetSkeletonOverlayParams",
     result: "SkeletonOverlayResult",
     summary: "the selected rig's line-skeleton viewport overlay (show|axes|jointSize)",
+  },
+  {
+    name: "get-debug-overlays",
+    params: "EmptyParams",
+    result: "DebugOverlaysResult",
+    summary: "the viewport debug-overlay toggles (bounds|sceneAabb|lightVolumes)",
+  },
+  {
+    name: "set-debug-overlays",
+    params: "DebugOverlaysParams",
+    result: "DebugOverlaysResult",
+    summary: "toggle viewport debug overlays {bounds?, sceneAabb?, lightVolumes?, grid?}",
   },
   {
     name: "set-skeleton-highlight",
@@ -862,6 +892,7 @@ const commandFixtures = new Map<string, string>([
   ["drain-alarms", "alarms-since-0"],
   ["list-active-alarms", "empty"],
   ["set-aa", "aa"],
+  ["set-view-mode", "view-mode-wireframe"],
   ["set-clustered", "toggle-on"],
   ["set-ibl", "toggle-on"],
   ["set-ssao", "toggle-on"],
@@ -901,6 +932,8 @@ const commandFixtures = new Map<string, string>([
   ["stop", "empty"],
   ["get-skeleton-overlay", "empty"],
   ["set-skeleton-overlay", "skeleton-overlay-on"],
+  ["get-debug-overlays", "empty"],
+  ["set-debug-overlays", "debug-overlays-bounds"],
   ["get-foot-ik", "cube-entity"],
   ["set-foot-ik", "foot-ik-on"],
   ["get-play-state", "empty"],
@@ -1616,6 +1649,8 @@ function tsType(type: string): string {
       return '"off" | "fxaa" | "taa" | "msaa2" | "msaa4" | "msaa8"';
     case "GiModeDto":
       return '"off" | "ddgi"';
+    case "ViewModeDto":
+      return '"lit" | "wireframe" | "albedo" | "normal" | "roughness" | "metallic" | "emissive"';
     case "AssetSlotDto":
       return '"mesh" | "albedo" | "metallic-roughness" | "normal" | "occlusion" | "emissive" | "height"';
     case "ScreenshotTargetDto":

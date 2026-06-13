@@ -230,6 +230,8 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
       return {};
     case "aa":
       return { mode: "fxaa" };
+    case "view-mode-wireframe":
+      return { mode: "wireframe" };
     case "toggle-on":
       return { enabled: true };
     case "toggle-off":
@@ -311,6 +313,8 @@ async function paramsForFixture(fixture: string, state: { cubeId: string }): Pro
     }
     case "skeleton-overlay-on":
       return { show: true, axes: true, jointSize: 5 };
+    case "debug-overlays-bounds":
+      return { bounds: true };
     case "foot-ik-on":
       return { entity: state.cubeId, enabled: true, groundHeight: 0 };
     case "step-one":

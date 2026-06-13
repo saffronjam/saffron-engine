@@ -93,6 +93,13 @@
       "fixture": "aa"
     },
     {
+      "name": "set-view-mode",
+      "params": "SetViewModeParams",
+      "result": "SetViewModeResult",
+      "status": "typed",
+      "fixture": "view-mode-wireframe"
+    },
+    {
       "name": "set-clustered",
       "params": "ToggleParams",
       "result": "SetClusteredResult",
@@ -427,6 +434,20 @@
       "result": "SkeletonOverlayResult",
       "status": "typed",
       "fixture": "skeleton-overlay-on"
+    },
+    {
+      "name": "get-debug-overlays",
+      "params": "EmptyParams",
+      "result": "DebugOverlaysResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "set-debug-overlays",
+      "params": "DebugOverlaysParams",
+      "result": "DebugOverlaysResult",
+      "status": "typed",
+      "fixture": "debug-overlays-bounds"
     },
     {
       "name": "set-skeleton-highlight",

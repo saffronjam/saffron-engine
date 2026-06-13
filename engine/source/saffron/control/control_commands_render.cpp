@@ -73,6 +73,50 @@ namespace se
         setAa(renderer, samples, fxaa, taa);
     }
 
+    auto viewModeDto(ViewMode mode) -> ViewModeDto
+    {
+        switch (mode)
+        {
+        case ViewMode::Wireframe:
+            return ViewModeDto::Wireframe;
+        case ViewMode::Albedo:
+            return ViewModeDto::Albedo;
+        case ViewMode::Normal:
+            return ViewModeDto::Normal;
+        case ViewMode::Roughness:
+            return ViewModeDto::Roughness;
+        case ViewMode::Metallic:
+            return ViewModeDto::Metallic;
+        case ViewMode::Emissive:
+            return ViewModeDto::Emissive;
+        case ViewMode::Lit:
+            break;
+        }
+        return ViewModeDto::Lit;
+    }
+
+    auto viewModeFromDto(ViewModeDto mode) -> ViewMode
+    {
+        switch (mode)
+        {
+        case ViewModeDto::Wireframe:
+            return ViewMode::Wireframe;
+        case ViewModeDto::Albedo:
+            return ViewMode::Albedo;
+        case ViewModeDto::Normal:
+            return ViewMode::Normal;
+        case ViewModeDto::Roughness:
+            return ViewMode::Roughness;
+        case ViewModeDto::Metallic:
+            return ViewMode::Metallic;
+        case ViewModeDto::Emissive:
+            return ViewMode::Emissive;
+        case ViewModeDto::Lit:
+            break;
+        }
+        return ViewMode::Lit;
+    }
+
     auto profilerModeDto(ProfilerMode mode) -> ProfilerModeDto
     {
         switch (mode)
@@ -275,7 +319,8 @@ namespace se
                                static_cast<i32>(bindlessFreeCount(renderer)),
                                true,
                                exposureEv(renderer),
-                               aaModeDto(aaMode(renderer)) };
+                               aaModeDto(aaMode(renderer)),
+                               viewModeDto(viewMode(renderer)) };
     }
 
     auto passTimingsDto(Renderer& renderer) -> RenderPassTimingsDto
@@ -550,6 +595,15 @@ namespace se
             {
                 applyAaMode(ctx.renderer, params.mode.value_or(AaModeDto::Off));
                 return SetAaResult{ aaModeDto(aaMode(ctx.renderer)) };
+            });
+
+        registerCommand<SetViewModeParams, SetViewModeResult>(
+            reg, "set-view-mode",
+            "set-view-mode {lit|wireframe|albedo|normal|roughness|metallic|emissive} — debug render-output (transient)",
+            [](EngineContext& ctx, const SetViewModeParams& params) -> Result<SetViewModeResult>
+            {
+                setViewMode(ctx.renderer, viewModeFromDto(params.mode.value_or(ViewModeDto::Lit)));
+                return SetViewModeResult{ viewModeDto(viewMode(ctx.renderer)) };
             });
 
         registerCommand<ToggleParams, SetClusteredResult>(

@@ -237,6 +237,7 @@ export interface RenderStatsDto {
   hdr: boolean;
   exposureEv: number;
   aa: "off" | "fxaa" | "taa" | "msaa2" | "msaa4" | "msaa8";
+  viewMode: "lit" | "wireframe" | "albedo" | "normal" | "roughness" | "metallic" | "emissive";
 }
 
 export interface ProfilerSetModeParams {
@@ -422,6 +423,14 @@ export interface SetAaParams {
 
 export interface SetAaResult {
   aa: "off" | "fxaa" | "taa" | "msaa2" | "msaa4" | "msaa8";
+}
+
+export interface SetViewModeParams {
+  mode?: "lit" | "wireframe" | "albedo" | "normal" | "roughness" | "metallic" | "emissive";
+}
+
+export interface SetViewModeResult {
+  viewMode: "lit" | "wireframe" | "albedo" | "normal" | "roughness" | "metallic" | "emissive";
 }
 
 export interface ToggleParams {
@@ -749,6 +758,20 @@ export interface SetSkeletonOverlayParams {
   show?: boolean;
   axes?: boolean;
   jointSize?: number;
+}
+
+export interface DebugOverlaysResult {
+  bounds: boolean;
+  sceneAabb: boolean;
+  lightVolumes: boolean;
+  grid: boolean;
+}
+
+export interface DebugOverlaysParams {
+  bounds?: boolean;
+  sceneAabb?: boolean;
+  lightVolumes?: boolean;
+  grid?: boolean;
 }
 
 export interface SetSkeletonHighlightParams {
@@ -1433,6 +1456,7 @@ export interface CommandParamsMap {
   "drain-alarms": DrainAlarmsParams;
   "list-active-alarms": EmptyParams;
   "set-aa": SetAaParams;
+  "set-view-mode": SetViewModeParams;
   "set-clustered": ToggleParams;
   "set-ibl": ToggleParams;
   "set-ssao": ToggleParams;
@@ -1481,6 +1505,8 @@ export interface CommandParamsMap {
   "stop-preview": AnimationStateParams;
   "get-skeleton-overlay": EmptyParams;
   "set-skeleton-overlay": SetSkeletonOverlayParams;
+  "get-debug-overlays": EmptyParams;
+  "set-debug-overlays": DebugOverlaysParams;
   "set-skeleton-highlight": SetSkeletonHighlightParams;
   "pick-skeleton-joint": PickSkeletonJointParams;
   "set-asset-preview-options": SetAssetPreviewOptionsParams;
@@ -1572,6 +1598,7 @@ export interface CommandResultMap {
   "drain-alarms": DrainAlarmsResult;
   "list-active-alarms": ActiveAlarmsDto;
   "set-aa": SetAaResult;
+  "set-view-mode": SetViewModeResult;
   "set-clustered": SetClusteredResult;
   "set-ibl": SetIblResult;
   "set-ssao": SetSsaoResult;
@@ -1620,6 +1647,8 @@ export interface CommandResultMap {
   "stop-preview": AnimationStateResult;
   "get-skeleton-overlay": SkeletonOverlayResult;
   "set-skeleton-overlay": SkeletonOverlayResult;
+  "get-debug-overlays": DebugOverlaysResult;
+  "set-debug-overlays": DebugOverlaysResult;
   "set-skeleton-highlight": SkeletonOverlayResult;
   "pick-skeleton-joint": PickSkeletonJointResult;
   "set-asset-preview-options": AssetPreviewOptionsResult;

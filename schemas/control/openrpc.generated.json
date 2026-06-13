@@ -240,6 +240,24 @@
       }
     },
     {
+      "name": "set-view-mode",
+      "summary": "set the debug render-output mode {lit|wireframe|albedo|normal|roughness|metallic|emissive}",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetViewModeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SetViewModeResult"
+        }
+      }
+    },
+    {
       "name": "set-clustered",
       "summary": "toggle clustered lighting",
       "params": [
@@ -1100,6 +1118,42 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/SkeletonOverlayResult"
+        }
+      }
+    },
+    {
+      "name": "get-debug-overlays",
+      "summary": "the viewport debug-overlay toggles (bounds|sceneAabb|lightVolumes)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DebugOverlaysResult"
+        }
+      }
+    },
+    {
+      "name": "set-debug-overlays",
+      "summary": "toggle viewport debug overlays {bounds?, sceneAabb?, lightVolumes?, grid?}",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DebugOverlaysParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DebugOverlaysResult"
         }
       }
     },
@@ -3468,6 +3522,49 @@
           "path"
         ]
       },
+      "DebugOverlaysParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "type": "boolean"
+          },
+          "sceneAabb": {
+            "type": "boolean"
+          },
+          "lightVolumes": {
+            "type": "boolean"
+          },
+          "grid": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "DebugOverlaysResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "type": "boolean"
+          },
+          "sceneAabb": {
+            "type": "boolean"
+          },
+          "lightVolumes": {
+            "type": "boolean"
+          },
+          "grid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "bounds",
+          "sceneAabb",
+          "lightVolumes",
+          "grid"
+        ]
+      },
       "DeleteAssetFolderParams": {
         "type": "object",
         "additionalProperties": false,
@@ -5667,6 +5764,18 @@
               "msaa4",
               "msaa8"
             ]
+          },
+          "viewMode": {
+            "type": "string",
+            "enum": [
+              "lit",
+              "wireframe",
+              "albedo",
+              "normal",
+              "roughness",
+              "metallic",
+              "emissive"
+            ]
           }
         },
         "required": [
@@ -5705,7 +5814,8 @@
           "bindlessFree",
           "hdr",
           "exposureEv",
-          "aa"
+          "aa",
+          "viewMode"
         ]
       },
       "ScanAssetsResult": {
@@ -6695,6 +6805,46 @@
         },
         "required": [
           "entity"
+        ]
+      },
+      "SetViewModeParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "lit",
+              "wireframe",
+              "albedo",
+              "normal",
+              "roughness",
+              "metallic",
+              "emissive"
+            ]
+          }
+        },
+        "required": []
+      },
+      "SetViewModeResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "viewMode": {
+            "type": "string",
+            "enum": [
+              "lit",
+              "wireframe",
+              "albedo",
+              "normal",
+              "roughness",
+              "metallic",
+              "emissive"
+            ]
+          }
+        },
+        "required": [
+          "viewMode"
         ]
       },
       "SetViewportSizeParams": {

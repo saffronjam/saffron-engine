@@ -355,6 +355,35 @@ namespace se
             return "";
         }
 
+        auto readViewModeDto(const Json& value, std::string_view key) -> Result<ViewModeDto>
+        {
+            auto text = readString(value, key);
+            if (!text) { return Err(std::move(text.error())); }
+            if (text == "lit") { return ViewModeDto::Lit; }
+            if (text == "wireframe") { return ViewModeDto::Wireframe; }
+            if (text == "albedo") { return ViewModeDto::Albedo; }
+            if (text == "normal") { return ViewModeDto::Normal; }
+            if (text == "roughness") { return ViewModeDto::Roughness; }
+            if (text == "metallic") { return ViewModeDto::Metallic; }
+            if (text == "emissive") { return ViewModeDto::Emissive; }
+            return Err(std::format("key '{}' has unknown value '{}'", key, *text));
+        }
+
+        auto ViewModeDtoName(ViewModeDto value) -> const char*
+        {
+            switch (value)
+            {
+            case ViewModeDto::Lit: return "lit";
+            case ViewModeDto::Wireframe: return "wireframe";
+            case ViewModeDto::Albedo: return "albedo";
+            case ViewModeDto::Normal: return "normal";
+            case ViewModeDto::Roughness: return "roughness";
+            case ViewModeDto::Metallic: return "metallic";
+            case ViewModeDto::Emissive: return "emissive";
+            }
+            return "";
+        }
+
         auto readAssetSlotDto(const Json& value, std::string_view key) -> Result<AssetSlotDto>
         {
             auto text = readString(value, key);
@@ -653,6 +682,11 @@ namespace se
         return GiModeDtoName(value);
     }
 
+    auto dtoToJson(ViewModeDto value) -> Json
+    {
+        return ViewModeDtoName(value);
+    }
+
     auto dtoToJson(AssetSlotDto value) -> Json
     {
         return AssetSlotDtoName(value);
@@ -901,6 +935,22 @@ namespace se
             if (value && !value->is_null())
             {
                 auto parsed = readAaModeDto(*value, "mode");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.mode = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetViewModeParams>) -> Result<SetViewModeParams>
+    {
+        SetViewModeParams out;
+
+        {
+            auto value = optionalField(params, "mode", 0, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readViewModeDto(*value, "mode");
                 if (!parsed) { return Err(std::move(parsed.error())); }
                 out.mode = std::move(*parsed);
             }
@@ -1841,6 +1891,52 @@ namespace se
                 auto parsed = readF32(*value, "jointSize");
                 if (!parsed) { return Err(std::move(parsed.error())); }
                 out.jointSize = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<DebugOverlaysParams>) -> Result<DebugOverlaysParams>
+    {
+        DebugOverlaysParams out;
+
+        {
+            auto value = optionalField(params, "bounds", 0, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "bounds");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.bounds = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "sceneAabb", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "sceneAabb");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.sceneAabb = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "lightVolumes", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "lightVolumes");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.lightVolumes = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "grid", 3, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "grid");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.grid = std::move(*parsed);
             }
         }
         return out;
@@ -3277,6 +3373,7 @@ namespace se
         out["hdr"] = value.hdr;
         out["exposureEv"] = value.exposureEv;
         out["aa"] = dtoToJson(value.aa);
+        out["viewMode"] = dtoToJson(value.viewMode);
         return out;
     }
 
@@ -3482,6 +3579,13 @@ namespace se
     {
         Json out = Json::object();
         out["aa"] = dtoToJson(value.aa);
+        return out;
+    }
+
+    auto dtoToJson(const SetViewModeResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["viewMode"] = dtoToJson(value.viewMode);
         return out;
     }
 
@@ -3754,6 +3858,16 @@ namespace se
         out["axes"] = value.axes;
         out["jointSize"] = value.jointSize;
         out["highlightJoint"] = value.highlightJoint;
+        return out;
+    }
+
+    auto dtoToJson(const DebugOverlaysResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["bounds"] = value.bounds;
+        out["sceneAabb"] = value.sceneAabb;
+        out["lightVolumes"] = value.lightVolumes;
+        out["grid"] = value.grid;
         return out;
     }
 

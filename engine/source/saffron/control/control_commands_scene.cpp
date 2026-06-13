@@ -165,6 +165,11 @@ namespace se
         return hit;
     }
 
+    auto debugOverlaysState(const DebugOverlayOptions& opts) -> DebugOverlaysResult
+    {
+        return DebugOverlaysResult{ opts.bounds, opts.sceneAabb, opts.lightVolumes, opts.grid };
+    }
+
     void registerSceneCommands(CommandRegistry& reg)
     {
         registerCommand<EmptyParams, EntityList>(
@@ -1323,6 +1328,36 @@ namespace se
                     ctx.sceneEdit.preserveChildren = *params.preserveChildren;
                 }
                 return gizmoStateDto(ctx.sceneEdit);
+            });
+
+        registerCommand<EmptyParams, DebugOverlaysResult>(
+            reg, "get-debug-overlays", "get-debug-overlays — the viewport debug-overlay toggles",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<DebugOverlaysResult>
+            { return debugOverlaysState(ctx.sceneEdit.debugOverlays); });
+
+        registerCommand<DebugOverlaysParams, DebugOverlaysResult>(
+            reg, "set-debug-overlays",
+            "set-debug-overlays {bounds?, sceneAabb?, lightVolumes?, grid?} — toggle viewport debug overlays",
+            [](EngineContext& ctx, const DebugOverlaysParams& params) -> Result<DebugOverlaysResult>
+            {
+                DebugOverlayOptions& opts = ctx.sceneEdit.debugOverlays;
+                if (params.bounds)
+                {
+                    opts.bounds = *params.bounds;
+                }
+                if (params.sceneAabb)
+                {
+                    opts.sceneAabb = *params.sceneAabb;
+                }
+                if (params.lightVolumes)
+                {
+                    opts.lightVolumes = *params.lightVolumes;
+                }
+                if (params.grid)
+                {
+                    opts.grid = *params.grid;
+                }
+                return debugOverlaysState(opts);
             });
 
         registerCommand<GizmoPointerParams, GizmoPointerResult>(

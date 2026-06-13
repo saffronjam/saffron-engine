@@ -109,6 +109,18 @@ export namespace se
         Ddgi,
     };
 
+    /// Debug render-output mode (read back via render-stats; transient, not persisted).
+    enum class ViewModeDto
+    {
+        Lit,
+        Wireframe,
+        Albedo,
+        Normal,
+        Roughness,
+        Metallic,
+        Emissive,
+    };
+
     enum class AssetSlotDto
     {
         Mesh,
@@ -231,6 +243,7 @@ export namespace se
         bool hdr;
         f32 exposureEv;
         AaModeDto aa;
+        ViewModeDto viewMode;  // debug render-output mode; append-last (positional aggregate init)
     };
 
     struct RenderPassTimingDto
@@ -518,6 +531,16 @@ export namespace se
     struct SetAaResult
     {
         AaModeDto aa;
+    };
+
+    struct SetViewModeParams
+    {
+        std::optional<ViewModeDto> mode;
+    };
+
+    struct SetViewModeResult
+    {
+        ViewModeDto viewMode;
     };
 
     struct ToggleParams
@@ -1298,7 +1321,7 @@ export namespace se
 
     struct AssetModelResult
     {
-        WireUuid mesh;                        // the owning container id (the editor's tab key)
+        WireUuid mesh;  // the owning container id (the editor's tab key)
         std::string name;
         AssetCapabilitiesDto capabilities;    // what the model can do; gates the editor's panels
         std::vector<BoneDto> bones;           // empty unless capabilities.hasRig
@@ -1388,6 +1411,22 @@ export namespace se
         bool axes;
         f32 jointSize;
         i32 highlightJoint;  // get-asset-model node index of the tinted joint, -1 = none
+    };
+
+    struct DebugOverlaysParams
+    {
+        std::optional<bool> bounds;
+        std::optional<bool> sceneAabb;
+        std::optional<bool> lightVolumes;
+        std::optional<bool> grid;
+    };
+
+    struct DebugOverlaysResult
+    {
+        bool bounds;
+        bool sceneAabb;
+        bool lightVolumes;
+        bool grid;
     };
 
     struct SetSkeletonHighlightParams
@@ -1611,6 +1650,7 @@ export namespace se
     auto dtoToJson(GizmoPointerPhase value) -> Json;
     auto dtoToJson(AaModeDto value) -> Json;
     auto dtoToJson(GiModeDto value) -> Json;
+    auto dtoToJson(ViewModeDto value) -> Json;
     auto dtoToJson(AssetSlotDto value) -> Json;
     auto dtoToJson(ScreenshotTargetDto value) -> Json;
     auto dtoToJson(AssetTypeDto value) -> Json;
@@ -1650,6 +1690,7 @@ export namespace se
     auto dtoToJson(const SetScriptOverrideResult& value) -> Json;
     auto dtoToJson(const CreateScriptResult& value) -> Json;
     auto dtoToJson(const SetAaResult& value) -> Json;
+    auto dtoToJson(const SetViewModeResult& value) -> Json;
     auto dtoToJson(const SetClusteredResult& value) -> Json;
     auto dtoToJson(const SetIblResult& value) -> Json;
     auto dtoToJson(const SetSsaoResult& value) -> Json;
@@ -1721,6 +1762,7 @@ export namespace se
     auto dtoToJson(const ListClipsResult& value) -> Json;
     auto dtoToJson(const AnimationStateResult& value) -> Json;
     auto dtoToJson(const SkeletonOverlayResult& value) -> Json;
+    auto dtoToJson(const DebugOverlaysResult& value) -> Json;
     auto dtoToJson(const PickSkeletonJointResult& value) -> Json;
     auto dtoToJson(const AssetPreviewOptionsResult& value) -> Json;
     auto dtoToJson(const FootIkResult& value) -> Json;
@@ -1743,6 +1785,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<Vec3>) -> Result<Vec3>;
     auto parseDto(const Json& params, DtoTag<Vec4>) -> Result<Vec4>;
     auto parseDto(const Json& params, DtoTag<SetAaParams>) -> Result<SetAaParams>;
+    auto parseDto(const Json& params, DtoTag<SetViewModeParams>) -> Result<SetViewModeParams>;
     auto parseDto(const Json& params, DtoTag<ProfilerSetModeParams>) -> Result<ProfilerSetModeParams>;
     auto parseDto(const Json& params, DtoTag<CaptureStartParams>) -> Result<CaptureStartParams>;
     auto parseDto(const Json& params, DtoTag<FrameHistoryParams>) -> Result<FrameHistoryParams>;
@@ -1819,6 +1862,7 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<SetAnimationLoopParams>) -> Result<SetAnimationLoopParams>;
     auto parseDto(const Json& params, DtoTag<AnimationStateParams>) -> Result<AnimationStateParams>;
     auto parseDto(const Json& params, DtoTag<SetSkeletonOverlayParams>) -> Result<SetSkeletonOverlayParams>;
+    auto parseDto(const Json& params, DtoTag<DebugOverlaysParams>) -> Result<DebugOverlaysParams>;
     auto parseDto(const Json& params, DtoTag<SetSkeletonHighlightParams>) -> Result<SetSkeletonHighlightParams>;
     auto parseDto(const Json& params, DtoTag<PickSkeletonJointParams>) -> Result<PickSkeletonJointParams>;
     auto parseDto(const Json& params, DtoTag<SetAssetPreviewOptionsParams>) -> Result<SetAssetPreviewOptionsParams>;
