@@ -757,8 +757,8 @@ namespace se
                     override_.scale = finalLocal[i].scale;
                 }
 
-                // Snapshot this frame's final pose for the next frame's finite-difference
-                // velocities (the physics handoff). Cheap; no consumer yet.
+                // Snapshot this frame's final pose: the active ragdoll reads it as the per-bone
+                // target its constraint motors drive toward (the physics handoff). Cheap.
                 runtime.lastPose[key] = finalLocal;
             });
     }
