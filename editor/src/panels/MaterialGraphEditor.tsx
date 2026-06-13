@@ -64,7 +64,7 @@ const previewCache = new Map<string, string>();
 
 /// Stable, order-insensitive equality of two graphs (nodes/edges sorted by id/endpoints),
 /// so a settle that only reorders the arrays or rounds a position back records no entry.
-function graphsEqual(a: MaterialGraph, b: MaterialGraph): boolean {
+export function graphsEqual(a: MaterialGraph, b: MaterialGraph): boolean {
   const key = (g: MaterialGraph): string => {
     const nodes = [...g.nodes].sort((x, y) => x.id.localeCompare(y.id));
     const edges = [...g.edges].sort((x, y) =>
