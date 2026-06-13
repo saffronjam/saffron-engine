@@ -1,7 +1,10 @@
-// The asset preview scene: enter-asset-preview spawns a model into an isolated scene routed through
-// activeScene (the play-mode pattern), so animation commands drive it unchanged, and exit-asset-preview
-// restores the authored scene + camera. The keystone invariant: a full enter -> scrub -> exit round-trip
-// leaves project.json byte-identical. Mutual exclusion with play and authored-scene mutations is enforced.
+// The asset preview scene: enter-asset-preview spawns a model into an isolated preview scene and makes
+// AssetPreview the active view (set-active-view assetPreview), so animation commands drive it unchanged;
+// exit-asset-preview drops the preview and returns the renderer to the Scene view + the authored scene +
+// camera. set-active-view {scene|assetPreview} switches the rendered view WITHOUT dropping the preview (it
+// stays alive, parked, ready to re-activate). Each view owns an independent offscreen target sized via
+// set-viewport-size {view}. The keystone invariant: a full enter -> scrub -> exit round-trip leaves
+// project.json byte-identical. Mutual exclusion with play and authored-scene mutations is enforced.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -218,7 +221,7 @@ test("set-asset-preview-options toggles the floor slab live", async () => {
   await engine.call("exit-asset-preview");
 });
 
-test("suspend routes activeScene back to the authored scene; resume returns to the preview", async () => {
+test("set-active-view scene routes activeScene to the authored scene; assetPreview returns to the preview", async () => {
   await engine.call("exit-asset-preview");
   const authoredBefore = await listEntityIds();
 
@@ -226,31 +229,83 @@ test("suspend routes activeScene back to the authored scene; resume returns to t
   const previewEntities = await listEntityIds();
   expect(previewEntities).not.toEqual(authoredBefore); // the preview scene is a different entity set
 
-  // Suspend parks the preview without dropping it — activeScene routes to the authored scene again.
-  await engine.call("suspend-asset-preview");
+  // set-active-view scene deactivates the preview view WITHOUT dropping it — activeScene routes back to
+  // the authored scene and previewing() clears, so the authored scene is editable again.
+  await engine.call("set-active-view", { view: "scene" });
   expect(await listEntityIds()).toEqual(authoredBefore);
-  // previewAsset stays set (the preview is alive, just parked), so resume can restore it.
+  // previewAsset stays set (the preview scene is alive, just not the active view), so re-activating restores it.
   expect((await engine.call<PlayStateResult>("get-play-state")).previewAsset).toBe(legModel);
 
-  await engine.call("resume-asset-preview");
+  await engine.call("set-active-view", { view: "assetPreview" });
   expect(await listEntityIds()).toEqual(previewEntities); // back to the same preview — no re-spawn
 
   await engine.call("exit-asset-preview");
   expect(await listEntityIds()).toEqual(authoredBefore);
 });
 
-test("an enter -> suspend -> resume -> exit round-trip leaves project.json byte-identical", async () => {
+test("an enter -> set-active-view scene -> assetPreview -> exit round-trip leaves project.json byte-identical", async () => {
   await engine.call("exit-asset-preview");
   await engine.call("save-project");
   const before = readFileSync(projectPath, "utf8");
 
   await engine.call("enter-asset-preview", { asset: legModel });
-  await engine.call("suspend-asset-preview");
-  await engine.call("resume-asset-preview");
+  await engine.call("set-active-view", { view: "scene" });
+  await engine.call("set-active-view", { view: "assetPreview" });
   await engine.call("exit-asset-preview");
 
   await engine.call("save-project");
   expect(readFileSync(projectPath, "utf8")).toBe(before);
+});
+
+test("set-active-view round-trips the active-view token and rejects an unknown one", async () => {
+  await engine.call("exit-asset-preview");
+  const toScene = await engine.call<{ view: string }>("set-active-view", { view: "scene" });
+  expect(toScene.view).toBe("scene");
+  const toPreview = await engine.call<{ view: string }>("set-active-view", { view: "assetPreview" });
+  expect(toPreview.view).toBe("assetPreview"); // switching the rendered view needs no live preview scene
+  await expect(engine.call("set-active-view", { view: "nope" })).rejects.toThrow(); // one canonical token per view
+  await engine.call("set-active-view", { view: "scene" }); // leave the renderer on the scene view
+});
+
+test("set-viewport-size targets independent per-view offscreen sizes", async () => {
+  // Independent per-view offscreen sizing is the publish-mode (editor) behavior: each view owns its own
+  // render target driven by set-viewport-size {view}. In present mode the hidden window drives the scene
+  // size instead (host.cppm: !shmPublish tracks app.window), so boot a dedicated shm-publish engine — the
+  // engine creates + unlinks its own segments, so no reader is needed.
+  const stamp = `${process.pid}-${Date.now()}`;
+  const shm = await Engine.boot({
+    SAFFRON_AUTO_EMPTY_PROJECT: "1",
+    SAFFRON_VIEWPORT_SHM_SCENE: `/saffron-e2e-scene-${stamp}`,
+    SAFFRON_VIEWPORT_SHM_ASSET: `/saffron-e2e-asset-${stamp}`,
+  });
+  try {
+    await shm.call("set-active-view", { view: "scene" });
+    // Each view owns its own offscreen target; size them differently. A parked view's resize is deferred
+    // until it is activated, so the assetPreview target reaches 800x600 only once it becomes the active view.
+    await shm.call("set-viewport-size", { view: "scene", width: 640, height: 360 });
+    await shm.call("set-viewport-size", { view: "assetPreview", width: 800, height: 600 });
+    await shm.settle();
+
+    // viewport-native-info reports the ACTIVE view's offscreen size.
+    const scene = await shm.call<{ width: number; height: number }>("viewport-native-info");
+    expect(scene.width).toBe(640);
+    expect(scene.height).toBe(360);
+
+    await shm.call("set-active-view", { view: "assetPreview" });
+    await shm.settle();
+    const preview = await shm.call<{ width: number; height: number }>("viewport-native-info");
+    expect(preview.width).toBe(800);
+    expect(preview.height).toBe(600);
+
+    // Switching back, the scene view kept its own size — two fully independent targets.
+    await shm.call("set-active-view", { view: "scene" });
+    await shm.settle();
+    const sceneAgain = await shm.call<{ width: number; height: number }>("viewport-native-info");
+    expect(sceneAgain.width).toBe(640);
+    expect(sceneAgain.height).toBe(360);
+  } finally {
+    await shm.shutdown();
+  }
 });
 
 test("the engine logged no validation errors", async () => {
