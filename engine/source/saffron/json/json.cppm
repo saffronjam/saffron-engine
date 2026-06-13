@@ -33,12 +33,12 @@ export namespace se
     /// Serialize a u64 id as a decimal JSON string. Ids span the full u64 range, which
     /// exceeds JS's 2^53 safe integer; emitting them as strings keeps full precision once
     /// a JS client runs them through JSON.parse. The matching reads (jsonU64) accept both
-    /// a string and a number, so older files written with bare numbers still load.
+    /// a string and a number.
     auto uuidToJson(u64 value) -> Json;
 
     /// Typed object-field reads. Each checks the value's type before extracting, so a
-    /// missing key or a wrong type yields an error instead of aborting. jsonU64 also
-    /// accepts a decimal string (ids cross the wire as strings; older files store numbers).
+    /// missing key or a wrong type yields an error instead of aborting. jsonU64 accepts
+    /// both a number and a decimal string (ids cross the wire as strings).
     auto jsonU64(const Json& object, std::string_view key) -> Result<u64>;
     auto jsonString(const Json& object, std::string_view key) -> Result<std::string>;
     auto jsonF64(const Json& object, std::string_view key) -> Result<f64>;

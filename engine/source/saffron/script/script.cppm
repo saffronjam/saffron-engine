@@ -47,10 +47,6 @@ export namespace se
     /// math/table/utf8 — no io/os/debug/package) and the `se` namespace bound.
     auto newScriptVm() -> Result<ScriptVm>;
 
-    /// Load + run a Lua source file (text only, no precompiled chunks).
-    /// Syntax, runtime, and file errors become Err carrying a traceback.
-    auto runFile(ScriptVm& vm, std::string_view path) -> Result<void>;
-
     /// Load + run a Lua source string under the given chunk name.
     /// Syntax and runtime errors become Err carrying a traceback.
     auto runString(ScriptVm& vm, std::string_view source, std::string_view chunkName) -> Result<void>;
@@ -220,15 +216,6 @@ namespace se
         ScriptVm vm;
         vm.state = L;
         return vm;
-    }
-
-    auto runFile(ScriptVm& vm, std::string_view path) -> Result<void>
-    {
-        lua_State* L = vm.state;
-        lua_pushcfunction(L, tracebackHandler);
-        const int msghIndex = lua_gettop(L);
-        const std::string file(path);
-        return finishRun(L, msghIndex, luaL_loadfilex(L, file.c_str(), "t"));
     }
 
     auto runString(ScriptVm& vm, std::string_view source, std::string_view chunkName) -> Result<void>

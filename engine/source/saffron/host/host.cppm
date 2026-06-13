@@ -280,8 +280,12 @@ namespace se
                 }
                 addLine(vertices, origin.pixel, end.pixel, 5.0f, se::axisColor(handles[i], editor.nativeGizmo), width,
                         height);
-                addBox(vertices, end.pixel, editor.nativeGizmo.mode == se::NativeGizmoMode::Scale ? 12.0f : 8.0f,
-                       se::axisColor(handles[i], editor.nativeGizmo), width, height);
+                se::f32 boxSize = 8.0f;
+                if (editor.nativeGizmo.mode == se::NativeGizmoMode::Scale)
+                {
+                    boxSize = 12.0f;
+                }
+                addBox(vertices, end.pixel, boxSize, se::axisColor(handles[i], editor.nativeGizmo), width, height);
             }
         }
         if (editor.nativeGizmo.mode == se::NativeGizmoMode::Translate)
@@ -350,7 +354,11 @@ namespace se
         // highlighting a bone via the dedicated channel never blanks the overlay, and a bone has no
         // SkinnedMesh of its own), else the selected entity in the normal scene-edit view. A static
         // model's root has no SkinnedMeshComponent, so the overlay self-gates to nothing just below.
-        const se::Entity target = editor.previewScene ? editor.previewRootEntity : editor.selected;
+        se::Entity target = editor.selected;
+        if (editor.previewScene)
+        {
+            target = editor.previewRootEntity;
+        }
         if (target.handle == entt::null)
         {
             return;
@@ -406,8 +414,14 @@ namespace se
             const bool highlighted = highlightUuid.value != 0 &&
                                      se::getComponent<se::IdComponent>(scene, bone).id.value == highlightUuid.value;
             const se::f32 baseRadius = std::max(2.5f, editor.skeletonOverlay.jointSize);
-            const se::f32 radius = highlighted ? baseRadius * 1.8f : baseRadius;
-            addCircleFill(vertices, joint.pixel, radius, highlighted ? HighlightColor : JointColor, width, height);
+            se::f32 radius = baseRadius;
+            glm::vec4 jointColor = JointColor;
+            if (highlighted)
+            {
+                radius = baseRadius * 1.8f;
+                jointColor = HighlightColor;
+            }
+            addCircleFill(vertices, joint.pixel, radius, jointColor, width, height);
             // Optional per-joint RGB axes from the bone's world-rotation basis.
             if (editor.skeletonOverlay.axes)
             {
@@ -457,13 +471,21 @@ namespace se
                 const bool sel = editor.selected.handle == e.handle;
                 if (kind == BillboardKind::PointLight)
                 {
-                    addBulbIcon(vertices, p.pixel, sel ? selectedColor : glm::vec4{ 1.0f, 0.84f, 0.34f, 0.95f }, width,
-                                height);
+                    glm::vec4 bulbColor{ 1.0f, 0.84f, 0.34f, 0.95f };
+                    if (sel)
+                    {
+                        bulbColor = selectedColor;
+                    }
+                    addBulbIcon(vertices, p.pixel, bulbColor, width, height);
                     return;
                 }
                 if (kind == BillboardKind::SpotLight)
                 {
-                    const glm::vec4 color = sel ? selectedColor : glm::vec4{ 0.45f, 0.85f, 1.0f, 0.9f };
+                    glm::vec4 color{ 0.45f, 0.85f, 1.0f, 0.9f };
+                    if (sel)
+                    {
+                        color = selectedColor;
+                    }
                     addBulbIcon(vertices, p.pixel, color, width, height);
                     const glm::vec3 forward = se::worldRotation(scene, e) * glm::vec3{ 0.0f, 0.0f, -1.0f };
                     const se::GizmoProjection tip = se::viewportProject(cam, width, height, position + forward * 0.6f);
@@ -479,8 +501,12 @@ namespace se
                     {
                         return;
                     }
-                    addCameraIcon(vertices, p.pixel, sel ? selectedColor : glm::vec4{ 0.85f, 0.87f, 0.92f, 0.95f },
-                                  width, height);
+                    glm::vec4 cameraColor{ 0.85f, 0.87f, 0.92f, 0.95f };
+                    if (sel)
+                    {
+                        cameraColor = selectedColor;
+                    }
+                    addCameraIcon(vertices, p.pixel, cameraColor, width, height);
                 }
             });
     }
@@ -963,10 +989,19 @@ export namespace se
                 {
                     se::logInfo("script self-test passed");
                 }
+                if (auto signal = se::runSignalSelfTest(); !signal)
+                {
+                    se::logError(signal.error());
+                }
+                else
+                {
+                    se::logInfo("signal self-test passed");
+                }
             }
 
-            // Auto-load a selected project, then legacy root project.json; otherwise wait
-            // for the Tauri project picker to create/open one.
+            // Auto-load the selected project (SAFFRON_PROJECT), then an auto-empty project,
+            // then a project.json in the working directory; otherwise wait for the Tauri
+            // project picker to create/open one.
             constexpr const char* defaultProject = "project.json";
             auto applyProject = [state](const se::ProjectInfo& project)
             {
@@ -1054,7 +1089,11 @@ export namespace se
             // from the editor) is the parent-death signal; gated on the marker so a standalone/CLI/e2e
             // run, whose parent is a shell, is never auto-killed.
             const bool editorSpawned = std::getenv("SAFFRON_EDITOR_NATIVE_VIEWPORT") != nullptr;
-            const pid_t editorPid = editorSpawned ? getppid() : 0;
+            pid_t editorPid = 0;
+            if (editorSpawned)
+            {
+                editorPid = getppid();
+            }
 
             // Off-thread thumbnail generation: a cold-cache get-thumbnail enqueues here and replies
             // pending rather than blocking the frame loop on decode + upload + render.
@@ -1087,8 +1126,11 @@ export namespace se
                 // Animation runs every frame in both Edit (preview) and Play, before
                 // scripts so a script can still override a bone the same frame. It only
                 // writes runtime PoseOverrideComponents, never the authored rest pose.
-                const se::AnimMode animMode =
-                    state->editor->playState == se::PlayState::Edit ? se::AnimMode::Edit : se::AnimMode::Play;
+                se::AnimMode animMode = se::AnimMode::Play;
+                if (state->editor->playState == se::PlayState::Edit)
+                {
+                    animMode = se::AnimMode::Edit;
+                }
                 se::tickAnimation(state->animation, se::activeScene(*state->editor), dt.seconds, animMode);
                 // Control first, tick second: a play/pause/step command that arrives this
                 // frame takes effect this frame (a step runs its tick the same frame).
