@@ -55,6 +55,10 @@ import type {
 /// The GPU profiler depth (off keeps the present-only host at baseline cost).
 export type ProfilerMode = ProfilerModeResult["mode"];
 
+/// Which viewport a per-view command targets. Each view has its own render target + shm ring +
+/// subsurface; the wire tokens MUST match the engine's `viewIdFromWire` ("scene" | "assetPreview").
+export type ViewId = "scene" | "assetPreview";
+
 /// The viewport panel's logical CSS rect plus the window scale factor. Rust positions
 /// the wayland subsurface in logical coordinates and tells the engine to render at
 /// `width*scale × height*scale` device pixels.
@@ -290,14 +294,10 @@ export const client = {
   exitAssetPreview(): Promise<PlayStateResult> {
     return call("exit-asset-preview");
   },
-  /// Park the active preview (restore the authored scene) but keep it alive, so returning to the asset
-  /// tab resumes instantly with no re-spawn. Used when the asset tab loses focus to another tab.
-  suspendAssetPreview(): Promise<PlayStateResult> {
-    return call("suspend-asset-preview");
-  },
-  /// Un-park a suspended preview: restore its orbit camera + selection. Used when the asset tab regains focus.
-  resumeAssetPreview(): Promise<PlayStateResult> {
-    return call("resume-asset-preview");
+  /// Select which view the engine renders + addresses this frame (the rendered pane: scene vs asset
+  /// preview). Routes activeScene/camera + the per-view render target; sent when the active tab changes.
+  setActiveView(view: ViewId): Promise<CommandResultMap["set-active-view"]> {
+    return call("set-active-view", { view });
   },
   /// The previewed model's line-skeleton overlay toggles (master show, per-joint axes, joint size).
   setSkeletonOverlay(opts: {
@@ -734,20 +734,16 @@ export const client = {
   startEngine(): Promise<void> {
     return invoke<void>("start_engine");
   },
-  /// Route the viewport panel's rect to the subsurface presenter. `resizeEngine` also
-  /// commits the device-pixel render size to the engine (expensive target recreation) —
-  /// send it on settled bounds, not on live drag ticks.
-  setViewportBounds(bounds: ViewportBounds, resizeEngine: boolean): Promise<void> {
-    return invoke<void>("set_viewport_bounds", { bounds, resizeEngine });
+  /// Route one view's pane rect to its own subsurface (each view has its own surface, permanently glued
+  /// to its pane — no shared subsurface re-bind on a tab switch). `resizeEngine` also commits that view's
+  /// device-pixel render size to the engine — send it on settled bounds, not on live drag ticks.
+  setViewportBounds(view: ViewId, bounds: ViewportBounds, resizeEngine: boolean): Promise<void> {
+    return invoke<void>("set_viewport_bounds", { view, bounds, resizeEngine });
   },
-  /// Park/unpark the subsurface (a modal or another tab owns the region).
-  setViewportHidden(hidden: boolean): Promise<void> {
-    return invoke<void>("set_viewport_hidden", { hidden });
-  },
-  /// The presenter's monotonic count of frames the compositor has displayed. Poll it after a resize to
-  /// lift the resize mask only once a fresh frame at the new size has actually landed.
-  viewportPresentedCount(): Promise<number> {
-    return invoke<number>("viewport_presented_count");
+  /// Park/unpark one view's subsurface (its tab isn't active, or a modal owns the region). A parked
+  /// surface detaches; its ring retains the last frame, so unparking re-shows it instantly.
+  setViewportParked(view: ViewId, parked: boolean): Promise<void> {
+    return invoke<void>("set_viewport_parked", { view, parked });
   },
   quitEngine(): Promise<void> {
     return invoke<void>("quit_engine");

@@ -1,17 +1,13 @@
-/// The Wayland subsurface bounds emitter, extracted from ViewportPanel so a second host rect (the
-/// asset editor's preview pane) can drive the same single subsurface. The transport SINK is a singleton
-/// (one subsurface, one presenter in wayland_viewport.rs), but the EMITTER is not: any component may
-/// call set_viewport_bounds, and a degenerate (<=0) rect no-ops via the computeBounds null guard.
-///
-/// INVARIANT — at most one host drives the subsurface at a time, so no arbitration/locking is needed:
-/// the dock viewport host is 0x0 whenever a non-scene tab is active (App.tsx parks it via viewportHidden
-/// + the panel collapses), and the asset workspace — though kept mounted across tab switches — passes
-/// `enabled: false` whenever its tab isn't active. Two emitters therefore never both drive the subsurface.
+/// Glues ONE view's Wayland subsurface to its pane's host div. Each viewport pane (the scene viewport
+/// and the asset-editor preview) has its OWN surface + render target + shm ring, permanently sized to
+/// its pane — so a tab switch parks/unparks surfaces but never re-binds or resizes a shared one (the
+/// stale-frame bug that fix removes). Pass the view id; the hook routes `set_viewport_bounds {view}` to
+/// that view's surface. A degenerate (<=0) rect no-ops via the computeBounds null guard, so a host that
+/// is `display:none` (its tab inactive) emits nothing; `enabled: false` disables the hook outright.
 import { useEffect, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { client, type ViewportBounds } from "../control/client";
+import { client, type ViewId, type ViewportBounds } from "../control/client";
 import { onLayoutSettled } from "../app/layoutBus";
-import { waitForFreshFrame } from "./waitForFreshFrame";
 
 /// Resize-end commit debounce: after the last layout/resize change settles, send one final exact
 /// bounds — this is the tier that also resizes the engine's render target (expensive offscreen
@@ -61,16 +57,16 @@ function boundsEqual(a: ViewportBounds | null, b: ViewportBounds): boolean {
 /// mutation still commits.
 export function useSubsurfaceBounds(
   hostRef: RefObject<HTMLElement | null>,
-  opts: { enabled?: boolean; onSettled?: () => void } = {},
+  viewId: ViewId,
+  opts: { enabled?: boolean } = {},
 ): void {
-  const { enabled, onSettled } = opts;
+  const { enabled } = opts;
   useEffect(() => {
     const el = hostRef.current;
     if (!el || enabled === false) {
       return;
     }
     let cancelled = false;
-    let settledFired = false;
     let lastSent: ViewportBounds | null = null;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let lastLiveSent = 0;
@@ -92,7 +88,7 @@ export function useSubsurfaceBounds(
       }
       lastSent = bounds;
       try {
-        await client.setViewportBounds(bounds, resizeEngine);
+        await client.setViewportBounds(viewId, bounds, resizeEngine);
       } catch {
         // The bridge may be briefly unavailable; the next sync recovers.
       }
@@ -136,19 +132,10 @@ export function useSubsurfaceBounds(
       scheduleEndCommit();
     };
 
-    // The first forced commit resizes the engine's render target at the host's settled size; reveal the
-    // viewport only once the presenter has actually DISPLAYED a fresh frame at the new size (not after a
-    // timer guess), so the resize never flashes the stretched old frame through the mask.
-    void commit(true, true).then(async () => {
-      if (cancelled || settledFired || !onSettled) {
-        return;
-      }
-      settledFired = true;
-      await waitForFreshFrame();
-      if (!cancelled) {
-        onSettled();
-      }
-    });
+    // Commit this view's settled bounds once on mount/enable so its surface + engine target are sized to
+    // the pane. No reveal-masking needed: the surface is permanently this pane's size, so a tab switch
+    // never stretches it.
+    void commit(true, true);
     const observer = new ResizeObserver(onGeometryChange);
     observer.observe(el);
     window.addEventListener("resize", onGeometryChange);
@@ -166,5 +153,5 @@ export function useSubsurfaceBounds(
         clearTimeout(liveTimer);
       }
     };
-  }, [hostRef, enabled, onSettled]);
+  }, [hostRef, viewId, enabled]);
 }
