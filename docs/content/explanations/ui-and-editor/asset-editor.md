@@ -29,13 +29,13 @@ Preview stays in `PlayState::Edit` (it is mutually exclusive with Play), so it i
 
 Commands that would mutate the authored scene or project — `new-project`, `open-project`, `load-scene`, `load-project`, `reload-project`, `delete-asset`, `import-model`, `assign-asset`, `set-material` — refuse while a preview is engaged ("exit the asset preview first"), the same way they refuse during Play. Entering a preview while Play is running is likewise refused, and `play` is refused while previewing.
 
-## One viewport, taken over
+## Its own viewport surface
 
-The preview reuses the one Wayland subsurface the scene viewport already presents on — it does not open a second live view. The asset tab keeps that subsurface inside its own center pane (the bounds emitter is `useSubsurfaceBounds`, extracted from the viewport panel so a second host rect can drive it), and the engine publishes the preview scene through the existing shared-memory ring. Orbiting and scrubbing update the live frame at monitor refresh with no presenter or transport changes.
+The preview is a full second view, not a takeover. The renderer holds one offscreen target + shm ring + Wayland subsurface per [`ViewId`](../viewport-compositing/) — `Scene` and `AssetPreview` — and, like a major engine's per-view resource bundle, each view owns its own screenspace/post-process **descriptor sets** (bind groups) alongside those images, so switching the active view never leaves a set bound to the other view's images. The asset tab drives its **own** `assetPreview` surface (the bounds emitter is the shared `useSubsurfaceBounds` hook, parameterized by view id), permanently glued to its center pane. The engine publishes the preview scene through that view's ring; orbiting and scrubbing update its live frame at monitor refresh, with the scene viewport's own surface untouched beside it.
 
-The cost is that the preview *takes over* the single stream, exactly like Play takes over the viewport: while an asset tab is active the scene's dock viewport is parked (its host rect goes 0×0 and no-ops). A second concurrent live view — your scene and an asset at once — is deliberately out of scope; it would need a second offscreen chain and per-view scene addressing that no plan owns yet.
+Only the active view is rendered each frame, so the two views never both pay GPU cost at once. Switching tabs parks the hidden view's surface (it keeps its last frame frozen) and unparks the shown one — no re-bind, no resize, no stale-size frame on the switch. The deliberate tradeoff for "preserve last" being color-only: per-view temporal accumulators (TAA history, motion vectors, ReSTIR, the DDGI volume) reset when a view re-activates, so GI and antialiasing re-converge over a few frames rather than the engine keeping two histories warm.
 
-Switching *away* from the asset tab doesn't drop the preview — it **suspends** it (`suspend-asset-preview`): the preview `Scene` stays alive, `previewSuspended` flips, and `activeScene` routes back to the authored scene (so the scene tab is fully editable again and `previewing()` reads false). Switching back **resumes** it (`resume-asset-preview`) — no re-spawn, the orbit camera and selection restore instantly. The editor keeps the asset workspace mounted across the switch (its panels, model, and skeleton-tree state survive) and the viewport stays masked through the resize until a fresh frame lands, so a scene↔asset toggle is instant and never flashes a stretched frame. The suspend round-trip preserves byte-identity just like exit does (the e2e guards `enter → suspend → resume → exit`). Closing the asset tab exits for real (drops the preview); suspending while the user edited the scene leaves those edits intact.
+Switching *away* from the asset tab doesn't drop the preview — it switches the **active view** back to the scene (`set-active-view scene`): the preview `Scene` stays alive, `previewActiveView` flips off, and `activeScene` routes back to the authored scene (so the scene tab is fully editable again and `previewing()` reads false). Switching back (`set-active-view assetPreview`) re-activates it — no re-spawn, the orbit camera and selection restore instantly. The editor keeps the asset workspace mounted across the switch (its panels, model, and skeleton-tree state survive). The view round-trip preserves byte-identity just like exit does. Closing the asset tab exits for real (drops the preview); switching to the scene view while the user edited the scene leaves those edits intact.
 
 ## The model is asset data
 
@@ -62,18 +62,18 @@ Models, meshes, and animation clips route to the asset editor; textures and othe
 
 | What | File | Symbols |
 |---|---|---|
-| Preview scene + accessor + guards (engine) | `scene_edit_context.cppm` | `previewScene`, `previewSuspended`, `activeScene`, `previewing`, `previewRootEntity` |
-| Enter/exit/suspend/resume + furnishing + framing (engine) | `control_commands_asset.cpp` | `enter-asset-preview`, `exit-asset-preview`, `suspend-asset-preview`, `resume-asset-preview`, `set-asset-preview-options`, `furnishPreviewScene`, `leaveAssetPreview`, `computePreviewBounds` |
+| Preview scene + accessor + guards (engine) | `scene_edit_context.cppm` | `previewScene`, `previewActiveView`, `activeScene`, `previewing`, `previewRootEntity` |
+| Enter/exit + view switch + furnishing + framing (engine) | `control_commands_asset.cpp` | `enter-asset-preview`, `exit-asset-preview`, `set-active-view`, `set-asset-preview-options`, `activatePreviewView`, `deactivatePreviewView`, `furnishPreviewScene`, `leaveAssetPreview`, `computePreviewBounds` |
 | Asset-model query + capabilities (engine) | `control_commands_asset.cpp` | `get-asset-model`, `AssetCapabilitiesDto` |
 | Skeleton overlay + highlight (engine) | `engine/source/saffron/host/host.cppm` | `buildSkeletonOverlay` |
 | Highlight + reverse joint pick + paused-pick + smooth scrub (engine) | `control_commands_animation.cpp` | `set-skeleton-highlight`, `pick-skeleton-joint`, `play-animation` `paused`, `seek-animation` `seekBlend` |
 | Workspace shell + orbit + lifecycle + capability gating | `editor/src/panels/AssetEditorWorkspace.tsx` | `AssetEditorWorkspace` |
 | Side panels | `editor/src/panels/SkeletonTree.tsx` · `ClipList.tsx` | `SkeletonTree`, `ClipList` |
 | Shared timeline | `editor/src/components/timeline/` | `TimelineTransport`, `TimelineSurface`, `TimelineTarget` |
-| Subsurface bounds + resize mask (editor) | `editor/src/lib/useSubsurfaceBounds.ts` · `waitForFreshFrame.ts` · `ViewportPanel.tsx` | `useSubsurfaceBounds`, `waitForFreshFrame`, `viewport_presented_count` |
-| Keep-mounted + suspend/resume on tab switch (editor) | `editor/src/app/App.tsx` · `AssetEditorWorkspace.tsx` | `mountedAssetId`, `active` prop |
+| Per-view subsurface bounds (editor) | `editor/src/lib/useSubsurfaceBounds.ts` | `useSubsurfaceBounds` (view-keyed) |
+| Keep-mounted + per-view park + set-active-view on tab switch (editor) | `editor/src/app/App.tsx` · `AssetEditorWorkspace.tsx` | `mountedAssetId`, `active` prop, `setViewportParked`, `setActiveView` |
 | Tab + routing | `editor/src/state/store.ts` · `AssetsPanel.tsx` | `openAssetEditorTab`, `openAssetEditorForAsset`, `routeView` |
-| Client wrappers | `editor/src/control/client.ts` | `getAssetModel`, `enterAssetPreview`, `exitAssetPreview`, `suspendAssetPreview`, `resumeAssetPreview`, `setSkeletonHighlight`, `setAssetPreviewOptions` |
+| Client wrappers | `editor/src/control/client.ts` | `getAssetModel`, `enterAssetPreview`, `exitAssetPreview`, `setActiveView`, `setViewportParked`, `setSkeletonHighlight`, `setAssetPreviewOptions` |
 
 ## Related
 
