@@ -21,7 +21,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import { STEP_SEC, type TimelineTarget, guard } from "./shared";
 
 export function TimelineTransport({
@@ -84,21 +83,34 @@ export function TimelineTransport({
     </Tooltip>
   );
 
+  const clipSelect =
+    showClipSelect && enabled && clips.length > 0 ? (
+      <Select
+        value={typeof activeClipId === "string" ? activeClipId : String(activeClipId)}
+        onValueChange={onPickClip}
+      >
+        <SelectTrigger size="sm" className="h-7 w-[160px] text-[11px]">
+          <SelectValue placeholder="Clip" />
+        </SelectTrigger>
+        <SelectContent>
+          {clips.map((c) => (
+            <SelectItem key={String(c.id)} value={String(c.id)} className="text-[11px]">
+              {c.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    ) : null;
+
+  // One layout for both mounts: a 3-column grid with equal 1fr gutters centers the playback group;
+  // the loop toggle is absolutely anchored just past the group's right edge so it sits beside the
+  // group without shifting its centering. The dock fills the left gutter with the clip Select; the
+  // asset editor leaves it empty (its clip list owns picking) and the group stays centered all the same.
   return (
-    <div
-      className={cn(
-        "flex h-9 flex-none items-center gap-2 border-b border-border px-2",
-        // Asset editor (no clip Select): center the button group; the loop button is anchored to the
-        // group's right edge (absolute left-full) so it sits just right of the centered group without
-        // shifting its centering. The dock keeps its left-aligned flow with the loop pinned far-right.
-        showClipSelect ? "" : "justify-center",
-      )}
-    >
+    <div className="grid h-9 flex-none grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-border px-2">
+      <div className="flex min-w-0 items-center justify-self-start">{clipSelect}</div>
       <div
-        className={cn(
-          "flex items-center gap-0.5",
-          showClipSelect ? "rounded-md border border-border p-0.5" : "relative",
-        )}
+        className="relative flex items-center gap-0.5 justify-self-center"
         role="group"
         aria-label="Transport"
       >
@@ -163,32 +175,10 @@ export function TimelineTransport({
         >
           <ChevronLast />
         </Button>
-        {showClipSelect ? null : (
-          <div className="absolute left-full top-1/2 ml-2 flex -translate-y-1/2 items-center">
-            {loopButton}
-          </div>
-        )}
+        <div className="absolute left-full top-1/2 ml-2 flex -translate-y-1/2 items-center">
+          {loopButton}
+        </div>
       </div>
-
-      {showClipSelect && enabled && clips.length > 0 ? (
-        <Select
-          value={typeof activeClipId === "string" ? activeClipId : String(activeClipId)}
-          onValueChange={onPickClip}
-        >
-          <SelectTrigger size="sm" className="h-7 w-[160px] text-[11px]">
-            <SelectValue placeholder="Clip" />
-          </SelectTrigger>
-          <SelectContent>
-            {clips.map((c) => (
-              <SelectItem key={String(c.id)} value={String(c.id)} className="text-[11px]">
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : null}
-
-      {showClipSelect ? <div className="ml-auto flex items-center gap-2">{loopButton}</div> : null}
     </div>
   );
 }
