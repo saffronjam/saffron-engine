@@ -71,20 +71,27 @@ test("a rigged glTF imports as a bone-entity hierarchy", async () => {
 });
 
 test("the skinned mesh resolves its joints by uuid through inspect", async () => {
-  const info = await engine.call<{
-    components: { SkinnedMesh: { mesh: string; rootBone: string; bones: string[] } };
-  }>("inspect", { entity: meshId });
-  const skin = info.components.SkinnedMesh;
-  expect(skin).toBeDefined();
   const list = await entries();
   const ids = new Set(list.map((e) => e.id));
-  expect(ids.has(skin.rootBone)).toBe(true);
-  expect(skin.bones.length).toBe(2);
-  for (const bone of skin.bones) {
+  // A rigged import places the SkinnedMesh on the mesh descendant of the imported root (the root
+  // carries ModelInstance + Relationship), so find the entity that actually holds the component.
+  type Skin = { mesh: string; rootBone: string; bones: string[] };
+  let skin: Skin | undefined;
+  for (const e of list) {
+    const info = await engine.call<{ components: { SkinnedMesh?: Skin } }>("inspect", { entity: e.id });
+    if (info.components.SkinnedMesh) {
+      skin = info.components.SkinnedMesh;
+      break;
+    }
+  }
+  expect(skin).toBeDefined();
+  expect(ids.has(skin!.rootBone)).toBe(true);
+  expect(skin!.bones.length).toBe(2);
+  for (const bone of skin!.bones) {
     expect(ids.has(bone)).toBe(true);
   }
-  expect(skin.bones[0]).toBe(list.find((e) => e.name === "RootJoint")!.id);
-  expect(skin.bones[1]).toBe(list.find((e) => e.name === "TipJoint")!.id);
+  expect(skin!.bones[0]).toBe(list.find((e) => e.name === "RootJoint")!.id);
+  expect(skin!.bones[1]).toBe(list.find((e) => e.name === "TipJoint")!.id);
 });
 
 test("a bone reparents like any entity and inspect reflects it", async () => {

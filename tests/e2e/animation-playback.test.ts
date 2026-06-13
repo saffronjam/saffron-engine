@@ -11,8 +11,24 @@ import { Engine, REPO } from "./harness.ts";
 
 let engine: Engine;
 let meshId = "";
+// A rigged import returns the model root (ModelInstance + Relationship + Transform); the rig
+// components (AnimationPlayer, SkinnedMesh, FootIk) live on the mesh descendant resolved by
+// animatableDescendant. Resolve and remember that descendant for the component assertions/edits.
+let playerId = "";
 const FIXTURE = join(REPO, "engine", "assets", "models", "animated-strip.gltf");
 const shots: string[] = [];
+
+/// Find the entity in the imported hierarchy that actually carries the AnimationPlayer component.
+async function findPlayerEntity(): Promise<string | undefined> {
+  const list = (await engine.call<{ entities: { id: string }[] }>("list-entities")).entities;
+  for (const e of list) {
+    const info = await engine.call<{ components: Record<string, unknown> }>("inspect", { entity: e.id });
+    if (info.components.AnimationPlayer) {
+      return e.id;
+    }
+  }
+  return undefined;
+}
 
 beforeAll(async () => {
   engine = await Engine.boot({ SAFFRON_AUTO_EMPTY_PROJECT: "1" });
@@ -20,6 +36,7 @@ beforeAll(async () => {
   const imported = await engine.importEntity(FIXTURE);
   meshId = imported.id;
   await engine.settle();
+  playerId = (await findPlayerEntity()) ?? "";
 });
 afterAll(async () => {
   await engine?.shutdown();
@@ -45,8 +62,9 @@ async function screenshot(tag: string): Promise<Buffer> {
 }
 
 test("the imported rig carries a stopped AnimationPlayer bound to the clip", async () => {
+  expect(playerId).not.toBe(""); // the rig descendant carrying AnimationPlayer must exist
   const info = await engine.call<{ components: Record<string, { clip: string; playing: boolean }> }>("inspect", {
-    entity: meshId,
+    entity: playerId,
   });
   const player = info.components.AnimationPlayer;
   expect(player).toBeDefined();
@@ -56,7 +74,7 @@ test("the imported rig carries a stopped AnimationPlayer bound to the clip", asy
 
 test("playing the clip deforms the mesh, and stop reverts it", async () => {
   await engine.call("set-component-field", {
-    entity: meshId,
+    entity: playerId,
     component: "AnimationPlayer",
     field: "playing",
     value: true,

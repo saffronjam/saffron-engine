@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { Engine, REPO } from "./harness.ts";
 
 let engine: Engine;
-let meshId = "";
+let rigId = "";
 const FIXTURE = join(REPO, "engine", "assets", "models", "animated-strip.gltf");
 const shots: string[] = [];
 
@@ -19,13 +19,32 @@ interface OverlayState {
   jointSize: number;
 }
 
+interface Entry {
+  id: string;
+  name: string;
+}
+
 beforeAll(async () => {
   engine = await Engine.boot({ SAFFRON_AUTO_EMPTY_PROJECT: "1" });
   await engine.call("set-camera", { yaw: 0, pitch: 0 });
-  const imported = await engine.importEntity(FIXTURE);
-  meshId = imported.id;
-  await engine.call("select", { entity: meshId });
-  await engine.call("focus", { entity: meshId });
+  await engine.importEntity(FIXTURE);
+  await engine.settle();
+
+  // A rigged import places the SkinnedMesh on the mesh descendant of the imported root (the root
+  // carries only ModelInstance + Relationship + Transform). The skeleton overlay self-gates to the
+  // selected entity's SkinnedMeshComponent, so select the descendant that actually holds the rig.
+  const list = (await engine.call<{ entities: Entry[] }>("list-entities")).entities;
+  for (const e of list) {
+    const info = await engine.call<{ components: { SkinnedMesh?: unknown } }>("inspect", { entity: e.id });
+    if (info.components.SkinnedMesh) {
+      rigId = e.id;
+      break;
+    }
+  }
+  expect(rigId).not.toBe("");
+
+  await engine.call("select", { entity: rigId });
+  await engine.call("focus", { entity: rigId });
   await engine.settle();
 });
 afterAll(async () => {
