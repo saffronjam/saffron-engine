@@ -584,6 +584,56 @@ export namespace se
         }
     }
 
+    // The entity that carries a model instance's rig — the first descendant with a
+    // SkinnedMeshComponent or AnimationPlayerComponent (the skinned-mesh node sits below a
+    // model's container root). Returns `root` when none, so a non-skinned single-entity
+    // model resolves to itself. Walks the children caches, so call after relinkHierarchy.
+    auto animatableDescendant(Scene& scene, Entity root) -> Entity
+    {
+        Entity found{ entt::null };
+        auto visit = [&scene, &found](auto&& self, entt::entity handle) -> void
+        {
+            if (found.handle != entt::null)
+            {
+                return;
+            }
+            if (scene.registry.all_of<SkinnedMeshComponent>(handle)
+                || scene.registry.all_of<AnimationPlayerComponent>(handle))
+            {
+                found = Entity{ handle };
+                return;
+            }
+            if (scene.registry.all_of<RelationshipComponent>(handle))
+            {
+                for (entt::entity child : scene.registry.get<RelationshipComponent>(handle).children)
+                {
+                    self(self, child);
+                }
+            }
+        };
+        visit(visit, root.handle);
+        return found.handle != entt::null ? found : root;
+    }
+
+    // The model instance's root: the nearest ancestor (including `entity`) carrying a
+    // ModelInstanceComponent, or `entity` if none. Lets a viewport pick of an inner mesh or
+    // bone resolve to the whole model.
+    auto modelRootOf(Scene& scene, Entity entity) -> Entity
+    {
+        entt::entity cursor = entity.handle;
+        while (cursor != entt::null && scene.registry.valid(cursor))
+        {
+            if (scene.registry.all_of<ModelInstanceComponent>(cursor))
+            {
+                return Entity{ cursor };
+            }
+            cursor = scene.registry.all_of<RelationshipComponent>(cursor)
+                         ? scene.registry.get<RelationshipComponent>(cursor).parentHandle
+                         : entt::null;
+        }
+        return entity;
+    }
+
     // Iterate every entity carrying the given components.
     // The callback receives (Entity, C&...).
     template <typename... C, typename Fn>

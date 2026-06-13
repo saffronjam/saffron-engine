@@ -4861,8 +4861,7 @@ return {0}
         const i32 meshNode = result.skinDesc.meshNode;
         Entity meshEntity = meshNode >= 0 && static_cast<std::size_t>(meshNode) < nodeEntities.size()
                                 ? nodeEntities[static_cast<std::size_t>(meshNode)]
-                                : createEntity(scene, name);
-        getComponent<NameComponent>(scene, meshEntity).name = std::move(name);
+                                : createEntity(scene, "Mesh");
         SkinnedMeshComponent& skin = addComponent<SkinnedMeshComponent>(scene, meshEntity);
         skin.mesh = result.mesh;
         const i32 root = result.skinDesc.skeletonRoot;
@@ -4883,8 +4882,27 @@ return {0}
             player.wrap = AnimationPlayerComponent::Wrap::Loop;
         }
 
+        // Wrap the spawned node forest under one identity container root, named after the
+        // model, so a model instance is a single subtree: destroy/undo/select/transform act on
+        // it as a unit. instantiateModel tags this root with ModelInstanceComponent. The
+        // container's identity transform leaves every descendant's world matrix unchanged.
+        Entity container = createEntity(scene, std::move(name));
+        const Uuid containerUuid = getComponent<IdComponent>(scene, container).id;
+        for (Entity node : nodeEntities)
+        {
+            RelationshipComponent& rel = getComponent<RelationshipComponent>(scene, node);
+            if (rel.parent.value == 0)
+            {
+                rel.parent = containerUuid;
+            }
+        }
+        if (meshNode < 0)
+        {
+            getComponent<RelationshipComponent>(scene, meshEntity).parent = containerUuid;
+        }
+
         relinkHierarchy(scene);  // resolve the parent uuids + the joint handles
-        return meshEntity;
+        return container;
     }
 
     auto spawnModel(Scene& scene, std::string name, const ModelSpawnInput& result) -> Entity
@@ -5047,10 +5065,22 @@ return {0}
              getComponent<MeshComponent>(scene, *flatA).mesh.value == flatMeshSubId.value &&
              hasComponent<MaterialComponent>(scene, *flatA) && hasComponent<ModelInstanceComponent>(scene, *flatA) &&
              getComponent<ModelInstanceComponent>(scene, *flatA).modelId.value == flatBake->modelId.value;
-        ok = ok && hasComponent<SkinnedMeshComponent>(scene, *riggedA) &&
-             getComponent<SkinnedMeshComponent>(scene, *riggedA).bones.size() == 2 &&
-             hasComponent<ModelInstanceComponent>(scene, *riggedA) &&
-             getComponent<ModelInstanceComponent>(scene, *riggedB).modelId.value == riggedBake->modelId.value;
+        // The skinned model is single-rooted: ModelInstanceComponent on the returned container
+        // root, the rig (SkinnedMeshComponent) on a descendant resolved by animatableDescendant.
+        Entity riggedRig = animatableDescendant(scene, *riggedA);
+        ok = ok && hasComponent<ModelInstanceComponent>(scene, *riggedA) &&
+             getComponent<ModelInstanceComponent>(scene, *riggedB).modelId.value == riggedBake->modelId.value &&
+             riggedRig.handle != (*riggedA).handle && hasComponent<SkinnedMeshComponent>(scene, riggedRig) &&
+             getComponent<SkinnedMeshComponent>(scene, riggedRig).bones.size() == 2;
+
+        // Regression for the orphaned-rig bug: destroying the model root removes its whole
+        // subtree (container + skeleton + mesh), so undo/Delete of a skinned model leaves nothing.
+        std::size_t before = 0;
+        forEach<IdComponent>(scene, [&before](Entity, IdComponent&) { before += 1; });
+        destroyEntity(scene, *riggedB);
+        std::size_t after = 0;
+        forEach<IdComponent>(scene, [&after](Entity, IdComponent&) { after += 1; });
+        ok = ok && (before - after) == 3;  // container + "root" + "joint"
 
         if (ok)
         {

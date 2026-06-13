@@ -707,12 +707,16 @@ namespace se
                 // expects y-down NDC: v=0 (viewport top) maps to ndc.y=-1.
                 const Entity hit = pickEntity(activeScene(ctx.sceneEdit), ctx.assets, ctx.renderer, cam,
                                               glm::vec2{ u * 2.0f - 1.0f, v * 2.0f - 1.0f });
-                setSelection(ctx.sceneEdit, hit);
                 if (hit.handle == entt::null)
                 {
+                    setSelection(ctx.sceneEdit, hit);
                     return PickResult{ false, std::nullopt, std::nullopt, std::nullopt };
                 }
-                EntityRef ref = entityRefDto(activeScene(ctx.sceneEdit), hit);
+                // A model instance is a single subtree; a click anywhere in it selects the whole
+                // model (its container root), not the bare mesh/bone node the ray hit.
+                const Entity selected = modelRootOf(activeScene(ctx.sceneEdit), hit);
+                setSelection(ctx.sceneEdit, selected);
+                EntityRef ref = entityRefDto(activeScene(ctx.sceneEdit), selected);
                 return PickResult{ true, ref.id, ref.name, PickKind::Mesh };
             });
 

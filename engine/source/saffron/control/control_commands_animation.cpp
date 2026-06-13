@@ -120,11 +120,14 @@ namespace se
                 return Err(entity.error());
             }
             Scene& scene = activeScene(ctx.sceneEdit);
-            if (!hasComponent<AnimationPlayerComponent>(scene, *entity))
+            // The editor selects a model by its container root; the player lives on the rig
+            // descendant. Resolve to it so transport drives the right entity.
+            const Entity target = animatableDescendant(scene, *entity);
+            if (!hasComponent<AnimationPlayerComponent>(scene, target))
             {
-                addComponent<AnimationPlayerComponent>(scene, *entity);
+                addComponent<AnimationPlayerComponent>(scene, target);
             }
-            return &getComponent<AnimationPlayerComponent>(scene, *entity);
+            return &getComponent<AnimationPlayerComponent>(scene, target);
         }
 
         auto skeletonOverlayState(const SkeletonOverlayOptions& opts) -> SkeletonOverlayResult
@@ -155,11 +158,13 @@ namespace se
                 return Err(entity.error());
             }
             Scene& scene = activeScene(ctx.sceneEdit);
-            if (!hasComponent<FootIkComponent>(scene, *entity))
+            // Foot IK lives on the rig descendant too — resolve a selected model root to it.
+            const Entity target = animatableDescendant(scene, *entity);
+            if (!hasComponent<FootIkComponent>(scene, target))
             {
-                addComponent<FootIkComponent>(scene, *entity);
+                addComponent<FootIkComponent>(scene, target);
             }
-            return &getComponent<FootIkComponent>(scene, *entity);
+            return &getComponent<FootIkComponent>(scene, target);
         }
 
         auto stateOf(EngineContext& ctx, const AnimationPlayerComponent& player) -> AnimationStateResult
@@ -194,11 +199,13 @@ namespace se
                     return Err(entity.error());
                 }
                 Scene& scene = activeScene(ctx.sceneEdit);
-                if (!hasComponent<AnimationPlayerComponent>(scene, *entity))
+                // Resolve a model container root to its rig descendant (the player's entity).
+                const Entity target = animatableDescendant(scene, *entity);
+                if (!hasComponent<AnimationPlayerComponent>(scene, target))
                 {
                     return Err(std::string{ "entity has no animation player" });
                 }
-                return stateOf(ctx, getComponent<AnimationPlayerComponent>(scene, *entity));
+                return stateOf(ctx, getComponent<AnimationPlayerComponent>(scene, target));
             });
 
         registerCommand<ListClipsParams, ListClipsResult>(
