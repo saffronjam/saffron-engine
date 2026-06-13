@@ -1,6 +1,6 @@
 # Phase 1 — `Saffron.Physics` module + Jolt vendoring + world lifecycle
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

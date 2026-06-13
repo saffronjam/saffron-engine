@@ -1,6 +1,6 @@
 # Phase 3 — Collision shapes (sphere/capsule/convex/mesh) + PhysicsMaterial + auto-fit
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 
