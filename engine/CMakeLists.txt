@@ -37,6 +37,8 @@ target_sources(SaffronEngineLib PRIVATE
     source/saffron/rendering/renderer_aa.cpp
     source/saffron/rendering/renderer_textures.cpp
     source/saffron/rendering/renderer_thumbnail.cpp
+    source/saffron/rendering/renderer_detail_ibl.cpp
+    source/saffron/rendering/renderer_profiler.cpp
     source/saffron/scene/scene_component_serde.generated.cpp
     source/saffron/animation/animation.cpp
     source/saffron/script/script_runtime.cpp
@@ -50,7 +52,8 @@ target_sources(SaffronEngineLib PRIVATE
     source/saffron/control/control_commands_scene.cpp
     source/saffron/control/control_commands_asset.cpp
     source/saffron/control/control_commands_animation.cpp
-    source/saffron/control/control_server.cpp)
+    source/saffron/control/control_server.cpp
+    source/saffron/assets/assets_thumbnail.cpp)
 
 target_compile_features(SaffronEngineLib PUBLIC cxx_std_26)
 set_target_properties(SaffronEngineLib PROPERTIES CXX_MODULE_STD ON)

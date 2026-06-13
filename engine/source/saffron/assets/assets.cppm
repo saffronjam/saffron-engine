@@ -57,7 +57,7 @@ export namespace se
         bool showGrid = false;  // the infinite analytic ground grid (debug overlay)
     };
 
-    struct ThumbnailWorker;  // async thumbnail generation; defined at the foot of this module
+    struct ThumbnailWorker;  // async thumbnail generation; defined in assets_thumbnail.cpp
     struct ModelAsset;       // an opened .smodel (metadata + chunk reader); defined after ContainerMetadata
 
     // Owns the project's asset catalog (id -> {name, type, path}) plus uuid-keyed GPU
@@ -316,9 +316,16 @@ export namespace se
 
     auto projectInfoFromPath(const std::filesystem::path& path, const nlohmann::json& doc) -> ProjectInfo
     {
-        const std::filesystem::path root =
-            path.parent_path().empty() ? std::filesystem::path{ "." } : path.parent_path();
-        const std::string fallbackName = root.filename().string().empty() ? "project" : root.filename().string();
+        std::filesystem::path root = path.parent_path();
+        if (root.empty())
+        {
+            root = std::filesystem::path{ "." };
+        }
+        std::string fallbackName = "project";
+        if (!root.filename().string().empty())
+        {
+            fallbackName = root.filename().string();
+        }
         ProjectInfo project;
         project.loaded = true;
         project.root = root.string();
@@ -326,19 +333,17 @@ export namespace se
         project.name = jsonStringOr(doc, "name", fallbackName);
         if (!validProjectName(project.name))
         {
-            project.name = validProjectName(fallbackName) ? fallbackName : "project";
+            if (validProjectName(fallbackName))
+            {
+                project.name = fallbackName;
+            }
+            else
+            {
+                project.name = "project";
+            }
         }
         project.displayName = jsonStringOr(doc, "displayName", defaultDisplayName(project.name));
         return project;
-    }
-
-    auto projectInfoJson(const ProjectInfo& project) -> nlohmann::json
-    {
-        return nlohmann::json{ { "loaded", project.loaded },
-                               { "root", project.root },
-                               { "path", project.path },
-                               { "name", project.name },
-                               { "displayName", project.displayName } };
     }
 
     auto assetTypeName(AssetType type) -> const char*
@@ -450,8 +455,8 @@ export namespace se
                 record["duration"] = entry.duration;
                 record["tracks"] = entry.tracks;
             }
-            // Container linkage + colorspace: omitted when default so standalone rows stay
-            // byte-identical to before this field set existed.
+            // Container linkage + colorspace: omitted when default so a standalone row carries
+            // only the fields it uses.
             if (entry.container.value != 0)
             {
                 record["container"] = uuidToJson(entry.container.value);
@@ -802,7 +807,11 @@ export namespace se
             logError(std::format("container-metadata self-test: read failed: {}", read.error()));
             return;
         }
-        const f32 durationDelta = read->subAssets.size() == 4 ? read->subAssets[3].duration - 1.2f : 1.0f;
+        f32 durationDelta = 1.0f;
+        if (read->subAssets.size() == 4)
+        {
+            durationDelta = read->subAssets[3].duration - 1.2f;
+        }
         const bool ok = read->modelId.value == meta.modelId.value && read->name == meta.name &&
                         read->sourceFormat == meta.sourceFormat && read->import.sourcePath == meta.import.sourcePath &&
                         read->import.sourceHash == meta.import.sourceHash && read->subAssets.size() == 4 &&
@@ -845,9 +854,7 @@ export namespace se
         }
     }
 
-    // Creates the asset root (+ subdirs) and migrates any legacy asset_registry.json
-    // into the catalog with synthesized names. The catalog is otherwise loaded from a
-    // project file via loadProject.
+    // Creates the asset root (+ subdirs). The catalog is loaded from a project file via loadProject.
     auto newAssetServer(std::string root) -> AssetServer
     {
         AssetServer assets;
@@ -856,40 +863,6 @@ export namespace se
         std::filesystem::create_directories(assets.root + "/meshes", ec);
         std::filesystem::create_directories(assets.root + "/models", ec);
         std::filesystem::create_directories(assets.root + "/textures", ec);
-
-        std::ifstream in(assets.root + "/asset_registry.json");
-        if (in)
-        {
-            std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            auto parsedDoc = parseJson(text);
-            if (parsedDoc)
-            {
-                const nlohmann::json& doc = *parsedDoc;
-                auto migrate = [&](const char* key, AssetType type)
-                {
-                    if (!doc.contains(key) || !doc[key].is_object())
-                    {
-                        return;
-                    }
-                    for (auto it = doc[key].begin(); it != doc[key].end(); ++it)
-                    {
-                        if (!it.value().is_string())
-                        {
-                            continue;
-                        }
-                        const std::string path = it.value().get<std::string>();
-                        AssetEntry entry;
-                        entry.id = Uuid{ std::strtoull(it.key().c_str(), nullptr, 10) };
-                        entry.name = uniqueName(assets.catalog, std::filesystem::path(path).stem().string());
-                        entry.type = type;
-                        entry.path = path;
-                        putAsset(assets.catalog, std::move(entry));
-                    }
-                };
-                migrate("meshes", AssetType::Mesh);
-                migrate("textures", AssetType::Texture);
-            }
-        }
         return assets;
     }
 
@@ -918,8 +891,7 @@ export namespace se
         assets.modelRefByUuid.clear();
     }
 
-    // --- On-disk thumbnail cache (engine-owned, one PNG per entry) ---
-    //
+    // The engine-owned on-disk thumbnail cache, one PNG per entry at
     // <projectRoot>/cache/thumbnails/<uuid>-<size>-<stamp>.png, where <stamp> folds a cache-format
     // version with the source file's size + mtime. A hit is a single exists() after a stat; a stale
     // entry simply never matches its (now-changed) stamp again. The dir lives outside assets/, so the
@@ -929,260 +901,17 @@ export namespace se
     // whole cache regenerates. v2: model thumbnails render textured (per-submesh materials).
     inline constexpr u32 ThumbnailCacheVersion = 2;
 
-    auto thumbnailCacheDir(const AssetServer& assets) -> std::filesystem::path
-    {
-        if (assets.root.empty())
-        {
-            return {};
-        }
-        return std::filesystem::path(assets.root).parent_path() / "cache" / "thumbnails";
-    }
-
-    // Folds version + size + mtime (FNV-1a) into a compact hex token — the <stamp> filename field.
-    auto foldThumbnailStamp(u64 version, u64 fileSize, u64 mtimeTicks) -> std::string
-    {
-        u64 h = 1469598103934665603ull;
-        const auto mix = [&](u64 v)
-        {
-            h ^= v;
-            h *= 1099511628211ull;
-        };
-        mix(version);
-        mix(fileSize);
-        mix(mtimeTicks);
-        return std::format("{:016x}", h);
-    }
-
-    // A stamp of the asset's source file (its catalog `path` under assets/): size + mtime folded with
-    // the cache version. Empty when the file is missing/unstattable — the entry is then never cached.
-    auto thumbnailSourceStamp(const AssetServer& assets, const AssetEntry& entry) -> std::string
-    {
-        if (assets.root.empty() || entry.path.empty())
-        {
-            return {};
-        }
-        std::error_code ec;
-        const std::filesystem::path src = std::filesystem::path(assets.root) / entry.path;
-        const auto size = std::filesystem::file_size(src, ec);
-        if (ec)
-        {
-            return {};
-        }
-        const auto mtime = std::filesystem::last_write_time(src, ec);
-        if (ec)
-        {
-            return {};
-        }
-        return foldThumbnailStamp(ThumbnailCacheVersion, static_cast<u64>(size),
-                                  static_cast<u64>(mtime.time_since_epoch().count()));
-    }
-
-    auto thumbnailCachePath(const AssetServer& assets, Uuid id, u32 size, const std::string& stamp)
-        -> std::filesystem::path
-    {
-        return thumbnailCacheDir(assets) / std::format("{}-{}-{}.png", id.value, size, stamp);
-    }
-
-    // A cached thumbnail's bytes + the dimensions read from its PNG header (so a hit reports truthful
-    // width/height without a decode). nullopt if the file is absent or not a readable PNG.
-    struct CachedThumbnail
-    {
-        std::vector<u8> bytes;
-        u32 width = 0;
-        u32 height = 0;
-    };
-
-    auto readThumbnailCache(const std::filesystem::path& path) -> std::optional<CachedThumbnail>
-    {
-        std::ifstream in(path, std::ios::binary | std::ios::ate);
-        if (!in)
-        {
-            return std::nullopt;
-        }
-        const std::streamsize size = in.tellg();
-        if (size < 24)  // 8-byte signature + IHDR length/type + the width/height fields
-        {
-            return std::nullopt;
-        }
-        in.seekg(0);
-        CachedThumbnail hit;
-        hit.bytes.resize(static_cast<std::size_t>(size));
-        in.read(reinterpret_cast<char*>(hit.bytes.data()), size);
-        if (!in)
-        {
-            return std::nullopt;
-        }
-        static constexpr std::array<u8, 8> pngSig{ 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a };
-        if (!std::equal(pngSig.begin(), pngSig.end(), hit.bytes.begin()))
-        {
-            return std::nullopt;
-        }
-        const auto be32 = [&](std::size_t at) -> u32
-        {
-            return (static_cast<u32>(hit.bytes[at]) << 24) | (static_cast<u32>(hit.bytes[at + 1]) << 16) |
-                   (static_cast<u32>(hit.bytes[at + 2]) << 8) | static_cast<u32>(hit.bytes[at + 3]);
-        };
-        hit.width = be32(16);   // IHDR width
-        hit.height = be32(20);  // IHDR height
-        return hit;
-    }
-
-    auto writeThumbnailCache(const std::filesystem::path& path, const std::vector<u8>& bytes) -> Result<void>
-    {
-        std::error_code ec;
-        std::filesystem::create_directories(path.parent_path(), ec);
-        std::ofstream out(path, std::ios::binary);
-        if (!out)
-        {
-            return Err(std::format("cannot open thumbnail cache '{}'", path.string()));
-        }
-        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        if (!out)
-        {
-            return Err(std::format("write failed for thumbnail cache '{}'", path.string()));
-        }
-        return {};
-    }
-
-    // A material thumbnail keys on its *resolved* state, not a file stamp: editing a parent material
-    // reflows every instance without touching the child .smat, so the key must be a content hash of
-    // the resolved params + texture uuids. Folded with the cache version like the source stamp.
-    auto thumbnailMaterialStamp(const MaterialAsset& m) -> std::string
-    {
-        u64 h = 1469598103934665603ull;
-        const auto mix = [&](u64 v)
-        {
-            h ^= v;
-            h *= 1099511628211ull;
-        };
-        const auto mixF = [&](f32 f) { mix(std::bit_cast<u32>(f)); };
-        mix(ThumbnailCacheVersion);
-        mixF(m.baseColor.r);
-        mixF(m.baseColor.g);
-        mixF(m.baseColor.b);
-        mixF(m.baseColor.a);
-        mixF(m.metallic);
-        mixF(m.roughness);
-        mixF(m.emissive.r);
-        mixF(m.emissive.g);
-        mixF(m.emissive.b);
-        mixF(m.emissiveStrength);
-        mixF(m.normalStrength);
-        mixF(m.alphaCutoff);
-        mixF(m.heightScale);
-        mixF(m.uvTiling.x);
-        mixF(m.uvTiling.y);
-        mixF(m.uvOffset.x);
-        mixF(m.uvOffset.y);
-        mix(m.albedoTexture.value);
-        mix(m.ormTexture.value);
-        mix(m.normalTexture.value);
-        mix(m.emissiveTexture.value);
-        mix(m.heightTexture.value);
-        mix(m.unlit ? 1u : 0u);
-        mix(m.doubleSided ? 1u : 0u);
-        for (char c : m.shader)
-        {
-            mix(static_cast<u8>(c));
-        }
-        for (char c : m.blend)
-        {
-            mix(static_cast<u8>(c));
-        }
-        return std::format("{:016x}", h);
-    }
-
-    // The leading uuid of a cache filename (<uuid>-<size>-<stamp>.png); 0 if it doesn't parse.
-    auto thumbnailCacheFileUuid(const std::string& filename) -> u64
-    {
-        const std::size_t dash = filename.find('-');
-        if (dash == std::string::npos)
-        {
-            return 0;
-        }
-        return std::strtoull(filename.substr(0, dash).c_str(), nullptr, 10);
-    }
-
-    // Removes every cached thumbnail for one asset uuid (all sizes/stamps) — on delete + reimport.
-    void removeThumbnailCacheForAsset(const AssetServer& assets, Uuid id)
-    {
-        const std::filesystem::path dir = thumbnailCacheDir(assets);
-        std::error_code ec;
-        if (dir.empty() || !std::filesystem::exists(dir, ec))
-        {
-            return;
-        }
-        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir, ec))
-        {
-            if (thumbnailCacheFileUuid(entry.path().filename().string()) == id.value)
-            {
-                std::filesystem::remove(entry.path(), ec);
-            }
-        }
-    }
-
-    // Deletes cache files whose uuid is no longer in the catalog (re-import mints new uuids, orphaning
-    // the old PNGs). Run on project load to keep the dir bounded without a background task.
-    void sweepThumbnailCacheOrphans(const AssetServer& assets)
-    {
-        const std::filesystem::path dir = thumbnailCacheDir(assets);
-        std::error_code ec;
-        if (dir.empty() || !std::filesystem::exists(dir, ec))
-        {
-            return;
-        }
-        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir, ec))
-        {
-            const u64 uuid = thumbnailCacheFileUuid(entry.path().filename().string());
-            if (uuid == 0 || !assets.catalog.byId.contains(uuid))
-            {
-                std::filesystem::remove(entry.path(), ec);
-            }
-        }
-    }
-
     struct ThumbnailCacheStats
     {
         u32 entries = 0;
         u64 bytes = 0;
     };
 
-    auto thumbnailCacheStats(const AssetServer& assets) -> ThumbnailCacheStats
-    {
-        ThumbnailCacheStats stats;
-        const std::filesystem::path dir = thumbnailCacheDir(assets);
-        std::error_code ec;
-        if (dir.empty() || !std::filesystem::exists(dir, ec))
-        {
-            return stats;
-        }
-        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir, ec))
-        {
-            if (!entry.is_regular_file(ec))
-            {
-                continue;
-            }
-            stats.entries += 1;
-            stats.bytes += static_cast<u64>(entry.file_size(ec));
-        }
-        return stats;
-    }
-
-    // Empties the project's cache dir; returns what was removed (count + bytes).
-    auto clearThumbnailCacheDir(const AssetServer& assets) -> ThumbnailCacheStats
-    {
-        const ThumbnailCacheStats removed = thumbnailCacheStats(assets);
-        const std::filesystem::path dir = thumbnailCacheDir(assets);
-        std::error_code ec;
-        if (!dir.empty() && std::filesystem::exists(dir, ec))
-        {
-            for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir, ec))
-            {
-                std::filesystem::remove(entry.path(), ec);
-            }
-        }
-        return removed;
-    }
+    // Defined in assets_thumbnail.cpp (the async-thumbnail subsystem).
+    auto thumbnailCacheStats(const AssetServer& assets) -> ThumbnailCacheStats;
+    auto clearThumbnailCacheDir(const AssetServer& assets) -> ThumbnailCacheStats;
+    void removeThumbnailCacheForAsset(const AssetServer& assets, Uuid id);
+    void sweepThumbnailCacheOrphans(const AssetServer& assets);
 
     // Constant version for the unified project document.
     inline constexpr int ProjectVersion = 1;
@@ -1248,7 +977,11 @@ export namespace se
                      const ProjectInfo& project, const std::string& path, const nlohmann::json& editorCamera = {})
         -> Result<void>
     {
-        const std::string target = path.empty() ? project.path : path;
+        std::string target = path;
+        if (target.empty())
+        {
+            target = project.path;
+        }
         if (target.empty())
         {
             return Err(std::string{ "no active project path" });
@@ -1480,14 +1213,21 @@ return {0}
         {
             return Err(std::format("invalid project name '{}'", name));
         }
-        std::filesystem::path root = rootOverride.empty() ? std::filesystem::path(projectUserdataRoot()) / name
-                                                          : std::filesystem::path(rootOverride);
+        std::filesystem::path root = std::filesystem::path(rootOverride);
+        if (rootOverride.empty())
+        {
+            root = std::filesystem::path(projectUserdataRoot()) / name;
+        }
         ProjectInfo next;
         next.loaded = true;
         next.root = root.string();
         next.path = (root / "project.json").string();
         next.name = name;
-        next.displayName = displayName.empty() ? defaultDisplayName(name) : displayName;
+        next.displayName = displayName;
+        if (next.displayName.empty())
+        {
+            next.displayName = defaultDisplayName(name);
+        }
 
         waitGpuIdle(renderer);
         scene = Scene{};
@@ -1504,8 +1244,11 @@ return {0}
     auto createAutoEmptyProject(AssetServer& assets, Renderer& renderer, ComponentRegistry& reg, Scene& scene,
                                 ProjectInfo& project) -> Result<void>
     {
-        const std::string socket =
-            std::getenv("SAFFRON_CONTROL_SOCK") != nullptr ? std::getenv("SAFFRON_CONTROL_SOCK") : "";
+        std::string socket;
+        if (const char* sockEnv = std::getenv("SAFFRON_CONTROL_SOCK"); sockEnv != nullptr)
+        {
+            socket = sockEnv;
+        }
         std::string suffix =
             std::to_string(std::hash<std::string>{}(std::filesystem::current_path().string() + socket));
         const std::string name = "auto-empty-" + suffix.substr(0, 12);
@@ -1585,8 +1328,6 @@ return {0}
         assets.textureRefByUuid[id.value] = *texture;
         return id;
     }
-
-    // --- Native material asset (.smat) serialization + catalog I/O ---
 
     auto materialAssetToJson(const MaterialAsset& m) -> nlohmann::json
     {
@@ -1745,7 +1486,17 @@ return {0}
             return Uuid{ 0 };
         };
         const auto scalar = [](const nlohmann::json& v) -> f32
-        { return v.is_array() && !v.empty() ? v[0].get<f32>() : (v.is_number() ? v.get<f32>() : 0.0f); };
+        {
+            if (v.is_array() && !v.empty())
+            {
+                return v[0].get<f32>();
+            }
+            if (v.is_number())
+            {
+                return v.get<f32>();
+            }
+            return 0.0f;
+        };
         bool foldable = true;
         for (const nlohmann::json& e : *edgesIt)
         {
@@ -1842,7 +1593,11 @@ return {0}
     // local the splice template provides, and the 7-field SurfaceData (world normal + occlusion/opacity).
     auto emitGraphSurface(const nlohmann::json& graph, bool mesh = false) -> std::string
     {
-        const std::string baseColor = mesh ? "m.mat.baseColor" : "mat.baseColor";
+        std::string baseColor = "mat.baseColor";
+        if (mesh)
+        {
+            baseColor = "m.mat.baseColor";
+        }
         std::string body = std::format("    s.albedo = {}.rgb;\n    s.metallic = 0.0;\n    s.roughness = 1.0;\n"
                                        "    s.emissive = float3(0.0);\n",
                                        baseColor);
@@ -1890,7 +1645,11 @@ return {0}
             else if (type == "textureSlot")
             {
                 const std::string slot = props.value("slot", std::string{ "albedo" });
-                const std::string arr = mesh ? "albedoTextures" : "textures";
+                std::string arr = "textures";
+                if (mesh)
+                {
+                    arr = "albedoTextures";
+                }
                 std::string idx;
                 if (mesh)
                 {
@@ -1946,7 +1705,11 @@ return {0}
                 const auto in = [&](const char* pin) -> std::string
                 {
                     const auto it = inputFrom.find(id + ":" + pin);
-                    return it != inputFrom.end() ? it->second : std::string{};
+                    if (it != inputFrom.end())
+                    {
+                        return it->second;
+                    }
+                    return std::string{};
                 };
                 const std::string a = in("a");
                 const std::string b = in("b");
@@ -2016,7 +1779,11 @@ return {0}
         const auto srcFor = [&](const char* pin) -> std::string
         {
             const auto it = inputFrom.find(outputId + ":" + pin);
-            return it != inputFrom.end() ? it->second : std::string{};
+            if (it != inputFrom.end())
+            {
+                return it->second;
+            }
+            return std::string{};
         };
         if (auto s = srcFor("baseColor"); !s.empty())
         {
@@ -2381,7 +2148,14 @@ return {0}
         s.reserve(filename.size());
         for (char c : filename)
         {
-            s.push_back((c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c);
+            if (c >= 'A' && c <= 'Z')
+            {
+                s.push_back(static_cast<char>(c + 32));
+            }
+            else
+            {
+                s.push_back(c);
+            }
         }
         const auto has = [&](const char* token) { return s.find(token) != std::string::npos; };
         if (has("arm") || has("orm") || has("_mra"))
@@ -2460,7 +2234,11 @@ return {0}
                 ext = ext.substr(1);
             }
             auto id = registerTextureBytes(assets, renderer, bytes, ext, p.stem().string(), srgb);
-            return id ? *id : Uuid{ 0 };
+            if (id)
+            {
+                return *id;
+            }
+            return Uuid{ 0 };
         };
         MaterialAsset mat;
         std::string roles;
@@ -2474,7 +2252,10 @@ return {0}
             std::string ext = p.extension().string();
             for (char& c : ext)
             {
-                c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c;
+                if (c >= 'A' && c <= 'Z')
+                {
+                    c = static_cast<char>(c + 32);
+                }
             }
             if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".tga")
             {
@@ -2515,8 +2296,16 @@ return {0}
                 roles += "emissive ";
             }
         }
-        const std::string matName = name.empty() ? std::filesystem::path(dir).filename().string() : name;
-        auto id = saveMaterialAsset(assets, mat, matName.empty() ? std::string{ "Material" } : matName);
+        std::string matName = name;
+        if (matName.empty())
+        {
+            matName = std::filesystem::path(dir).filename().string();
+        }
+        if (matName.empty())
+        {
+            matName = "Material";
+        }
+        auto id = saveMaterialAsset(assets, mat, matName);
         if (!id)
         {
             return Err(id.error());
@@ -2794,6 +2583,31 @@ return {0}
             return nullptr;
         }
         return loadMeshFromSource(assets, renderer, subId, source);
+    }
+
+    /// Vertex/index counts for a mesh asset — a standalone `.smesh` or a mesh chunk inside a `.smodel`.
+    auto meshCountsForAsset(AssetServer& assets, const AssetEntry& entry) -> Result<MeshCounts>
+    {
+        if (entry.container.value == 0)
+        {
+            return meshFileCounts(assets.root + "/" + entry.path);
+        }
+        auto model = loadModelAsset(assets, entry.container);
+        if (!model)
+        {
+            return Err(std::format("model {}: cannot open container", entry.container.value));
+        }
+        const ByteSource source = chunkSourceFor(assets, *model, ChunkKind::Mesh, entry.id);
+        if (source.path.empty())
+        {
+            return Err(std::format("model {}: no mesh sub-asset {}", entry.container.value, entry.id.value));
+        }
+        auto bytes = source.read();
+        if (!bytes)
+        {
+            return Err(bytes.error());
+        }
+        return meshCountsFromBytes(std::span<const std::byte>{ *bytes });
     }
 
     /// Resolve an embedded texture sub-asset to a live GPU texture (colorspace from the chunk flags).
@@ -4765,14 +4579,6 @@ return {0}
         return loadMeshFromSource(assets, renderer, id, ByteSource{ .path = fullPath });
     }
 
-    // Creates an entity carrying the given mesh asset.
-    auto spawnMesh(Scene& scene, std::string name, Uuid mesh) -> Entity
-    {
-        Entity entity = createEntity(scene, std::move(name));
-        addComponent<MeshComponent>(scene, entity).mesh = mesh;
-        return entity;
-    }
-
     // Attaches an import's material(s) to an entity: a single MaterialComponent when the
     // model has zero or one material, or a MaterialSetComponent (the slot table) when it
     // has more than one. Submesh.materialSlot indexes the set at render time.
@@ -4823,11 +4629,8 @@ return {0}
             Entity entity = createEntity(scene, node.name);
             TransformComponent& transform = getComponent<TransformComponent>(scene, entity);
             transform.translation = node.translation;
-            // The source rotation is a quaternion; extract through the engine's
-            // Rz*Ry*Rx Euler convention (the stable path setParent also uses).
-            glm::vec3 euler;
-            glm::extractEulerAngleZYX(glm::mat4_cast(node.rotation), euler.z, euler.y, euler.x);
-            transform.rotation = euler;
+            // The source rotation is a quaternion; convert through the engine's Euler convention.
+            transform.rotation = quatToEulerZYX(node.rotation);
             transform.scale = node.scale;
             nodeEntities.push_back(entity);
             nodeUuids.push_back(getComponent<IdComponent>(scene, entity).id);
@@ -4860,15 +4663,30 @@ return {0}
         }
 
         const i32 meshNode = result.skinDesc.meshNode;
-        Entity meshEntity = meshNode >= 0 && static_cast<std::size_t>(meshNode) < nodeEntities.size()
-                                ? nodeEntities[static_cast<std::size_t>(meshNode)]
-                                : createEntity(scene, "Mesh");
+        Entity meshEntity;
+        if (meshNode >= 0 && static_cast<std::size_t>(meshNode) < nodeEntities.size())
+        {
+            meshEntity = nodeEntities[static_cast<std::size_t>(meshNode)];
+        }
+        else
+        {
+            meshEntity = createEntity(scene, "Mesh");
+        }
         SkinnedMeshComponent& skin = addComponent<SkinnedMeshComponent>(scene, meshEntity);
         skin.mesh = result.mesh;
         const i32 root = result.skinDesc.skeletonRoot;
-        skin.rootBone = root >= 0 && static_cast<std::size_t>(root) < nodeUuids.size()
-                            ? nodeUuids[static_cast<std::size_t>(root)]
-                            : (bones.empty() ? Uuid{ 0 } : bones.front());
+        if (root >= 0 && static_cast<std::size_t>(root) < nodeUuids.size())
+        {
+            skin.rootBone = nodeUuids[static_cast<std::size_t>(root)];
+        }
+        else if (bones.empty())
+        {
+            skin.rootBone = Uuid{ 0 };
+        }
+        else
+        {
+            skin.rootBone = bones.front();
+        }
         skin.bones = std::move(bones);
         skin.inverseBind = result.skinDesc.inverseBind;
         applyImportedMaterials(scene, meshEntity, result);
@@ -5341,7 +5159,11 @@ return {0}
                 {
                     logWarn(std::format("entity material asset {} missing; using default", matId.value));
                 }
-                const MaterialAsset mat = loaded ? *loaded : defaultMaterialAsset();
+                MaterialAsset mat = defaultMaterialAsset();
+                if (loaded)
+                {
+                    mat = *loaded;
+                }
                 out.unlit = mat.unlit;
                 out.proxyAlbedo = glm::vec3(mat.baseColor);
                 // A non-foldable graph renders via its compiled übershader variant (built at
@@ -5441,7 +5263,11 @@ return {0}
         SystemMeshVisual& visual = assets.editorCameraModel;
         if (visual.attempted)
         {
-            return visual.mesh ? &visual : nullptr;
+            if (visual.mesh)
+            {
+                return &visual;
+            }
+            return nullptr;
         }
         visual.attempted = true;
         auto model = translateModel(assetPath("models/editor-camera.glb"));
@@ -5450,8 +5276,11 @@ return {0}
             logWarn(std::format("editor camera model: {}", model.error()));
             return nullptr;
         }
-        auto meshRef =
-            model->hasSkin ? uploadMesh(renderer, model->mesh, model->skin) : uploadMesh(renderer, model->mesh);
+        auto meshRef = uploadMesh(renderer, model->mesh);
+        if (model->hasSkin)
+        {
+            meshRef = uploadMesh(renderer, model->mesh, model->skin);
+        }
         if (!meshRef)
         {
             logWarn(std::format("editor camera model: {}", meshRef.error()));
@@ -5501,6 +5330,26 @@ return {0}
             });
     }
 
+    // The entity's stable IdComponent uuid value, or 0 when it carries no id.
+    auto entityIdOrZero(Scene& scene, Entity entity) -> u64
+    {
+        if (hasComponent<IdComponent>(scene, entity))
+        {
+            return getComponent<IdComponent>(scene, entity).id.value;
+        }
+        return 0;
+    }
+
+    // A gimbal-stable up vector for a lookAt down `dir`: switches to +Z when `dir` is near-vertical.
+    auto lookAtUpForDir(const glm::vec3& dir) -> glm::vec3
+    {
+        if (glm::abs(dir.y) > 0.99f)
+        {
+            return glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+        return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+
     // Draws every entity with a Transform + Mesh through the given camera (the editor
     // viewport camera), resolving each mesh on demand. A no-op without a viewport.
     void renderScene(Renderer& renderer, Scene& scene, AssetServer& assets, const CameraView& camera,
@@ -5542,9 +5391,11 @@ return {0}
                                                }
                                                // A parented light re-aims with its parent; a
                                                // transformless one keeps its raw direction.
-                                               lightDir = hasComponent<TransformComponent>(scene, entity)
-                                                              ? worldRotation(scene, entity) * light.direction
-                                                              : light.direction;
+                                               lightDir = light.direction;
+                                               if (hasComponent<TransformComponent>(scene, entity))
+                                               {
+                                                   lightDir = worldRotation(scene, entity) * light.direction;
+                                               }
                                                lightColor = light.color;
                                                lightIntensity = light.intensity;
                                                lightAmbient = light.ambient;
@@ -5600,8 +5451,7 @@ return {0}
                     // A perspective frustum down the spot cone: fov = 2 x outer angle (a
                     // small pad so the penumbra is inside the map), aspect 1, near/far from range.
                     const f32 fov = glm::radians(glm::min(2.0f * light.outerAngle + 2.0f, 179.0f));
-                    const glm::vec3 up =
-                        glm::abs(dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+                    const glm::vec3 up = lookAtUpForDir(dir);
                     const glm::mat4 lightView = glm::lookAt(pos, pos + dir, up);
                     // GLM_FORCE_DEPTH_ZERO_TO_ONE => Vulkan [0,1] clip depth.
                     const glm::mat4 lightProj = glm::perspective(fov, 1.0f, 0.05f, glm::max(light.range, 0.1f));
@@ -5673,8 +5523,7 @@ return {0}
                 item.submeshMaterials = std::move(materials.submeshes);
                 item.material.unlit = materials.unlit;
                 item.material.shader = materials.shader;
-                item.entity =
-                    hasComponent<IdComponent>(scene, entity) ? getComponent<IdComponent>(scene, entity).id.value : 0;
+                item.entity = entityIdOrZero(scene, entity);
                 items.push_back(std::move(item));
             });
 
@@ -5737,9 +5586,7 @@ return {0}
                     // place the vertices in world space, so entity movement rides inside the
                     // palette. Deformation motion (prev palette vs current) thus covers both bone
                     // animation AND the whole rig moving — no separate object-motion term needed.
-                    item.entity = hasComponent<IdComponent>(scene, entity)
-                                      ? getComponent<IdComponent>(scene, entity).id.value
-                                      : 0;
+                    item.entity = entityIdOrZero(scene, entity);
                     frameJoints.insert(frameJoints.end(), palette.begin(), palette.end());
                     items.push_back(std::move(item));
                 });
@@ -5754,7 +5601,7 @@ return {0}
             const glm::vec3 center = (sceneMin + sceneMax) * 0.5f;
             const f32 radius = glm::length(sceneMax - sceneMin) * 0.5f + 0.5f;
             const glm::vec3 dir = glm::normalize(lightDir);
-            const glm::vec3 up = glm::abs(dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+            const glm::vec3 up = lookAtUpForDir(dir);
             const glm::vec3 eye = center - dir * (radius + 1.0f);
             const glm::mat4 lightView = glm::lookAt(eye, center, up);
             // GLM_FORCE_DEPTH_ZERO_TO_ONE => glm::ortho already emits Vulkan [0,1] clip depth.
@@ -5815,8 +5662,7 @@ return {0}
                     return;
                 }
                 ReflectionProbeUpload up;
-                up.entity =
-                    hasComponent<IdComponent>(scene, entity) ? getComponent<IdComponent>(scene, entity).id.value : 0;
+                up.entity = entityIdOrZero(scene, entity);
                 up.origin = worldTranslation(scene, entity);
                 up.influenceRadius = probe.influenceRadius;
                 up.intensity = probe.intensity;
@@ -6007,39 +5853,14 @@ return {0}
         return hit;
     }
 
-    // === Async thumbnail generation ===
-    //
-    // A worker thread does the cold-cache work (decode + GPU upload + render + readback + PNG cache
-    // write) so the frame loop never blocks on it. The job is a self-contained recipe resolved on the
-    // main thread at enqueue (paths + resolved material), so the worker never touches the catalog or
+    // Async thumbnail generation: a worker thread does the cold-cache work (decode + GPU upload +
+    // render + readback + PNG cache write) so the frame loop never blocks on it. The job is a
+    // self-contained recipe resolved on the main thread at enqueue (paths + resolved material), so
+    // the worker never touches the catalog or
     // the GPU caches; uploaded resources are handed back for the main thread to insert into the
     // caches. GPU thread-safety is the renderer's queue + bindless mutexes plus the worker's own
     // command pool (bindThumbnailWorkerThread). A cache miss replies `pending`; the editor retries,
     // and the completed PNG is then a plain disk-cache hit.
-
-    // One texture the worker must decode + upload, resolved from the catalog at enqueue.
-    struct ThumbnailTextureSource
-    {
-        Uuid id;
-        std::string path;       // absolute source file under assets/ (empty when bytes is set)
-        bool hdr = false;       // .hdr float source -> uploadTextureFloat + tonemapped preview
-        bool srgb = true;       // LDR colorspace: albedo/emissive sRGB, data maps linear
-        std::vector<u8> bytes;  // embedded chunk image bytes (decoded from memory when non-empty)
-    };
-
-    struct ThumbnailJob
-    {
-        Uuid id;
-        u32 size = 0;
-        AssetType type = AssetType::Texture;
-        std::string cachePath;                                 // <projectRoot>/cache/thumbnails/<…>.png
-        ThumbnailTextureSource texture;                        // type == Texture
-        std::string meshPath;                                  // type == Mesh (standalone .smesh, absolute)
-        std::vector<std::byte> meshBytes;                      // type == Mesh/Model, embedded: the .smesh chunk image
-        MaterialAsset material;                                // type == Material (parent-resolved)
-        std::vector<ThumbnailTextureSource> materialTextures;  // the material's (or model's) referenced textures
-        std::vector<MaterialAsset> modelMaterials;             // type == Model: one per material slot, in slot order
-    };
 
     struct ThumbnailReply
     {
@@ -6049,522 +5870,9 @@ return {0}
         bool pending = false;  // true: enqueued, not ready — the caller should retry
     };
 
-    struct ThumbnailWorker
-    {
-        std::thread thread;
-        std::mutex mutex;  // guards queue + inFlight + failed + the handback vectors
-        std::condition_variable cv;
-        std::deque<ThumbnailJob> queue;
-        std::unordered_set<std::string> inFlight;  // cachePaths queued/running (dedup retries)
-        std::unordered_set<std::string> failed;    // cachePaths that failed (settle to no-thumbnail)
-        std::vector<std::pair<Uuid, Ref<GpuTexture>>> textureHandback;  // -> main inserts into the cache
-        std::vector<std::pair<Uuid, Ref<GpuMesh>>> meshHandback;
-        bool stop = false;
-    };
-
-    // Decode + upload one texture (worker or sync path); records (id, Ref) for cache handback.
-    auto thumbnailUploadTexture(Renderer& renderer, const ThumbnailTextureSource& src,
-                                std::vector<std::pair<Uuid, Ref<GpuTexture>>>& handback) -> Ref<GpuTexture>
-    {
-        if (src.hdr)
-        {
-            auto decoded = src.bytes.empty() ? decodeImageHdr(src.path) : decodeImageFromMemoryHdr(src.bytes);
-            if (!decoded)
-            {
-                logWarn(decoded.error());
-                return nullptr;
-            }
-            auto tex = uploadTextureFloat(renderer, decoded->rgba.data(), decoded->width, decoded->height);
-            if (!tex)
-            {
-                logWarn(tex.error());
-                return nullptr;
-            }
-            handback.emplace_back(src.id, *tex);
-            return *tex;
-        }
-        auto decoded = src.bytes.empty() ? decodeImage(src.path) : decodeImageFromMemory(src.bytes);
-        if (!decoded)
-        {
-            logWarn(decoded.error());
-            return nullptr;
-        }
-        auto tex = uploadTexture(renderer, decoded->rgba.data(), decoded->width, decoded->height, src.srgb);
-        if (!tex)
-        {
-            logWarn(tex.error());
-            return nullptr;
-        }
-        handback.emplace_back(src.id, *tex);
-        return *tex;
-    }
-
-    // Generates the PNG for a resolved job (no cache write, no catalog/map access). Uploaded GPU
-    // resources are appended to texOut/meshOut for the caller to cache. Runs on the worker thread
-    // (worker command pool, queue/bindless mutexes) or, with no worker, inline on the main thread.
-    auto generateThumbnail(Renderer& renderer, const ThumbnailJob& job,
-                           std::vector<std::pair<Uuid, Ref<GpuTexture>>>& texOut,
-                           std::vector<std::pair<Uuid, Ref<GpuMesh>>>& meshOut) -> Result<ThumbnailPng>
-    {
-        if (job.type == AssetType::Texture)
-        {
-            auto tex = thumbnailUploadTexture(renderer, job.texture, texOut);
-            if (!tex)
-            {
-                return Err(std::string{ "texture failed to load" });
-            }
-            return encodeTextureThumbnailPng(renderer, tex, job.size,
-                                             job.texture.hdr ? PngTransfer::Tonemap : PngTransfer::Clamp);
-        }
-        if (job.type == AssetType::Mesh)
-        {
-            // Embedded sub-assets ship the .smesh chunk image in meshBytes (resolved on the main thread,
-            // since the worker has no AssetServer); standalone meshes load from their file path.
-            auto mesh = job.meshBytes.empty() ? loadMesh(job.meshPath)
-                                              : loadMeshFromBytes(std::span<const std::byte>{ job.meshBytes });
-            if (!mesh)
-            {
-                return Err(mesh.error());
-            }
-            auto meshRef = uploadMesh(renderer, *mesh);
-            if (!meshRef)
-            {
-                return Err(meshRef.error());
-            }
-            meshOut.emplace_back(job.id, *meshRef);
-            return encodeAssetThumbnailPng(renderer, *meshRef, job.size);
-        }
-        if (job.type == AssetType::Material)
-        {
-            std::unordered_map<u64, Ref<GpuTexture>> local;
-            for (const ThumbnailTextureSource& src : job.materialTextures)
-            {
-                if (auto tex = thumbnailUploadTexture(renderer, src, texOut))
-                {
-                    local[src.id.value] = tex;
-                }
-            }
-            const SubmeshMaterial sm =
-                buildSubmeshMaterial(job.material,
-                                     [&](Uuid tid) -> Ref<GpuTexture>
-                                     {
-                                         auto it = local.find(tid.value);
-                                         return it != local.end() ? it->second : Ref<GpuTexture>{};
-                                     });
-            auto tex = renderMaterialPreview(renderer, sm, job.size);
-            if (!tex)
-            {
-                return Err(tex.error());
-            }
-            return encodeTextureThumbnailPng(renderer, *tex, job.size);
-        }
-        if (job.type == AssetType::Model)
-        {
-            std::unordered_map<u64, Ref<GpuTexture>> local;
-            for (const ThumbnailTextureSource& src : job.materialTextures)
-            {
-                if (auto tex = thumbnailUploadTexture(renderer, src, texOut))
-                {
-                    local[src.id.value] = tex;
-                }
-            }
-            const auto resolveTex = [&](Uuid tid) -> Ref<GpuTexture>
-            {
-                auto it = local.find(tid.value);
-                return it != local.end() ? it->second : Ref<GpuTexture>{};
-            };
-            std::vector<SubmeshMaterial> submeshMaterials;
-            submeshMaterials.reserve(job.modelMaterials.size());
-            for (const MaterialAsset& mat : job.modelMaterials)
-            {
-                submeshMaterials.push_back(buildSubmeshMaterial(mat, resolveTex));
-            }
-            auto mesh = loadMeshFromBytes(std::span<const std::byte>{ job.meshBytes });
-            if (!mesh)
-            {
-                return Err(mesh.error());
-            }
-            auto meshRef = uploadMesh(renderer, *mesh);
-            if (!meshRef)
-            {
-                return Err(meshRef.error());
-            }
-            return encodeModelThumbnailPng(renderer, *meshRef, submeshMaterials, job.size);
-        }
-        return Err(std::string{ "asset has no thumbnail" });
-    }
-
-    // Insert handed-back GPU resources into the caches (skipping uuids already cached) — main thread.
-    void insertThumbnailHandback(AssetServer& assets, std::vector<std::pair<Uuid, Ref<GpuTexture>>>& textures,
-                                 std::vector<std::pair<Uuid, Ref<GpuMesh>>>& meshes)
-    {
-        for (auto& [id, tex] : textures)
-        {
-            if (tex && !assets.textureRefByUuid.contains(id.value))
-            {
-                assets.textureRefByUuid[id.value] = tex;
-            }
-        }
-        for (auto& [id, mesh] : meshes)
-        {
-            if (mesh && !assets.meshRefByUuid.contains(id.value))
-            {
-                assets.meshRefByUuid[id.value] = mesh;
-            }
-        }
-    }
-
-    void thumbnailWorkerLoop(ThumbnailWorker* worker, Renderer* renderer)
-    {
-        bindThumbnailWorkerThread(*renderer);  // this thread allocates from the dedicated worker pool
-        for (;;)
-        {
-            ThumbnailJob job;
-            {
-                std::unique_lock<std::mutex> lock(worker->mutex);
-                worker->cv.wait(lock, [&] { return worker->stop || !worker->queue.empty(); });
-                if (worker->stop)
-                {
-                    return;  // teardown / project switch: abandon any queued jobs
-                }
-                job = std::move(worker->queue.front());
-                worker->queue.pop_front();
-            }
-
-            std::vector<std::pair<Uuid, Ref<GpuTexture>>> texOut;
-            std::vector<std::pair<Uuid, Ref<GpuMesh>>> meshOut;
-            auto png = generateThumbnail(*renderer, job, texOut, meshOut);
-
-            const std::lock_guard<std::mutex> lock(worker->mutex);
-            worker->inFlight.erase(job.cachePath);
-            if (png)
-            {
-                if (auto written = writeThumbnailCache(job.cachePath, png->bytes); !written)
-                {
-                    logWarn(written.error());
-                }
-                for (auto& h : texOut)
-                {
-                    worker->textureHandback.push_back(std::move(h));
-                }
-                for (auto& h : meshOut)
-                {
-                    worker->meshHandback.push_back(std::move(h));
-                }
-            }
-            else
-            {
-                logWarn(std::format("thumbnail {}: {}", job.id.value, png.error()));
-                worker->failed.insert(job.cachePath);  // a missing thumbnail settles to the type icon
-            }
-        }
-    }
-
-    void startThumbnailWorker(AssetServer& assets, Renderer& renderer)
-    {
-        if (assets.thumbnailWorker)
-        {
-            return;
-        }
-        // Build the shared lazy pipelines/sphere on the main thread first; the worker must never be
-        // the one to initialize them (that would race a concurrent main-thread read).
-        if (auto warmed = prewarmThumbnailResources(renderer); !warmed)
-        {
-            logWarn(std::format("thumbnail worker not started: {}", warmed.error()));
-            return;
-        }
-        auto worker = std::make_shared<ThumbnailWorker>();
-        assets.thumbnailWorker = worker;
-        worker->thread = std::thread(thumbnailWorkerLoop, worker.get(), &renderer);
-    }
-
-    // Drains the queue and joins the worker, then drops it. Called before waitGpuIdle/renderer
-    // teardown: the worker's last submit has completed (its fences), and its un-handed-back textures
-    // are referenced by no frame, so dropping them here frees their GPU resources safely.
-    void stopThumbnailWorker(AssetServer& assets)
-    {
-        if (!assets.thumbnailWorker)
-        {
-            return;
-        }
-        ThumbnailWorker& worker = *assets.thumbnailWorker;
-        {
-            const std::lock_guard<std::mutex> lock(worker.mutex);
-            worker.stop = true;
-        }
-        worker.cv.notify_all();
-        if (worker.thread.joinable())
-        {
-            worker.thread.join();
-        }
-        assets.thumbnailWorker.reset();
-    }
-
-    // Abandon queued jobs + dedup/failed state + un-drained handbacks (a project switch; the GPU is
-    // idle at the clearAssetCaches call site, so dropping the handback Refs frees them safely). An
-    // already-running job finishes harmlessly and its single handback is dropped on the next switch.
-    void clearThumbnailQueue(AssetServer& assets)
-    {
-        if (!assets.thumbnailWorker)
-        {
-            return;
-        }
-        ThumbnailWorker& worker = *assets.thumbnailWorker;
-        const std::lock_guard<std::mutex> lock(worker.mutex);
-        worker.queue.clear();
-        worker.inFlight.clear();
-        worker.failed.clear();
-        worker.textureHandback.clear();
-        worker.meshHandback.clear();
-    }
-
-    // Main thread: move the worker's finished uploads into the GPU caches. Call once per frame.
-    void drainThumbnailCompletions(AssetServer& assets)
-    {
-        if (!assets.thumbnailWorker)
-        {
-            return;
-        }
-        ThumbnailWorker& worker = *assets.thumbnailWorker;
-        std::vector<std::pair<Uuid, Ref<GpuTexture>>> textures;
-        std::vector<std::pair<Uuid, Ref<GpuMesh>>> meshes;
-        {
-            const std::lock_guard<std::mutex> lock(worker.mutex);
-            textures.swap(worker.textureHandback);
-            meshes.swap(worker.meshHandback);
-        }
-        insertThumbnailHandback(assets, textures, meshes);
-    }
-
-    // Resolves {asset, size} to a thumbnail: a disk-cache hit returns the PNG; a miss generates it
-    // (synchronously when there is no worker, else enqueued with a `pending` reply for the editor to
-    // retry). Materials key on resolved state, mesh/texture on the source-file stat (phase 3/4).
-    auto requestThumbnail(AssetServer& assets, Renderer& renderer, Uuid id, u32 size) -> Result<ThumbnailReply>
-    {
-        const AssetEntry* match = findAsset(assets.catalog, id);
-        if (match == nullptr)
-        {
-            return Err(std::format("no asset {}", id.value));
-        }
-
-        ThumbnailJob job;
-        job.id = id;
-        job.size = size;
-        job.type = match->type;
-        std::string stamp;
-        if (match->type == AssetType::Material)
-        {
-            auto loaded = loadMaterialAsset(assets, id);
-            if (!loaded)
-            {
-                return Err(loaded.error());
-            }
-            job.material = *loaded;
-            stamp = thumbnailMaterialStamp(*loaded);
-            for (Uuid tid : { loaded->albedoTexture, loaded->ormTexture, loaded->normalTexture, loaded->emissiveTexture,
-                              loaded->heightTexture })
-            {
-                if (tid.value == 0)
-                {
-                    continue;
-                }
-                const AssetEntry* te = findAsset(assets.catalog, tid);
-                if (te != nullptr && te->type == AssetType::Texture)
-                {
-                    job.materialTextures.push_back(
-                        ThumbnailTextureSource{ tid, assets.root + "/" + te->path, te->hdr, !te->linear });
-                }
-            }
-        }
-        else if (match->type == AssetType::Texture)
-        {
-            stamp = thumbnailSourceStamp(assets, *match);
-            job.texture = ThumbnailTextureSource{ id, assets.root + "/" + match->path, match->hdr, !match->linear };
-        }
-        else if (match->type == AssetType::Mesh && match->container.value == 0)
-        {
-            stamp = thumbnailSourceStamp(assets, *match);
-            job.meshPath = assets.root + "/" + match->path;
-        }
-        else if (match->type == AssetType::Mesh || match->type == AssetType::Model)
-        {
-            // An embedded mesh, or a model (previewed as its primary mesh sub-asset): resolve the
-            // .smesh chunk bytes from the container on this (main) thread — the worker has no
-            // AssetServer, so it parses the bytes we hand it rather than touching the catalog.
-            Uuid containerId = match->container;
-            Uuid meshSubId = id;
-            if (match->type == AssetType::Model)
-            {
-                containerId = id;
-                meshSubId = Uuid{ 0 };
-                if (auto model = loadModelAsset(assets, id))
-                {
-                    for (const ContainerMetadata::SubAsset& sub : model->meta.subAssets)
-                    {
-                        if (sub.type == AssetType::Mesh)
-                        {
-                            meshSubId = sub.subId;
-                            break;
-                        }
-                    }
-                }
-                if (meshSubId.value == 0)
-                {
-                    return Err(std::format("model {} has no mesh to preview", id.value));
-                }
-            }
-            auto container = loadModelAsset(assets, containerId);
-            if (!container)
-            {
-                return Err(std::format("model {} is not loadable", containerId.value));
-            }
-            const ByteSource source = chunkSourceFor(assets, *container, ChunkKind::Mesh, meshSubId);
-            if (source.path.empty())
-            {
-                return Err(std::format("no mesh chunk for sub-asset {}", meshSubId.value));
-            }
-            auto bytes = source.read();
-            if (!bytes)
-            {
-                return Err(bytes.error());
-            }
-            stamp = thumbnailSourceStamp(assets, *match);
-            job.meshBytes = std::move(*bytes);
-            if (match->type == AssetType::Model)
-            {
-                // Textured preview: resolve each material slot (subAsset order matches Submesh.materialSlot)
-                // and hand the worker each referenced texture's embedded chunk bytes + colorspace.
-                std::unordered_set<u64> addedTextures;
-                const auto addTexture = [&](Uuid tid)
-                {
-                    if (tid.value == 0 || addedTextures.contains(tid.value))
-                    {
-                        return;
-                    }
-                    const AssetEntry* te = findAsset(assets.catalog, tid);
-                    if (te == nullptr || te->type != AssetType::Texture)
-                    {
-                        return;
-                    }
-                    ThumbnailTextureSource ts;
-                    ts.id = tid;
-                    if (te->container.value != 0)
-                    {
-                        auto tc = loadModelAsset(assets, te->container);
-                        if (!tc)
-                        {
-                            return;
-                        }
-                        Colorspace space = Colorspace::Srgb;
-                        if (const TocEntry* toc = tc->reader.find(ChunkKind::Texture, tid.value); toc != nullptr)
-                        {
-                            space = static_cast<Colorspace>(toc->flags);
-                        }
-                        const ByteSource tsrc = chunkSourceFor(assets, *tc, ChunkKind::Texture, tid);
-                        if (tsrc.path.empty())
-                        {
-                            return;
-                        }
-                        auto tb = tsrc.read();
-                        if (!tb)
-                        {
-                            return;
-                        }
-                        ts.bytes.resize(tb->size());
-                        if (!tb->empty())
-                        {
-                            std::memcpy(ts.bytes.data(), tb->data(), tb->size());
-                        }
-                        ts.hdr = space == Colorspace::Hdr;
-                        ts.srgb = space != Colorspace::Linear && space != Colorspace::Hdr;
-                    }
-                    else
-                    {
-                        ts.path = assets.root + "/" + te->path;
-                        ts.hdr = te->hdr;
-                        ts.srgb = !te->linear;
-                    }
-                    addedTextures.insert(tid.value);
-                    job.materialTextures.push_back(std::move(ts));
-                };
-                for (const ContainerMetadata::SubAsset& sub : container->meta.subAssets)
-                {
-                    if (sub.type != AssetType::Material)
-                    {
-                        continue;
-                    }
-                    MaterialAsset mat;
-                    if (auto resolved = resolveMaterial(assets, id, sub.subId))
-                    {
-                        mat = std::move(*resolved);
-                    }
-                    else
-                    {
-                        logWarn(std::format("model {}: material {} unresolved: {}", id.value, sub.subId.value,
-                                            resolved.error()));
-                    }
-                    for (Uuid tid : { mat.albedoTexture, mat.ormTexture, mat.normalTexture, mat.emissiveTexture,
-                                      mat.heightTexture })
-                    {
-                        addTexture(tid);
-                    }
-                    job.modelMaterials.push_back(std::move(mat));
-                }
-                job.type = AssetType::Model;
-            }
-            else
-            {
-                job.type = AssetType::Mesh;
-            }
-        }
-        else
-        {
-            return Err(std::string{ "asset has no thumbnail" });
-        }
-        job.cachePath = stamp.empty() ? std::string{} : thumbnailCachePath(assets, id, size, stamp).string();
-
-        if (!job.cachePath.empty())
-        {
-            if (auto hit = readThumbnailCache(job.cachePath))
-            {
-                return ThumbnailReply{ std::move(hit->bytes), hit->width, hit->height, false };
-            }
-        }
-
-        // No worker, or no cache key to dedup/persist against: generate inline on the calling thread.
-        if (!assets.thumbnailWorker || job.cachePath.empty())
-        {
-            std::vector<std::pair<Uuid, Ref<GpuTexture>>> texOut;
-            std::vector<std::pair<Uuid, Ref<GpuMesh>>> meshOut;
-            auto png = generateThumbnail(renderer, job, texOut, meshOut);
-            if (!png)
-            {
-                return Err(png.error());
-            }
-            insertThumbnailHandback(assets, texOut, meshOut);
-            if (!job.cachePath.empty())
-            {
-                if (auto written = writeThumbnailCache(job.cachePath, png->bytes); !written)
-                {
-                    logWarn(written.error());
-                }
-            }
-            return ThumbnailReply{ std::move(png->bytes), png->width, png->height, false };
-        }
-
-        // Worker path: dedup on cachePath, enqueue once, reply pending.
-        ThumbnailWorker& worker = *assets.thumbnailWorker;
-        const std::lock_guard<std::mutex> lock(worker.mutex);
-        if (worker.failed.contains(job.cachePath))
-        {
-            return Err(std::string{ "thumbnail generation failed" });
-        }
-        if (!worker.inFlight.contains(job.cachePath))
-        {
-            worker.inFlight.insert(job.cachePath);
-            worker.queue.push_back(std::move(job));
-            worker.cv.notify_one();
-        }
-        return ThumbnailReply{ {}, 0, 0, true };
-    }
+    // Defined in assets_thumbnail.cpp (the async-thumbnail subsystem).
+    void startThumbnailWorker(AssetServer& assets, Renderer& renderer);
+    void stopThumbnailWorker(AssetServer& assets);
+    void drainThumbnailCompletions(AssetServer& assets);
+    auto requestThumbnail(AssetServer& assets, Renderer& renderer, Uuid id, u32 size) -> Result<ThumbnailReply>;
 }

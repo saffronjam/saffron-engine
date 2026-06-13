@@ -533,8 +533,8 @@ export namespace se
     };
 
     /// A material: which shader/PSO variant to draw a renderable with. The per-instance
-    /// albedo texture + base color live on the DrawItem; this selects the pipeline. For
-    /// v1 there is one übershader; a variant flag selects a different cached PSO.
+    /// albedo texture + base color live on the DrawItem; this selects the pipeline. One
+    /// übershader backs every renderable; a variant flag selects a different cached PSO.
     struct Material
     {
         std::string shader = "shaders/mesh.spv";
@@ -588,7 +588,7 @@ export namespace se
 
     // A batch of instances sharing a pipeline + mesh, drawn as one instanced drawIndexed.
     // Bindless means the albedo texture is a per-instance index (in the instance buffer),
-    // not a per-batch descriptor — so batches no longer split by texture. baseInstance
+    // not a per-batch descriptor, so texture differences do not split a batch. baseInstance
     // offsets into the frame's instance buffer.
     struct DrawBatch
     {
@@ -1834,8 +1834,6 @@ export namespace se
     // requested size on that view; beginFrame applies it only when the view is active (a
     // non-active view's size is deferred until it becomes active).
     void setViewportDesiredSize(Renderer& renderer, ViewId view, u32 width, u32 height);
-    auto viewportImageView(const Renderer& renderer) -> vk::ImageView;
-    auto viewportGeneration(const Renderer& renderer) -> u32;
     auto viewportWidth(const Renderer& renderer) -> u32;
     auto viewportHeight(const Renderer& renderer) -> u32;
 
@@ -1895,11 +1893,6 @@ export namespace se
     /// (eR16G16B16A16Sfloat) sampled texture in the bindless array. For HDR panoramas /
     /// environment sources; no sRGB encoding. Narrows f32 -> f16 on the CPU before staging.
     auto uploadTextureFloat(Renderer& renderer, const f32* rgba, u32 width, u32 height) -> Result<Ref<GpuTexture>>;
-
-    // Rasterizes an SVG to a square RGBA icon (tint multiplied in) and uploads it as a
-    // GPU texture — used for asset-browser type icons. "currentColor" maps to white.
-    auto uploadSvgIcon(Renderer& renderer, const std::string& svgPath, u32 pixelSize, glm::vec4 tint)
-        -> Result<Ref<GpuTexture>>;
 
     // Renders a mesh to a square GPU texture (a 3/4 view framed by the mesh AABB, lit by
     // a fixed light) for an asset thumbnail. Synchronous one-off render; safe between frames.
@@ -1995,8 +1988,6 @@ export namespace se
     // beginFrameGraph) when the source, the panorama identity, or — for Procedural — `params`
     // change. No-op if nothing changed, so it is cheap to call every frame.
     void requestEnvBake(Renderer& renderer, EnvSource source, Ref<GpuTexture> panorama, const SkygenParams& params);
-    // Procedural-source convenience wrapper over requestEnvBake.
-    void requestSkyBake(Renderer& renderer, const SkygenParams& params);
 
     // One punctual (point or spot) light in the per-frame light storage buffer
     // (set 1, binding 1). Positions/directions are world space; the fragment shader
@@ -2051,8 +2042,6 @@ export namespace se
     auto contactShadowsEnabled(const Renderer& renderer) -> bool;
     void setSsgi(Renderer& renderer, bool enabled);
     auto ssgiEnabled(const Renderer& renderer) -> bool;
-    // True if any screen-space effect is on (so the G-buffer prepass is worth running).
-    auto screenEffectsEnabled(const Renderer& renderer) -> bool;
     // DDGI probe global illumination: toggle multi-bounce indirect (software voxel trace).
     void setDdgi(Renderer& renderer, bool enabled);
     auto ddgiEnabled(const Renderer& renderer) -> bool;
@@ -2128,9 +2117,6 @@ export namespace se
     // Records the motion-vector prepass (camera reprojection) for the TAA pass body.
     void recordMotion(Renderer& renderer, vk::CommandBuffer cmd);
 
-    // A 1x1 white texture; bind it when a material has no albedo.
-    auto defaultTexture(const Renderer& renderer) -> const Ref<GpuTexture>&;
-
     // The most recent frame's scene draw counters (draw calls, batches, instances).
     auto renderStats(const Renderer& renderer) -> RenderStats;
 
@@ -2158,7 +2144,6 @@ export namespace se
                              bool includeStats) -> u32;
     auto profileStatsSupported(const Renderer& renderer) -> bool;
     auto profileCaptureState(const Renderer& renderer) -> CaptureState;
-    auto profileCaptureReady(const Renderer& renderer) -> bool;
     auto profileCaptureMode(const Renderer& renderer) -> CaptureMode;
     auto profileCaptureCapturedFrames(const Renderer& renderer) -> u32;
     auto profileCaptureTargetFrames(const Renderer& renderer) -> u32;
