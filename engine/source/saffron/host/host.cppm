@@ -19,6 +19,7 @@ module;
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -37,6 +38,7 @@ import Saffron.Control;
 import Saffron.Scene;
 import Saffron.Geometry;
 import Saffron.Animation;
+import Saffron.Physics;
 import Saffron.Script;
 import Saffron.Assets;
 
@@ -51,13 +53,17 @@ namespace se
         se::SceneEditContext* editor = nullptr;
         se::ControlContext* control = nullptr;
         se::AssetServer assets;
-        se::AnimationRuntime animation;         // per-session clip cache for the evaluator
-        se::ScriptHost script;                  // the Lua runtime; the Host is its only owner
-        se::SubscriptionId scriptSubscription;  // the onPlayStateChanged lifecycle hook
-        bool scriptVmActive = false;            // a VM exists (Playing/Paused); stop destroys it
-        bool scriptErrorPending = false;        // set inside simTick; drives the deferred pause
-        bool shmPublish = false;                // frames publish to shared memory; the editor owns the render size
-        bool previewActive = false;             // tracks asset-preview transitions to prune the anim runtime
+        se::AnimationRuntime animation;           // per-session clip cache for the evaluator
+        se::ScriptHost script;                    // the Lua runtime; the Host is its only owner
+        se::SubscriptionId scriptSubscription;    // the onPlayStateChanged lifecycle hook
+        se::SubscriptionId physicsSubscription;   // the onPlayStateChanged physics lifecycle hook
+        std::optional<se::PhysicsWorld> physics;  // a Jolt world exists exactly while play is active
+        bool physicsInit = false;                 // initPhysics() has installed the Jolt globals
+        se::u64 contactCursor = 0;                // seq high-water for per-tick contact -> script dispatch
+        bool scriptVmActive = false;              // a VM exists (Playing/Paused); stop destroys it
+        bool scriptErrorPending = false;          // set inside simTick; drives the deferred pause
+        bool shmPublish = false;                  // frames publish to shared memory; the editor owns the render size
+        bool previewActive = false;               // tracks asset-preview transitions to prune the anim runtime
     };
 
     enum class BillboardKind
@@ -947,8 +953,102 @@ export namespace se
                     }
                     return false;
                 });
+            // Physics lifecycle: a Jolt world exists exactly while play is active, built on
+            // Edit->Playing and dropped on ->Edit — a sibling of the script VM above. The Jolt
+            // globals install lazily on the first play so the self-test (which init/shutdowns
+            // its own globals) stays independent.
+            state->physicsSubscription = state->editor->onPlayStateChanged.subscribe(
+                [state](se::PlayState next)
+                {
+                    if (next == se::PlayState::Playing && !state->physics.has_value())
+                    {
+                        if (!state->physicsInit)
+                        {
+                            if (auto inited = se::initPhysics(); !inited)
+                            {
+                                se::logError(std::format("physics init failed: {}", inited.error()));
+                                return false;
+                            }
+                            state->physicsInit = true;
+                        }
+                        auto world = se::createPhysicsWorld();
+                        if (!world)
+                        {
+                            se::logError(std::format("physics world create failed: {}", world.error()));
+                            return false;
+                        }
+                        state->physics.emplace(std::move(*world));
+                        // Turn the play scene's components into Jolt bodies (collider -> shape,
+                        // rigidbody -> motion/mass). The cook seam decodes .smesh CPU vertices for
+                        // convex-hull/mesh shapes, keeping <Jolt/...> out of Saffron.Assets.
+                        se::populatePhysicsWorld(*state->physics, se::activeScene(*state->editor),
+                                                 [state](se::Uuid id) -> se::Result<se::Mesh>
+                                                 { return se::loadMeshCpuAsset(state->assets, id); });
+                        // Per-bone kinematic bodies for rigs that opted into bone-following.
+                        se::buildBoneBodies(*state->physics, se::activeScene(*state->editor));
+                        // A CharacterVirtual per character-controller entity.
+                        se::forEach<se::CharacterControllerComponent>(
+                            se::activeScene(*state->editor),
+                            [state](se::Entity character, se::CharacterControllerComponent&)
+                            {
+                                static_cast<void>(
+                                    se::addCharacter(*state->physics, character, se::activeScene(*state->editor)));
+                            });
+                        state->contactCursor = 0;  // fresh world, fresh contact-event seq
+                    }
+                    else if (next == se::PlayState::Edit && state->physics.has_value())
+                    {
+                        state->physics.reset();  // RAII: removes bodies + frees the Jolt world
+                    }
+                    return false;
+                });
+            // The simulation seam, composed physics-then-scripts: physics steps + writes transforms
+            // back first, so a script reading a body's post-step transform sees this frame's settled
+            // physics (the mirror of "animation before scripts"). Animation already ran ahead of
+            // tickPlay, so the per-frame order is animation -> (physics -> scripts) -> renderScene.
             state->editor->simTick = [state](se::Scene& scene, se::f32 dt)
             {
+                if (state->physics.has_value())
+                {
+                    // Active ragdolls track the animation: motor each toward this frame's animated
+                    // pose (the evaluator's lastPose, bones-order), ease the per-bone physics weight,
+                    // then step. Drive before the step so the motors are read during the solve.
+                    std::vector<se::PoseTarget> targets;
+                    targets.reserve(state->animation.lastPose.size());
+                    for (const auto& [rig, pose] : state->animation.lastPose)
+                    {
+                        targets.push_back(se::PoseTarget{ .rig = rig, .local = pose });
+                    }
+                    se::driveRagdollsToPose(*state->physics, targets);
+                    se::advanceRagdollBlend(*state->physics, dt);
+                    se::stepPhysics(*state->physics, scene, dt);
+                    // Ragdoll bodies drive the bones: write each part's pose into the bone's
+                    // PoseOverride (after tickAnimation, after the step) so physics wins the frame.
+                    se::writeRagdollPoses(*state->physics, scene);
+                    // Drain this tick's new contacts and dispatch them to scripts before on_update,
+                    // so a trigger/contact handler runs the same frame the contact fired.
+                    if (state->scriptVmActive)
+                    {
+                        const se::ContactDrain drain = se::drainContacts(*state->physics, state->contactCursor);
+                        state->contactCursor = drain.highWaterSeq;
+                        for (const se::ContactEvent& event : drain.events)
+                        {
+                            auto failure = se::dispatchContact(
+                                state->script, scene, event.entityA, event.entityB,
+                                event.kind == se::ContactEvent::Kind::Begin, event.sensor, event.point.x, event.point.y,
+                                event.point.z, event.normal.x, event.normal.y, event.normal.z);
+                            if (failure)
+                            {
+                                se::logError(std::format("script contact handler in '{}': {}", failure->script,
+                                                         failure->message));
+                                se::pushScriptError(*state->editor, failure->entityUuid, failure->script,
+                                                    std::move(failure->message));
+                                state->scriptErrorPending = true;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (!state->scriptVmActive)
                 {
                     return;
@@ -960,6 +1060,27 @@ export namespace se
                                         std::move(failure->message));
                     state->scriptErrorPending = true;
                 }
+            };
+            // Bridge se.raycast (Lua) to the live physics world without Saffron.Script importing
+            // Physics: the binding calls this, which queries the world while it exists (null in Edit).
+            state->script.raycast = [state](se::f32 ox, se::f32 oy, se::f32 oz, se::f32 dx, se::f32 dy, se::f32 dz,
+                                            se::f32 maxDist) -> se::ScriptRayHit
+            {
+                if (!state->physics.has_value())
+                {
+                    return {};
+                }
+                const se::PhysicsRayHit hit =
+                    se::raycastWorld(*state->physics, glm::vec3(ox, oy, oz), glm::vec3(dx, dy, dz), maxDist);
+                return se::ScriptRayHit{ .hit = hit.hit,
+                                         .entity = hit.entity,
+                                         .px = hit.point.x,
+                                         .py = hit.point.y,
+                                         .pz = hit.point.z,
+                                         .nx = hit.normal.x,
+                                         .ny = hit.normal.y,
+                                         .nz = hit.normal.z,
+                                         .distance = hit.distance };
             };
 
             // Headless self-test entry point: pairs with SAFFRON_EXIT_AFTER_FRAMES for
@@ -996,6 +1117,14 @@ export namespace se
                 else
                 {
                     se::logInfo("signal self-test passed");
+                }
+                if (auto physics = se::runPhysicsSelfTest(); !physics)
+                {
+                    se::logError(physics.error());
+                }
+                else
+                {
+                    se::logInfo("physics self-test passed");
                 }
             }
 
@@ -1110,7 +1239,8 @@ export namespace se
                 }
                 if (state->control != nullptr)
                 {
-                    se::pollControl(*state->control, app.window, app.renderer, *state->editor, state->assets);
+                    se::PhysicsWorld* world = state->physics.has_value() ? &*state->physics : nullptr;
+                    se::pollControl(*state->control, app.window, app.renderer, *state->editor, state->assets, world);
                 }
                 // Insert any thumbnails the worker finished this interval into the GPU caches.
                 se::drainThumbnailCompletions(state->assets);
@@ -1226,13 +1356,23 @@ export namespace se
             if (state->editor != nullptr)
             {
                 // Quit can land mid-play: tear the VM down first (it never touches the
-                // scene), detach the seams, then free the context.
+                // scene), drop the physics world (RAII frees its Jolt objects), detach the
+                // seams, then free the context.
                 se::stopScripts(state->script);
                 state->scriptVmActive = false;
+                state->physics.reset();
                 state->editor->simTick = nullptr;
                 state->editor->onPlayStateChanged.unsubscribe(state->scriptSubscription);
+                state->editor->onPlayStateChanged.unsubscribe(state->physicsSubscription);
                 se::destroySceneEditContext(state->editor);
                 state->editor = nullptr;
+            }
+            // The Jolt globals outlive every world; shut them down only after the last
+            // world is gone (above) so the Factory/registered types outlive all bodies.
+            if (state->physicsInit)
+            {
+                se::shutdownPhysics();
+                state->physicsInit = false;
             }
             // Drop every GPU Ref this client holds before destroyRenderer frees the
             // device/allocator — otherwise the cached meshes/textures and the pipeline
