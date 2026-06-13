@@ -9,6 +9,7 @@ import { Engine, REPO } from "./harness.ts";
 
 let engine: Engine;
 let meshId = "";
+let rigId = ""; // the SkinnedMesh/BonePhysics carrier under the model's container root
 let ankle = "";
 let restAnkleY = 0;
 
@@ -30,7 +31,8 @@ const worldY = async (entity: string): Promise<number> =>
 beforeAll(async () => {
   engine = await Engine.boot({ SAFFRON_AUTO_EMPTY_PROJECT: "1" });
   meshId = (await engine.importEntity(LEG)).id;
-  const info = await engine.call<Inspect>("inspect", { entity: meshId });
+  rigId = await engine.rig(meshId); // the rig descendant carries SkinnedMesh + BonePhysics
+  const info = await engine.call<Inspect>("inspect", { entity: rigId });
   ankle = info.components.SkinnedMesh!.bones[2]; // hip / knee / ankle — the leaf
   restAnkleY = await worldY(ankle); // authored rest pose (Edit)
 
@@ -50,7 +52,7 @@ afterAll(async () => {
 });
 
 test("import auto-fits a BonePhysicsComponent (one entry per bone)", async () => {
-  const info = await engine.call<Inspect>("inspect", { entity: meshId });
+  const info = await engine.call<Inspect>("inspect", { entity: rigId });
   expect(info.components.BonePhysics?.bones.length).toBe(3);
 });
 

@@ -169,6 +169,20 @@ export class Engine {
     return this.call<{ id: string; name: string }>("instantiate-model", params);
   }
 
+  /// The rig descendant of an instantiated model: a skinned model wraps its node forest under a
+  /// container root, so the SkinnedMesh (and the auto-fit BonePhysics) live on a child. Returns the
+  /// first entity carrying a SkinnedMesh, falling back to `root` for a non-skinned model.
+  async rig(root: string): Promise<string> {
+    const { entities } = await this.call<{ entities: { id: string }[] }>("list-entities");
+    for (const e of entities) {
+      const info = await this.call<{ components: Record<string, unknown> }>("inspect", { entity: e.id });
+      if (info.components.SkinnedMesh) {
+        return e.id;
+      }
+    }
+    return root;
+  }
+
   async shutdown(): Promise<void> {
     try {
       await this.call("quit");

@@ -142,25 +142,28 @@ namespace se
                     return Err(entity.error());
                 }
                 Scene& scene = activeScene(ctx.sceneEdit);
-                if (!hasComponent<KinematicBonesComponent>(scene, *entity))
+                // The editor selects a model by its container root; the rig (SkinnedMesh + bones) lives
+                // on a descendant — resolve to it so the kinematic bones bind the right entity.
+                const Entity rig = animatableDescendant(scene, *entity);
+                if (!hasComponent<KinematicBonesComponent>(scene, rig))
                 {
-                    addComponent<KinematicBonesComponent>(scene, *entity);
+                    addComponent<KinematicBonesComponent>(scene, rig);
                 }
-                auto& bones = getComponent<KinematicBonesComponent>(scene, *entity);
+                auto& bones = getComponent<KinematicBonesComponent>(scene, rig);
                 if (params.enabled.has_value())
                 {
                     bones.enabled = *params.enabled;
                 }
                 ctx.sceneEdit.sceneVersion += 1;
                 i32 boneCount = 0;
-                if (hasComponent<SkinnedMeshComponent>(scene, *entity))
+                if (hasComponent<SkinnedMeshComponent>(scene, rig))
                 {
-                    boneCount = static_cast<i32>(getComponent<SkinnedMeshComponent>(scene, *entity).bones.size());
+                    boneCount = static_cast<i32>(getComponent<SkinnedMeshComponent>(scene, rig).bones.size());
                 }
                 u64 uuid = 0;
-                if (hasComponent<IdComponent>(scene, *entity))
+                if (hasComponent<IdComponent>(scene, rig))
                 {
-                    uuid = getComponent<IdComponent>(scene, *entity).id.value;
+                    uuid = getComponent<IdComponent>(scene, rig).id.value;
                 }
                 return KinematicBonesResult{ .entity = WireUuid{ uuid },
                                              .enabled = bones.enabled,
@@ -249,11 +252,14 @@ namespace se
                     return Err(entity.error());
                 }
                 Scene& scene = activeScene(ctx.sceneEdit);
+                // Selecting the model container root resolves to its rig descendant (SkinnedMesh +
+                // BonePhysics), so enable-ragdoll acts on the whole-model selection the editor sends.
+                const Entity rig = animatableDescendant(scene, *entity);
                 const u64 uuid =
-                    hasComponent<IdComponent>(scene, *entity) ? getComponent<IdComponent>(scene, *entity).id.value : 0;
+                    hasComponent<IdComponent>(scene, rig) ? getComponent<IdComponent>(scene, rig).id.value : 0;
                 if (params.enabled.value_or(true))
                 {
-                    if (auto enabled = enableRagdoll(*ctx.physics, scene, *entity); !enabled)
+                    if (auto enabled = enableRagdoll(*ctx.physics, scene, rig); !enabled)
                     {
                         return Err(enabled.error());
                     }
@@ -262,7 +268,7 @@ namespace se
                 {
                     disableRagdoll(*ctx.physics, uuid);
                 }
-                return ragdollResultFor(*ctx.physics, scene, *entity, uuid);
+                return ragdollResultFor(*ctx.physics, scene, rig, uuid);
             });
 
         registerCommand<SetRagdollParams, RagdollResult>(
@@ -280,13 +286,15 @@ namespace se
                     return Err(entity.error());
                 }
                 Scene& scene = activeScene(ctx.sceneEdit);
+                // Resolve the model root to its rig descendant (the SkinnedMesh + BonePhysics carrier).
+                const Entity rig = animatableDescendant(scene, *entity);
                 const u64 uuid =
-                    hasComponent<IdComponent>(scene, *entity) ? getComponent<IdComponent>(scene, *entity).id.value : 0;
+                    hasComponent<IdComponent>(scene, rig) ? getComponent<IdComponent>(scene, rig).id.value : 0;
                 // Auto-create the ragdoll on first drive so a hit reaction "just works" without a
                 // separate enable-ragdoll round-trip.
                 if (!hasRagdoll(*ctx.physics, uuid))
                 {
-                    if (auto enabled = enableRagdoll(*ctx.physics, scene, *entity); !enabled)
+                    if (auto enabled = enableRagdoll(*ctx.physics, scene, rig); !enabled)
                     {
                         return Err(enabled.error());
                     }
@@ -298,7 +306,7 @@ namespace se
                     return Err(set.error());
                 }
                 ctx.sceneEdit.animationVersion += 1;
-                return ragdollResultFor(*ctx.physics, scene, *entity, uuid);
+                return ragdollResultFor(*ctx.physics, scene, rig, uuid);
             });
 
         registerCommand<GetRagdollParams, RagdollResult>(
@@ -315,9 +323,10 @@ namespace se
                     return Err(entity.error());
                 }
                 Scene& scene = activeScene(ctx.sceneEdit);
+                const Entity rig = animatableDescendant(scene, *entity);
                 const u64 uuid =
-                    hasComponent<IdComponent>(scene, *entity) ? getComponent<IdComponent>(scene, *entity).id.value : 0;
-                return ragdollResultFor(*ctx.physics, scene, *entity, uuid);
+                    hasComponent<IdComponent>(scene, rig) ? getComponent<IdComponent>(scene, rig).id.value : 0;
+                return ragdollResultFor(*ctx.physics, scene, rig, uuid);
             });
     }
 }

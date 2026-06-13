@@ -78,10 +78,13 @@ test("a Kinematic body ignores gravity while a Dynamic one falls", async () => {
 test("a rig with KinematicBones gets one kinematic body per joint", async () => {
   const meshId = (await engine.importEntity(LEG)).id;
   created.push(meshId);
+  // A skinned model wraps its rig under a container root; the SkinnedMesh + bones live on a
+  // descendant. Resolve it for the component add; the command itself accepts the container root.
+  const rigId = await engine.rig(meshId);
   // Adding the component auto-fits a per-bone capsule (BonePhysicsComponent) and enables following.
-  await engine.call("add-component", { entity: meshId, component: "KinematicBones" });
+  await engine.call("add-component", { entity: rigId, component: "KinematicBones" });
   const toggled = await engine.call<KinematicBonesResult>("set-kinematic-bones", {
-    entity: meshId,
+    entity: meshId, // the model root resolves to the rig descendant server-side
     enabled: true,
   });
   expect(toggled.boneCount).toBe(3); // leg.gltf: Hip / Knee / Ankle
