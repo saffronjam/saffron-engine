@@ -1,12 +1,10 @@
-/// The React `drawAssetPicker` (editor_components.cpp:21-84): a thumbnail combo for
-/// a `Uuid` component field. It lists `(none)` + every catalog asset of `assetType`
-/// (parity with the type filter at editor_components.cpp:47-49); selecting one calls
-/// `onChange(id)`, `(none)` calls `onChange("0")`. It is ALSO an HTML5 drop TARGET
-/// accepting `application/x-se-asset`, but only when the dragged asset's type matches
-/// `assetType` (parity with the `drag->type == type` guard, editor_components.cpp:77).
+/// A thumbnail combo for a `Uuid` component field. It lists `(none)` + every catalog
+/// asset of `assetType`; selecting one calls `onChange(id)`, `(none)` calls
+/// `onChange("0")`. It is ALSO an HTML5 drop TARGET accepting `application/x-se-asset`,
+/// but only when the dragged asset's type matches `assetType`.
 ///
 /// The caller (the inspector's fieldRenderer) owns the write: mesh/albedo go through
-/// `assignAsset`, everything else (sky texture, future Uuid fields) through
+/// `assignAsset`, everything else (sky texture, other Uuid fields) through
 /// `setComponentField`. The picker is field-agnostic — it only emits `onChange`.
 ///
 /// Lives in the side docks (inspector / environment); the popover anchors there.
@@ -117,8 +115,8 @@ export function AssetPicker({ value, assetType, onChange }: AssetPickerProps) {
     setOpen(false);
   };
 
-  // Drop TARGET: accept an asset tile only when its type matches this field
-  // (parity with the C++ type guard); ignore OS file drops here.
+  // Drop TARGET: accept an asset tile only when its type matches this field;
+  // ignore OS file drops here.
   const onDrop = (event: React.DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
     setDropActive(false);

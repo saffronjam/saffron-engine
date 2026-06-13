@@ -1,11 +1,8 @@
 /// One asset catalog tile: a lazy thumbnail (mesh = its 3D render, texture = its
 /// image, else a lucide type icon), an in-place rename input, and an HTML5 drag
-/// SOURCE carrying `application/x-se-asset` (the React analog of the C++ `SE_ASSET`
-/// / `AssetDragPayload`). Double-click opens the View modal; the Delete key on a
-/// focused tile starts the same delete flow as the grid's shared context menu
-/// (the panel owns that menu — a tile renders no Radix root of its own). Parity
-/// target: `assetCatalogPanel` (editor_panels.cpp:226-325) + the `thumbnailFor`
-/// fallbacks.
+/// SOURCE carrying `application/x-se-asset`. Double-click opens the View modal; the
+/// Delete key on a focused tile starts the same delete flow as the grid's shared
+/// context menu (the panel owns that menu — a tile renders no Radix root of its own).
 import { memo, useEffect, useRef, useState } from "react";
 import { Box, Clapperboard, File, Image as ImageIcon, Loader2 } from "lucide-react";
 import { client } from "../control/client";
@@ -18,8 +15,7 @@ import { logRender } from "../lib/renderLog";
 import { Input } from "@/components/ui/input";
 
 /// The DnD payload written to `application/x-se-asset` (distinct from an OS file
-/// drop). `type` lets a drop target type-gate the accept (parity with the C++
-/// `drag->type == type` guard, editor_components.cpp:77).
+/// drop). `type` lets a drop target type-gate the accept.
 export const ASSET_DND_MIME = "application/x-se-asset";
 
 export interface AssetDragPayload {
@@ -109,9 +105,9 @@ function formatDurationBadge(sec: number): string {
 
 /// A tile's thumbnail fetch state: `loading` while the get-thumbnail promise is
 /// outstanding, `ready` once a blob URL resolves, `none` on a reject (unsupported
-/// type / failed render) — `none` falls back to the bare type icon, like the engine's
-/// `thumbnailFor` did before. `ready` from the start when the shared cache already
-/// has the blob, so a cache hit never flashes the spinner.
+/// type / failed render) — `none` falls back to the bare type icon. `ready` from the
+/// start when the shared cache already has the blob, so a cache hit never flashes the
+/// spinner.
 type ThumbStatus = "loading" | "ready" | "none";
 
 /// The loading affordance shown in the thumbnail square: a spinner over a dimmed
@@ -142,8 +138,7 @@ export interface AssetTileProps {
   onRenameEnd(): void;
 }
 
-/// Render the grid thumbnail at 128 px (parity with editor_app.cppm:138) and
-/// display it at the 72-px tile size (parity with `tileSize`).
+/// Render the grid thumbnail at 128 px and display it at the 72-px tile size.
 const THUMBNAIL_FETCH_SIZE = 128;
 
 /// memo'd so a parent (grid) render skips tiles whose props are unchanged; the
