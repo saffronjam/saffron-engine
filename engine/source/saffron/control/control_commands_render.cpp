@@ -175,7 +175,14 @@ namespace se
 
     auto profileLaneDto(ProfileLane lane) -> ProfileLaneDto
     {
-        return lane == ProfileLane::Gpu ? ProfileLaneDto::Gpu : ProfileLaneDto::Cpu;
+        switch (lane)
+        {
+        case ProfileLane::Gpu:
+            return ProfileLaneDto::Gpu;
+        case ProfileLane::Cpu:
+            break;
+        }
+        return ProfileLaneDto::Cpu;
     }
 
     auto captureStateDto(CaptureState state) -> CaptureStateDto
@@ -246,7 +253,11 @@ namespace se
         for (const ProfileSpan& s : capture.spans)
         {
             const double tsUs = static_cast<double>(s.startNs) / 1000.0;
-            const double durUs = s.endNs > s.startNs ? static_cast<double>(s.endNs - s.startNs) / 1000.0 : 0.0;
+            double durUs = 0.0;
+            if (s.endNs > s.startNs)
+            {
+                durUs = static_cast<double>(s.endNs - s.startNs) / 1000.0;
+            }
             json args = { { "depth", s.depth } };
             if (s.hasStats)
             {
@@ -258,13 +269,23 @@ namespace se
                 args["computeInvocations"] = s.stats.computeInvocations;
                 args["pixels"] = s.stats.pixels;
             }
+            int laneTid = cpuTid;
+            if (s.lane == ProfileLane::Gpu)
+            {
+                laneTid = gpuTid;
+            }
             events.push_back({ { "ph", "X" },
                                { "pid", "SaffronEngine" },
-                               { "tid", s.lane == ProfileLane::Gpu ? gpuTid : cpuTid },
+                               { "tid", laneTid },
                                { "name", s.name },
                                { "ts", tsUs },
                                { "dur", durUs },
                                { "args", std::move(args) } });
+        }
+        const char* modeName = "pipeline-stats";
+        if (profilerModeDto(capture.meta.mode) == ProfilerModeDto::Timestamps)
+        {
+            modeName = "timestamps";
         }
         json doc;
         doc["traceEvents"] = std::move(events);
@@ -272,9 +293,7 @@ namespace se
         doc["otherData"] = { { "softwareGpu", capture.meta.softwareGpu },
                              { "correlated", capture.meta.correlated },
                              { "deviceName", capture.meta.deviceName },
-                             { "mode", profilerModeDto(capture.meta.mode) == ProfilerModeDto::Timestamps
-                                           ? "timestamps"
-                                           : "pipeline-stats" },
+                             { "mode", modeName },
                              { "targetFps", capture.meta.targetFps },
                              { "frameCount", capture.meta.frameCount },
                              { "filter", capture.meta.filter } };
@@ -384,12 +403,17 @@ namespace se
 
     auto alarmEventDto(const AlarmEvent& event) -> AlarmEventDto
     {
+        AlarmStateDto state = AlarmStateDto::Firing;
+        if (event.kind == AlarmEventKind::Resolved)
+        {
+            state = AlarmStateDto::Resolved;
+        }
         return AlarmEventDto{ static_cast<i64>(event.seq),
                               std::to_string(event.fingerprint),
                               event.metric,
                               event.pass,
                               alarmSeverityDto(event.severity),
-                              event.kind == AlarmEventKind::Resolved ? AlarmStateDto::Resolved : AlarmStateDto::Firing,
+                              state,
                               event.value,
                               event.threshold,
                               static_cast<i64>(event.sinceFrame),
@@ -399,7 +423,12 @@ namespace se
 
     auto drainAlarmsDto(Renderer& renderer, i64 since) -> DrainAlarmsResult
     {
-        const AlarmDrain drain = drainAlarms(renderer, since < 0 ? 0 : static_cast<u64>(since));
+        u64 sinceSeq = 0;
+        if (since >= 0)
+        {
+            sinceSeq = static_cast<u64>(since);
+        }
+        const AlarmDrain drain = drainAlarms(renderer, sinceSeq);
         DrainAlarmsResult out;
         for (const AlarmEvent& event : drain.events)
         {
@@ -421,11 +450,6 @@ namespace se
                                                  static_cast<i64>(alarm.sinceFrame), static_cast<i32>(alarm.count) });
         }
         return out;
-    }
-
-    auto renderStatsJson(Renderer& renderer) -> json
-    {
-        return dtoToJson(renderStatsDto(renderer));
     }
 
     void registerRenderCommands(CommandRegistry& reg)
@@ -503,7 +527,10 @@ namespace se
                 out.inlined = mode == CaptureMode::Single || !out.ready;
                 if (out.inlined)
                 {
-                    out.chromeTrace = out.ready ? toChromeTrace(capture) : std::string{};
+                    if (out.ready)
+                    {
+                        out.chromeTrace = toChromeTrace(capture);
+                    }
                 }
                 else
                 {
