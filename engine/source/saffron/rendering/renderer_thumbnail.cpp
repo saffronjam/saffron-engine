@@ -38,6 +38,16 @@ import :Detail;
 
 namespace se
 {
+    // The image read back after rendering: the resolve target under MSAA, else the color image.
+    static auto resolveTarget(Image& resolve, Image& color, bool msaa) -> Image&
+    {
+        if (msaa)
+        {
+            return resolve;
+        }
+        return color;
+    }
+
     // The highest MSAA count (≤8) valid for the thumbnail targets: the renderer's supported
     // counts (framebuffer limits ∩ depth format) further intersected with the swapchain color
     // format's own counts, which the thumbnail renders into. Thumbnails are tiny and rendered
@@ -263,7 +273,11 @@ namespace se
         colorAttach.imageView = color.view;
         colorAttach.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
         colorAttach.loadOp = vk::AttachmentLoadOp::eClear;
-        colorAttach.storeOp = msaa ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore;
+        colorAttach.storeOp = vk::AttachmentStoreOp::eStore;
+        if (msaa)
+        {
+            colorAttach.storeOp = vk::AttachmentStoreOp::eDontCare;
+        }
         colorAttach.clearValue =
             vk::ClearValue{ vk::ClearColorValue{ std::array<f32, 4>{ 0.12f, 0.12f, 0.14f, 1.0f } } };
         if (msaa)
@@ -300,7 +314,7 @@ namespace se
         }
         cmd.endRendering();
 
-        Image& result = msaa ? resolve : color;
+        Image& result = resolveTarget(resolve, color, msaa);
         transitionImage(cmd, result.image, vk::ImageLayout::eColorAttachmentOptimal,
                         vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                         vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader,
@@ -552,8 +566,19 @@ namespace se
         glm::mat4 proj = glm::perspective(fovy, 1.0f, glm::max(0.01f, distance - 2.0f), distance + 2.0f);
         proj[1][1] *= -1.0f;
 
-        const u32 white = renderer.defaultWhiteTexture ? renderer.defaultWhiteTexture->bindlessIndex : 0u;
-        const auto idx = [&](const Ref<GpuTexture>& t) { return (t && t->image) ? t->bindlessIndex : white; };
+        u32 white = 0u;
+        if (renderer.defaultWhiteTexture)
+        {
+            white = renderer.defaultWhiteTexture->bindlessIndex;
+        }
+        const auto idx = [&](const Ref<GpuTexture>& t) -> u32
+        {
+            if (t && t->image)
+            {
+                return t->bindlessIndex;
+            }
+            return white;
+        };
         u32 features = 0u;
         if (material.normalTexture && material.normalTexture->image)
         {
@@ -601,7 +626,11 @@ namespace se
         colorAttach.imageView = color.view;
         colorAttach.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
         colorAttach.loadOp = vk::AttachmentLoadOp::eClear;
-        colorAttach.storeOp = msaa ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore;
+        colorAttach.storeOp = vk::AttachmentStoreOp::eStore;
+        if (msaa)
+        {
+            colorAttach.storeOp = vk::AttachmentStoreOp::eDontCare;
+        }
         colorAttach.clearValue =
             vk::ClearValue{ vk::ClearColorValue{ std::array<f32, 4>{ 0.10f, 0.10f, 0.12f, 1.0f } } };
         if (msaa)
@@ -640,7 +669,7 @@ namespace se
         }
         cmd.endRendering();
 
-        Image& result = msaa ? resolve : color;
+        Image& result = resolveTarget(resolve, color, msaa);
         transitionImage(cmd, result.image, vk::ImageLayout::eColorAttachmentOptimal,
                         vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                         vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader,
@@ -731,8 +760,19 @@ namespace se
         proj[1][1] *= -1.0f;
         const glm::mat4 viewProj = proj * view;
 
-        const u32 white = renderer.defaultWhiteTexture ? renderer.defaultWhiteTexture->bindlessIndex : 0u;
-        const auto idx = [&](const Ref<GpuTexture>& t) { return (t && t->image) ? t->bindlessIndex : white; };
+        u32 white = 0u;
+        if (renderer.defaultWhiteTexture)
+        {
+            white = renderer.defaultWhiteTexture->bindlessIndex;
+        }
+        const auto idx = [&](const Ref<GpuTexture>& t) -> u32
+        {
+            if (t && t->image)
+            {
+                return t->bindlessIndex;
+            }
+            return white;
+        };
 
         vk::CommandBufferAllocateInfo cmdAlloc{};
         cmdAlloc.commandPool = oneOffCommandPool(renderer);
@@ -769,7 +809,11 @@ namespace se
         colorAttach.imageView = color.view;
         colorAttach.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
         colorAttach.loadOp = vk::AttachmentLoadOp::eClear;
-        colorAttach.storeOp = msaa ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore;
+        colorAttach.storeOp = vk::AttachmentStoreOp::eStore;
+        if (msaa)
+        {
+            colorAttach.storeOp = vk::AttachmentStoreOp::eDontCare;
+        }
         colorAttach.clearValue =
             vk::ClearValue{ vk::ClearColorValue{ std::array<f32, 4>{ 0.10f, 0.10f, 0.12f, 1.0f } } };
         if (msaa)
@@ -803,10 +847,12 @@ namespace se
         const SubmeshMaterial fallback{};
         for (const Submesh& submesh : mesh->submeshes)
         {
-            const SubmeshMaterial& m =
-                submeshMaterials.empty()
-                    ? fallback
-                    : submeshMaterials[std::min<std::size_t>(submesh.materialSlot, submeshMaterials.size() - 1)];
+            const SubmeshMaterial* mPtr = &fallback;
+            if (!submeshMaterials.empty())
+            {
+                mPtr = &submeshMaterials[std::min<std::size_t>(submesh.materialSlot, submeshMaterials.size() - 1)];
+            }
+            const SubmeshMaterial& m = *mPtr;
             u32 features = 0u;
             if (m.normalTexture && m.normalTexture->image)
             {
@@ -824,7 +870,7 @@ namespace se
         }
         cmd.endRendering();
 
-        Image& result = msaa ? resolve : color;
+        Image& result = resolveTarget(resolve, color, msaa);
         transitionImage(cmd, result.image, vk::ImageLayout::eColorAttachmentOptimal,
                         vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                         vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader,

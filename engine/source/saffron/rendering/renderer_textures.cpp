@@ -8,8 +8,6 @@ module;
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 #include <stb_image_write.h>
-#include <nanosvg.h>
-#include <nanosvgrast.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -39,59 +37,16 @@ import :Detail;
 
 namespace se
 {
-    auto uploadSvgIcon(Renderer& renderer, const std::string& svgPath, u32 pixelSize, glm::vec4 tint)
-        -> Result<Ref<GpuTexture>>
-    {
-        std::ifstream in(svgPath);
-        if (!in)
-        {
-            return Err(std::format("cannot open '{}'", svgPath));
-        }
-        std::string svg((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        // nanosvg does not resolve the "currentColor" keyword; map it to white so
-        // stroke-only icons (e.g. Lucide) rasterize, then tint below.
-        for (std::size_t pos = svg.find("currentColor"); pos != std::string::npos; pos = svg.find("currentColor", pos))
-        {
-            svg.replace(pos, 12, "#ffffff");
-        }
-
-        NSVGimage* image = nsvgParse(svg.data(), "px", 96.0f);  // nsvgParse mutates the buffer
-        if (image == nullptr || image->width <= 0.0f || image->height <= 0.0f)
-        {
-            if (image != nullptr)
-            {
-                nsvgDelete(image);
-            }
-            return Err(std::format("nanosvg failed to parse '{}'", svgPath));
-        }
-        NSVGrasterizer* rasterizer = nsvgCreateRasterizer();
-        if (rasterizer == nullptr)
-        {
-            nsvgDelete(image);
-            return Err(std::string{ "nsvgCreateRasterizer failed" });
-        }
-        const f32 scale = static_cast<f32>(pixelSize) / glm::max(image->width, image->height);
-        std::vector<u8> rgba(static_cast<std::size_t>(pixelSize) * pixelSize * 4, 0);
-        nsvgRasterize(rasterizer, image, 0.0f, 0.0f, scale, rgba.data(), static_cast<int>(pixelSize),
-                      static_cast<int>(pixelSize), static_cast<int>(pixelSize) * 4);
-        nsvgDeleteRasterizer(rasterizer);
-        nsvgDelete(image);
-
-        for (std::size_t i = 0; i < rgba.size(); i = i + 4)
-        {
-            rgba[i + 0] = static_cast<u8>(rgba[i + 0] * tint.r);
-            rgba[i + 1] = static_cast<u8>(rgba[i + 1] * tint.g);
-            rgba[i + 2] = static_cast<u8>(rgba[i + 2] * tint.b);
-            rgba[i + 3] = static_cast<u8>(rgba[i + 3] * tint.a);
-        }
-        return uploadTexture(renderer, rgba.data(), pixelSize, pixelSize, false);
-    }
-
     // Full mip chain length for a width x height image (down to 1x1).
     static auto mipCount(u32 width, u32 height) -> u32
     {
         u32 levels = 1;
-        for (u32 d = (width > height ? width : height); d > 1; d >>= 1)
+        u32 d = width;
+        if (height > width)
+        {
+            d = height;
+        }
+        for (; d > 1; d >>= 1)
         {
             levels += 1;
         }
@@ -128,8 +83,16 @@ namespace se
             mipBarrier(cmd, image, i - 1, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
                        vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite,
                        vk::PipelineStageFlagBits2::eBlit, vk::AccessFlagBits2::eTransferRead);
-            const i32 nw = mw > 1 ? mw / 2 : 1;
-            const i32 nh = mh > 1 ? mh / 2 : 1;
+            i32 nw = 1;
+            if (mw > 1)
+            {
+                nw = mw / 2;
+            }
+            i32 nh = 1;
+            if (mh > 1)
+            {
+                nh = mh / 2;
+            }
             vk::ImageBlit blit{};
             blit.srcSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, i - 1, 0, 1 };
             blit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
@@ -145,11 +108,18 @@ namespace se
         for (u32 i = 0; i < mipLevels; i += 1)
         {
             const bool last = i == mipLevels - 1;
-            mipBarrier(cmd, image, i,
-                       last ? vk::ImageLayout::eTransferDstOptimal : vk::ImageLayout::eTransferSrcOptimal,
-                       vk::ImageLayout::eShaderReadOnlyOptimal,
-                       last ? vk::PipelineStageFlagBits2::eCopy : vk::PipelineStageFlagBits2::eBlit,
-                       last ? vk::AccessFlagBits2::eTransferWrite : vk::AccessFlagBits2::eTransferRead,
+            // The last level only received copies (TransferDst); every earlier level was a
+            // blit source (TransferSrc), so its source stage/access differ.
+            vk::ImageLayout fromLayout = vk::ImageLayout::eTransferSrcOptimal;
+            vk::PipelineStageFlags2 srcStage = vk::PipelineStageFlagBits2::eBlit;
+            vk::AccessFlags2 srcAccess = vk::AccessFlagBits2::eTransferRead;
+            if (last)
+            {
+                fromLayout = vk::ImageLayout::eTransferDstOptimal;
+                srcStage = vk::PipelineStageFlagBits2::eCopy;
+                srcAccess = vk::AccessFlagBits2::eTransferWrite;
+            }
+            mipBarrier(cmd, image, i, fromLayout, vk::ImageLayout::eShaderReadOnlyOptimal, srcStage, srcAccess,
                        vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
         }
     }
@@ -198,7 +168,11 @@ namespace se
         vmaFlushAllocation(renderer.context.allocator, stagingAllocation, 0, VK_WHOLE_SIZE);
 
         const u32 mipLevels = mipCount(width, height);
-        const vk::Format format = srgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm;
+        vk::Format format = vk::Format::eR8G8B8A8Unorm;
+        if (srgb)
+        {
+            format = vk::Format::eR8G8B8A8Srgb;
+        }
         VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
         imageInfo.format = static_cast<VkFormat>(format);
@@ -223,50 +197,37 @@ namespace se
             return Err(std::string{ "uploadTexture: vmaCreateImage failed" });
         }
 
-        vk::CommandBufferAllocateInfo cmdAlloc{};
-        cmdAlloc.commandPool = oneOffCommandPool(renderer);
-        cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
-        cmdAlloc.commandBufferCount = 1;
-        auto cmds =
-            checked(renderer.context.device.allocateCommandBuffers(cmdAlloc), "uploadTexture: allocateCommandBuffers");
-        if (!cmds)
-        {
-            vmaDestroyImage(renderer.context.allocator, rawImage, imageAllocation);
-            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
-            return Err(cmds.error());
-        }
-        vk::CommandBuffer cmd = (*cmds)[0];
-        vk::CommandBufferBeginInfo begin{};
-        begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-        static_cast<void>(cmd.begin(begin));
-        // All mips start TransferDst: mip 0 receives the copy, the rest receive blits down the chain.
-        {
-            vk::ImageMemoryBarrier2 toDst{};
-            toDst.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
-            toDst.dstStageMask = vk::PipelineStageFlagBits2::eCopy;
-            toDst.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
-            toDst.oldLayout = vk::ImageLayout::eUndefined;
-            toDst.newLayout = vk::ImageLayout::eTransferDstOptimal;
-            toDst.image = vk::Image{ rawImage };
-            toDst.subresourceRange = vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0, 1 };
-            vk::DependencyInfo dep{};
-            dep.setImageMemoryBarriers(toDst);
-            cmd.pipelineBarrier2(dep);
-        }
-        vk::BufferImageCopy region{};
-        region.imageSubresource = vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
-        region.imageExtent = vk::Extent3D{ width, height, 1 };
-        cmd.copyBufferToImage(vk::Buffer{ staging }, vk::Image{ rawImage }, vk::ImageLayout::eTransferDstOptimal,
-                              region);
-        recordMipChain(cmd, vk::Image{ rawImage }, width, height, mipLevels);
-        static_cast<void>(cmd.end());
-        auto submitted = submitAndWait(renderer, cmd);
-        renderer.context.device.freeCommandBuffers(oneOffCommandPool(renderer), cmd);
+        auto uploaded =
+            withOneOffCommands(renderer, "uploadTexture: allocateCommandBuffers",
+                               [&](vk::CommandBuffer cmd)
+                               {
+                                   // All mips start TransferDst: mip 0 receives the copy, the rest receive blits down
+                                   // the chain.
+                                   vk::ImageMemoryBarrier2 toDst{};
+                                   toDst.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+                                   toDst.dstStageMask = vk::PipelineStageFlagBits2::eCopy;
+                                   toDst.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+                                   toDst.oldLayout = vk::ImageLayout::eUndefined;
+                                   toDst.newLayout = vk::ImageLayout::eTransferDstOptimal;
+                                   toDst.image = vk::Image{ rawImage };
+                                   toDst.subresourceRange =
+                                       vk::ImageSubresourceRange{ vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0, 1 };
+                                   vk::DependencyInfo dep{};
+                                   dep.setImageMemoryBarriers(toDst);
+                                   cmd.pipelineBarrier2(dep);
+                                   vk::BufferImageCopy region{};
+                                   region.imageSubresource =
+                                       vk::ImageSubresourceLayers{ vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+                                   region.imageExtent = vk::Extent3D{ width, height, 1 };
+                                   cmd.copyBufferToImage(vk::Buffer{ staging }, vk::Image{ rawImage },
+                                                         vk::ImageLayout::eTransferDstOptimal, region);
+                                   recordMipChain(cmd, vk::Image{ rawImage }, width, height, mipLevels);
+                               });
         vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
-        if (!submitted)
+        if (!uploaded)
         {
             vmaDestroyImage(renderer.context.allocator, rawImage, imageAllocation);
-            return Err(submitted.error());
+            return Err(uploaded.error());
         }
 
         vk::ImageViewCreateInfo viewInfo{};

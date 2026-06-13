@@ -158,8 +158,11 @@ namespace se
         VmaAllocation skinAlloc = nullptr;
         // A skinned mesh's vertex + skin streams are also read as storage buffers by the
         // compute skinning pre-pass (skin.slang), so they carry STORAGE usage too.
-        const VkBufferUsageFlags vertexUsage =
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (skin.empty() ? 0 : VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        if (!skin.empty())
+        {
+            vertexUsage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        }
         if (!makeDeviceBuffer(vertexBytes, vertexUsage, vertexBuffer, vertexAlloc) ||
             !makeDeviceBuffer(indexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBuffer, indexAlloc) ||
             (!skin.empty() &&
@@ -184,37 +187,22 @@ namespace se
         gpu.skinBuffer = vk::Buffer{ skinBuffer };
         gpu.skinAlloc = skinAlloc;
 
-        vk::CommandBufferAllocateInfo cmdAlloc{};
-        cmdAlloc.commandPool = oneOffCommandPool(renderer);
-        cmdAlloc.level = vk::CommandBufferLevel::ePrimary;
-        cmdAlloc.commandBufferCount = 1;
-        auto cmds =
-            checked(renderer.context.device.allocateCommandBuffers(cmdAlloc), "uploadMesh: allocateCommandBuffers");
-        if (!cmds)
-        {
-            vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
-            return Err(cmds.error());
-        }
-        vk::CommandBuffer cmd = (*cmds)[0];
-
-        vk::CommandBufferBeginInfo begin{};
-        begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-        static_cast<void>(cmd.begin(begin));
-        cmd.copyBuffer(vk::Buffer{ staging }, gpu.vertexBuffer, vk::BufferCopy{ 0, 0, vertexBytes });
-        cmd.copyBuffer(vk::Buffer{ staging }, gpu.indexBuffer, vk::BufferCopy{ vertexBytes, 0, indexBytes });
-        if (gpu.skinBuffer)
-        {
-            cmd.copyBuffer(vk::Buffer{ staging }, gpu.skinBuffer,
-                           vk::BufferCopy{ vertexBytes + indexBytes, 0, skinBytes });
-        }
-        static_cast<void>(cmd.end());
-
-        auto submitted = submitAndWait(renderer, cmd);
-        renderer.context.device.freeCommandBuffers(oneOffCommandPool(renderer), cmd);
+        auto uploaded = withOneOffCommands(
+            renderer, "uploadMesh: allocateCommandBuffers",
+            [&](vk::CommandBuffer cmd)
+            {
+                cmd.copyBuffer(vk::Buffer{ staging }, gpu.vertexBuffer, vk::BufferCopy{ 0, 0, vertexBytes });
+                cmd.copyBuffer(vk::Buffer{ staging }, gpu.indexBuffer, vk::BufferCopy{ vertexBytes, 0, indexBytes });
+                if (gpu.skinBuffer)
+                {
+                    cmd.copyBuffer(vk::Buffer{ staging }, gpu.skinBuffer,
+                                   vk::BufferCopy{ vertexBytes + indexBytes, 0, skinBytes });
+                }
+            });
         vmaDestroyBuffer(renderer.context.allocator, staging, stagingAllocation);
-        if (!submitted)
+        if (!uploaded)
         {
-            return Err(submitted.error());
+            return Err(uploaded.error());
         }
 
         auto meshRef = std::make_shared<GpuMesh>(std::move(gpu));
@@ -471,7 +459,11 @@ namespace se
         };
         std::vector<Bucket> buckets;
         std::vector<Ref<GpuTexture>> liveTextures;
-        const u32 defaultTextureIndex = renderer.defaultWhiteTexture ? renderer.defaultWhiteTexture->bindlessIndex : 0u;
+        u32 defaultTextureIndex = 0u;
+        if (renderer.defaultWhiteTexture)
+        {
+            defaultTextureIndex = renderer.defaultWhiteTexture->bindlessIndex;
+        }
         // Deduplicated per-material params: one entry per distinct material this frame, indexed
         // by InstanceData.texture.w. Keyed on the raw bytes of the built entry, so identical
         // materials (the common case) collapse to one entry and one shared shader lookup.
