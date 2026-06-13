@@ -17,6 +17,7 @@ module;
 #include <filesystem>
 #include <format>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -591,19 +592,215 @@ namespace se
             });
     }
 
+    // A world-space AABB as 12 edges; lines go into the depth-tested bucket so scene
+    // geometry occludes the box.
+    void addWorldAabb(std::vector<se::OverlayVertex>& vertices, const glm::mat4& viewProjection, glm::vec3 lo,
+                      glm::vec3 hi, glm::vec4 color, se::u32 width, se::u32 height)
+    {
+        const std::array<glm::vec3, 8> corners{ glm::vec3{ lo.x, lo.y, lo.z }, glm::vec3{ hi.x, lo.y, lo.z },
+                                                glm::vec3{ hi.x, hi.y, lo.z }, glm::vec3{ lo.x, hi.y, lo.z },
+                                                glm::vec3{ lo.x, lo.y, hi.z }, glm::vec3{ hi.x, lo.y, hi.z },
+                                                glm::vec3{ hi.x, hi.y, hi.z }, glm::vec3{ lo.x, hi.y, hi.z } };
+        constexpr std::array<std::pair<se::u32, se::u32>, 12> Edges{
+            std::pair{ 0u, 1u }, std::pair{ 1u, 2u }, std::pair{ 2u, 3u }, std::pair{ 3u, 0u },
+            std::pair{ 4u, 5u }, std::pair{ 5u, 6u }, std::pair{ 6u, 7u }, std::pair{ 7u, 4u },
+            std::pair{ 0u, 4u }, std::pair{ 1u, 5u }, std::pair{ 2u, 6u }, std::pair{ 3u, 7u }
+        };
+        for (const auto& edge : Edges)
+        {
+            addClippedOverlayLine(vertices, viewProjection, corners[edge.first], corners[edge.second], 1.5f, color,
+                                  width, height);
+        }
+    }
+
+    // A world-space ring of `radius` in the plane spanned by the unit axes a, b.
+    void addWorldRing(std::vector<se::OverlayVertex>& vertices, const glm::mat4& viewProjection, glm::vec3 center,
+                      glm::vec3 a, glm::vec3 b, se::f32 radius, glm::vec4 color, se::u32 width, se::u32 height)
+    {
+        constexpr se::u32 segments = 32;
+        glm::vec3 prev = center + a * radius;
+        for (se::u32 i = 1; i <= segments; i = i + 1)
+        {
+            const se::f32 t = static_cast<se::f32>(i) / static_cast<se::f32>(segments) * glm::two_pi<se::f32>();
+            const glm::vec3 cur = center + (a * std::cos(t) + b * std::sin(t)) * radius;
+            addClippedOverlayLine(vertices, viewProjection, prev, cur, 1.5f, color, width, height);
+            prev = cur;
+        }
+    }
+
+    // The viewport debug overlays (set-debug-overlays): per-entity bounds = the exact box
+    // pickEntity tests (static draw + skinned joint-union), the whole-scene AABB the shadow
+    // fit uses, and point/spot light volumes. World-space lines, depth-tested, Edit-only.
+    void buildDebugOverlays(se::SceneEditContext& editor, se::AssetServer& assets, se::Renderer& renderer,
+                            const se::CameraView& cam, se::u32 width, se::u32 height,
+                            std::vector<se::OverlayVertex>& vertices)
+    {
+        const se::DebugOverlayOptions& opts = editor.debugOverlays;
+        if (width == 0 || height == 0 || (!opts.bounds && !opts.sceneAabb && !opts.lightVolumes))
+        {
+            return;
+        }
+        se::Scene& scene = se::activeScene(editor);
+        const se::f32 aspect = static_cast<se::f32>(width) / static_cast<se::f32>(height);
+        const glm::mat4 viewProjection = se::cameraProjection(cam, aspect) * cam.view;
+        constexpr glm::vec4 StaticBoundsColor{ 0.35f, 0.95f, 0.55f, 0.9f };
+        constexpr glm::vec4 SkinnedBoundsColor{ 0.95f, 0.45f, 0.95f, 0.9f };
+        constexpr glm::vec4 SceneAabbColor{ 0.95f, 0.85f, 0.25f, 0.85f };
+        constexpr glm::vec4 PointColor{ 1.0f, 0.84f, 0.34f, 0.85f };
+        constexpr glm::vec4 SpotColor{ 0.45f, 0.85f, 1.0f, 0.85f };
+
+        glm::vec3 sceneMin{ std::numeric_limits<se::f32>::max() };
+        glm::vec3 sceneMax{ std::numeric_limits<se::f32>::lowest() };
+        bool haveScene = false;
+
+        // Transform the 8 local-AABB corners by `model` and re-enclose axis-aligned in world
+        // space — the exact box pickEntity tests.
+        auto worldAabb = [](const glm::mat4& model, glm::vec3 lo, glm::vec3 hi, glm::vec3& outMin, glm::vec3& outMax)
+        {
+            for (se::u32 corner = 0; corner < 8; corner = corner + 1)
+            {
+                glm::vec3 p = lo;
+                if (corner & 1u)
+                {
+                    p.x = hi.x;
+                }
+                if (corner & 2u)
+                {
+                    p.y = hi.y;
+                }
+                if (corner & 4u)
+                {
+                    p.z = hi.z;
+                }
+                const glm::vec3 world = glm::vec3(model * glm::vec4(p, 1.0f));
+                outMin = glm::min(outMin, world);
+                outMax = glm::max(outMax, world);
+            }
+        };
+
+        se::forEach<se::TransformComponent, se::MeshComponent>(
+            scene,
+            [&](se::Entity entity, se::TransformComponent&, se::MeshComponent& mesh)
+            {
+                const se::Ref<se::GpuMesh> meshRef = se::loadMeshAsset(assets, renderer, mesh.mesh);
+                if (!meshRef)
+                {
+                    return;
+                }
+                glm::vec3 lo{ std::numeric_limits<se::f32>::max() };
+                glm::vec3 hi{ std::numeric_limits<se::f32>::lowest() };
+                worldAabb(se::worldMatrix(scene, entity), meshRef->boundsMin, meshRef->boundsMax, lo, hi);
+                if (opts.bounds)
+                {
+                    addWorldAabb(vertices, viewProjection, lo, hi, StaticBoundsColor, width, height);
+                }
+                sceneMin = glm::min(sceneMin, lo);
+                sceneMax = glm::max(sceneMax, hi);
+                haveScene = true;
+            });
+
+        se::forEach<se::TransformComponent, se::SkinnedMeshComponent>(
+            scene,
+            [&](se::Entity, se::TransformComponent&, se::SkinnedMeshComponent& skin)
+            {
+                const se::Ref<se::GpuMesh> meshRef = se::loadMeshAsset(assets, renderer, skin.mesh);
+                if (!meshRef)
+                {
+                    return;
+                }
+                std::vector<glm::mat4> palette;
+                se::jointMatrices(scene, skin, palette);
+                if (palette.empty())
+                {
+                    return;
+                }
+                glm::vec3 lo{ std::numeric_limits<se::f32>::max() };
+                glm::vec3 hi{ std::numeric_limits<se::f32>::lowest() };
+                for (const glm::mat4& joint : palette)
+                {
+                    worldAabb(joint, meshRef->boundsMin, meshRef->boundsMax, lo, hi);
+                }
+                if (opts.bounds)
+                {
+                    addWorldAabb(vertices, viewProjection, lo, hi, SkinnedBoundsColor, width, height);
+                }
+                sceneMin = glm::min(sceneMin, lo);
+                sceneMax = glm::max(sceneMax, hi);
+                haveScene = true;
+            });
+
+        // The whole-scene AABB the directional-shadow / DDGI fit derives each frame; renderScene
+        // recomputes and discards it, and this recompute intentionally mirrors that one.
+        if (opts.sceneAabb && haveScene)
+        {
+            addWorldAabb(vertices, viewProjection, sceneMin, sceneMax, SceneAabbColor, width, height);
+        }
+
+        if (opts.lightVolumes)
+        {
+            se::forEach<se::TransformComponent, se::PointLightComponent>(
+                scene,
+                [&](se::Entity entity, se::TransformComponent&, se::PointLightComponent& light)
+                {
+                    if (light.range <= 0.0f)
+                    {
+                        return;
+                    }
+                    const glm::vec3 center = se::worldTranslation(scene, entity);
+                    addWorldRing(vertices, viewProjection, center, glm::vec3{ 1.0f, 0.0f, 0.0f },
+                                 glm::vec3{ 0.0f, 1.0f, 0.0f }, light.range, PointColor, width, height);
+                    addWorldRing(vertices, viewProjection, center, glm::vec3{ 0.0f, 1.0f, 0.0f },
+                                 glm::vec3{ 0.0f, 0.0f, 1.0f }, light.range, PointColor, width, height);
+                    addWorldRing(vertices, viewProjection, center, glm::vec3{ 1.0f, 0.0f, 0.0f },
+                                 glm::vec3{ 0.0f, 0.0f, 1.0f }, light.range, PointColor, width, height);
+                });
+
+            se::forEach<se::TransformComponent, se::SpotLightComponent>(
+                scene,
+                [&](se::Entity entity, se::TransformComponent&, se::SpotLightComponent& light)
+                {
+                    if (light.range <= 0.0f)
+                    {
+                        return;
+                    }
+                    // Matches the lighting upload: dir = normalize(worldRotation * component direction).
+                    const glm::vec3 apex = se::worldTranslation(scene, entity);
+                    const glm::vec3 dir = glm::normalize(se::worldRotation(scene, entity) * light.direction);
+                    glm::vec3 up{ 0.0f, 1.0f, 0.0f };
+                    if (std::abs(dir.y) > 0.99f)
+                    {
+                        up = glm::vec3{ 0.0f, 0.0f, 1.0f };
+                    }
+                    const glm::vec3 right = glm::normalize(glm::cross(dir, up));
+                    const glm::vec3 up2 = glm::cross(right, dir);
+                    const glm::vec3 base = apex + dir * light.range;
+                    const se::f32 baseRadius =
+                        light.range * std::tan(glm::radians(std::clamp(light.outerAngle, 0.5f, 89.0f)));
+                    addWorldRing(vertices, viewProjection, base, right, up2, baseRadius, SpotColor, width, height);
+                    for (se::u32 i = 0; i < 4; i = i + 1)
+                    {
+                        const se::f32 t = static_cast<se::f32>(i) / 4.0f * glm::two_pi<se::f32>();
+                        const glm::vec3 rim = base + (right * std::cos(t) + up2 * std::sin(t)) * baseRadius;
+                        addClippedOverlayLine(vertices, viewProjection, apex, rim, 1.5f, SpotColor, width, height);
+                    }
+                });
+        }
+    }
+
     // Builds the editor overlay and submits it once per frame: camera frustums are
     // depth-tested against the scene (occluded by geometry); billboards, the active gizmo,
     // and the skeleton overlay always draw on top. The gizmo + billboards + frustums are
     // Edit-only editor chrome; the skeleton overlay (when shown) renders in every play
     // state so a played clip shows its bones move. `editChrome` is false during play.
-    void submitSceneEditOverlay(se::SceneEditContext& editor, se::Renderer& renderer, const se::CameraView& cam,
-                                se::u32 width, se::u32 height, bool editChrome)
+    void submitSceneEditOverlay(se::SceneEditContext& editor, se::AssetServer& assets, se::Renderer& renderer,
+                                const se::CameraView& cam, se::u32 width, se::u32 height, bool editChrome)
     {
         std::vector<se::OverlayVertex> depthTested;
         std::vector<se::OverlayVertex> onTop;
         if (editChrome)
         {
             buildSceneEditCameraFrustums(editor, cam, width, height, depthTested);
+            buildDebugOverlays(editor, assets, renderer, cam, width, height, depthTested);
             buildSceneEditBillboards(editor, cam, width, height, onTop);
             buildNativeGizmo(editor, cam, width, height, onTop);
         }
@@ -947,12 +1144,16 @@ export namespace se
                 {
                     se::RenderSceneOptions options;
                     options.showEditorCameraModels = editor.playState == se::PlayState::Edit;
+                    // The grid is Edit-only debug chrome, like the bounds/light-volume overlays.
+                    options.showGrid = editor.debugOverlays.grid && editor.playState == se::PlayState::Edit &&
+                                       !editor.previewScene.has_value();
                     se::renderScene(app.renderer, live, state->assets, cam, options);
                     // The gizmo + billboards are editor chrome: hidden inside the game view, and during
                     // the asset preview (an "Edit without chrome" view). The gizmo would write transforms
                     // the play duplicate swallows. The skeleton overlay (when shown) still draws in both.
                     const bool editChrome = editor.playState == se::PlayState::Edit && !editor.previewScene.has_value();
-                    se::submitSceneEditOverlay(editor, app.renderer, cam, viewWidth, viewHeight, editChrome);
+                    se::submitSceneEditOverlay(editor, state->assets, app.renderer, cam, viewWidth, viewHeight,
+                                               editChrome);
                 }
             };
             se::attachLayer(app, std::move(layer));
