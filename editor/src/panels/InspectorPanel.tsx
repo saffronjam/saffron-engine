@@ -92,6 +92,22 @@ export function InspectorPanel() {
     coalescers.current.clear();
   }, [selectionVersion, selectedId]);
 
+  // Undo capture: the in-flight field/slot gesture's prior snapshot + target entity,
+  // recorded as one undo entry at the gesture's end. Distinct refs so a field scrub and
+  // a slot scrub never alias.
+  const fieldGesture = useRef<{
+    component: string;
+    field: string;
+    prior: Record<string, unknown>;
+    id: string;
+  } | null>(null);
+  const slotGesture = useRef<{
+    slotIndex: number;
+    field: string;
+    prior: Record<string, unknown>;
+    id: string;
+  } | null>(null);
+
   // Consume the one-shot "jump to component" signal from the hierarchy subrows:
   // scroll the section into view when present, and always clear the signal so a
   // stale value never fires on a later render (component absent, selection raced).
@@ -146,18 +162,20 @@ export function InspectorPanel() {
     return c;
   };
 
-  // Route a buffered write to the right command. `payload` is the full patched DTO.
-  const sendWrite = (component: string, field: string, payload: object): Promise<unknown> => {
-    const id = useEditorStore.getState().selectedId;
-    if (!id) {
-      return Promise.resolve();
-    }
+  // Route a write to the right command for an explicit entity id. `payload` is the full
+  // component DTO; the merge helpers (Transform/Material) take the changed field, a uuid
+  // field its assign command, everything else the whole DTO (set-component does not
+  // merge). Used live by `sendWrite` and by undo/redo replay with a captured id — so a
+  // replay always targets the edited entity, never the live selection.
+  const applyWrite = (
+    id: string,
+    component: string,
+    field: string,
+    payload: object,
+    smooth: boolean,
+  ): Promise<unknown> => {
     const dto = payload as Record<string, unknown>;
     const hint = resolveHint(component, field, dto[field]);
-
-    // uuid fields write a string id (never Number()). Mesh.mesh / Material.albedoTexture
-    // have the dedicated, minimal assign-asset command (adds the component if missing
-    // and writes the slot); every other Uuid field uses the generic single-field merge.
     if (hint.kind === "uuid") {
       const assetId = String(dto[field] ?? "0");
       if (component === "Mesh" && field === "mesh") {
@@ -171,36 +189,81 @@ export function InspectorPanel() {
       }
       return client.setComponentField(id, component, field, assetId);
     }
-    // Transform/Material have server-side merge helpers — send only the changed
-    // field. Mid-drag sends ask the engine to animate toward the value (read at
-    // send time, so the post-release re-push goes out exact, cancelling the
-    // animation).
-    const smooth = useEditorStore.getState().dragActive;
     if (component === "Transform") {
       return client.setTransform(id, { [field]: dto[field] } as Partial<Transform>, smooth);
     }
     if (component === "Material") {
       return client.setMaterial(id, { [field]: dto[field] } as Partial<Material>, smooth);
     }
-    // Everything else: set-component does NOT merge, send the whole DTO.
     return client.setComponent(id, component, dto);
   };
 
-  // A field edit: build the full patched DTO, overlay it optimistically, and push
-  // it through the field's coalescer.
+  // The live send for the field coalescer: current selection + drag-smoothing. Mid-drag
+  // sends animate toward the value; the post-release re-push goes out exact.
+  const sendWrite = (component: string, field: string, payload: object): Promise<unknown> => {
+    const id = useEditorStore.getState().selectedId;
+    if (!id) {
+      return Promise.resolve();
+    }
+    return applyWrite(id, component, field, payload, useEditorStore.getState().dragActive);
+  };
+
+  const setDragActive = useEditorStore.getState().setDragActive;
+  const pushEdit = useEditorStore.getState().pushEdit;
+
+  // Record one scene-tab undo entry for a field edit; a no-op (prior === after) is
+  // dropped. Undo/redo replay through `applyWrite` against the captured entity id.
+  const recordFieldEdit = (
+    id: string,
+    component: string,
+    field: string,
+    prior: object,
+    after: object,
+  ): void => {
+    if (JSON.stringify(prior) === JSON.stringify(after)) {
+      return;
+    }
+    pushEdit(
+      {
+        label: humanizeFieldName(field),
+        selectionId: id,
+        undo: () => applyWrite(id, component, field, prior, false),
+        redo: () => applyWrite(id, component, field, after, false),
+      },
+      "scene",
+    );
+  };
+
+  // A field edit: optimistically overlay the patched DTO and push it through the
+  // coalescer. A discrete edit (bool/uuid, or a text commit — no active gesture) records
+  // one undo entry here; a gesture's ticks are skipped and recorded at its end.
   const onFieldChange = (component: string, field: string, next: unknown): void => {
     const current = (componentsObj[component] ?? {}) as Record<string, unknown>;
     const patched = { ...current, [field]: next };
+    if (fieldGesture.current === null) {
+      const id = useEditorStore.getState().selectedId;
+      if (id) {
+        recordFieldEdit(id, component, field, structuredClone(current), structuredClone(patched));
+      }
+    }
     applyOptimisticComponent(component, patched);
     coalescerFor(component, field).push(patched);
   };
 
-  const setDragActive = useEditorStore.getState().setDragActive;
-  const onDragStart = (): void => setDragActive(true);
-  // Release: ungate the poll, then re-push the field's latest optimistic value so
-  // the stream always ends with one exact (non-smooth) write of the final state.
-  // Read from the store, not the render closure — the widget's pointerup listener
-  // holds the ctx captured at pointerdown, stale by release.
+  // A field gesture (scrub drag, or a text field's focus..blur): capture the prior DTO +
+  // target entity now and gate the poll; one entry is recorded at the end.
+  const onFieldDragStart = (component: string, field: string): void => {
+    setDragActive(true);
+    const id = useEditorStore.getState().selectedId;
+    if (id) {
+      const prior = structuredClone((componentsObj[component] ?? {}) as Record<string, unknown>);
+      fieldGesture.current = { component, field, prior, id };
+    }
+  };
+
+  // Release: ungate the poll, re-push the latest optimistic value (one exact, non-smooth
+  // write), then record the gesture as a single undo entry. Read from the store, not the
+  // render closure — the pointerup listener holds a ctx stale by release.
   const onFieldDragEnd = (component: string, field: string): void => {
     setDragActive(false);
     const components = useEditorStore.getState().componentsBySelected?.components as
@@ -209,6 +272,17 @@ export function InspectorPanel() {
     const current = components?.[component];
     if (current) {
       coalescerFor(component, field).push({ ...(current as object) });
+    }
+    const gesture = fieldGesture.current;
+    fieldGesture.current = null;
+    if (gesture && gesture.component === component && gesture.field === field && current) {
+      recordFieldEdit(
+        gesture.id,
+        component,
+        field,
+        gesture.prior,
+        structuredClone(current as Record<string, unknown>),
+      );
     }
   };
 
@@ -239,11 +313,59 @@ export function InspectorPanel() {
     return c;
   };
 
+  // Record one scene-tab undo entry for a MaterialSet slot edit (set-material with the
+  // slot index), replayed against the captured entity id.
+  const recordSlotEdit = (
+    id: string,
+    slotIndex: number,
+    field: string,
+    prior: Record<string, unknown>,
+    after: Record<string, unknown>,
+  ): void => {
+    if (JSON.stringify(prior) === JSON.stringify(after)) {
+      return;
+    }
+    const apply = (slot: Record<string, unknown>): Promise<unknown> =>
+      client.setMaterial(id, { [field]: slot[field] } as Partial<Material>, false, slotIndex);
+    pushEdit(
+      {
+        label: humanizeFieldName(field),
+        selectionId: id,
+        undo: () => apply(prior),
+        redo: () => apply(after),
+      },
+      "scene",
+    );
+  };
+
   const onSlotFieldChange = (slotIndex: number, field: string, next: unknown): void => {
     const set = (componentsObj["MaterialSet"] ?? {}) as { slots?: Record<string, unknown>[] };
     const slots = (set.slots ?? []).map((s, i) => (i === slotIndex ? { ...s, [field]: next } : s));
+    if (slotGesture.current === null) {
+      const id = useEditorStore.getState().selectedId;
+      const priorSlot = set.slots?.[slotIndex];
+      if (id && priorSlot) {
+        recordSlotEdit(
+          id,
+          slotIndex,
+          field,
+          structuredClone(priorSlot),
+          structuredClone(slots[slotIndex] ?? {}),
+        );
+      }
+    }
     applyOptimisticComponent("MaterialSet", { slots });
     slotCoalescerFor(slotIndex, field).push({ ...(slots[slotIndex] ?? {}) });
+  };
+
+  const onSlotFieldDragStart = (slotIndex: number, field: string): void => {
+    setDragActive(true);
+    const id = useEditorStore.getState().selectedId;
+    const slot = ((componentsObj["MaterialSet"] ?? {}) as { slots?: Record<string, unknown>[] })
+      .slots?.[slotIndex];
+    if (id && slot) {
+      slotGesture.current = { slotIndex, field, prior: structuredClone(slot), id };
+    }
   };
 
   const onSlotFieldDragEnd = (slotIndex: number, field: string): void => {
@@ -256,15 +378,53 @@ export function InspectorPanel() {
     if (slot) {
       slotCoalescerFor(slotIndex, field).push({ ...slot });
     }
+    const gesture = slotGesture.current;
+    slotGesture.current = null;
+    if (gesture && gesture.slotIndex === slotIndex && gesture.field === field && slot) {
+      recordSlotEdit(gesture.id, slotIndex, field, gesture.prior, structuredClone(slot));
+    }
   };
 
+  // Add/remove a component records its inverse only after the engine accepts it (a
+  // rejected op records nothing). Remove captures the full prior body so undo restores
+  // the user's values, not engine defaults.
   const onRemove = (component: string): void => {
+    const id = selectedId;
+    const priorBody = structuredClone((componentsObj[component] ?? {}) as Record<string, unknown>);
     void client
-      .removeComponent(selectedId, component)
+      .removeComponent(id, component)
+      .then(() => {
+        pushEdit(
+          {
+            label: `Remove ${component}`,
+            selectionId: id,
+            undo: async () => {
+              await client.addComponent(id, component);
+              await client.setComponent(id, component, priorBody);
+            },
+            redo: () => client.removeComponent(id, component),
+          },
+          "scene",
+        );
+      })
       .catch((err: unknown) => flash(errorText(err)));
   };
   const onAdd = (component: string): void => {
-    void client.addComponent(selectedId, component).catch((err: unknown) => flash(errorText(err)));
+    const id = selectedId;
+    void client
+      .addComponent(id, component)
+      .then(() => {
+        pushEdit(
+          {
+            label: `Add ${component}`,
+            selectionId: id,
+            undo: () => client.removeComponent(id, component),
+            redo: () => client.addComponent(id, component),
+          },
+          "scene",
+        );
+      })
+      .catch((err: unknown) => flash(errorText(err)));
   };
 
   // One section body per component, dispatched by name with early returns (not a
@@ -300,7 +460,10 @@ export function InspectorPanel() {
                         field,
                         value,
                         (next) => onSlotFieldChange(slotIndex, field, next),
-                        { onDragStart, onDragEnd: () => onSlotFieldDragEnd(slotIndex, field) },
+                        {
+                          onDragStart: () => onSlotFieldDragStart(slotIndex, field),
+                          onDragEnd: () => onSlotFieldDragEnd(slotIndex, field),
+                        },
                       )}
                     </div>
                   </div>
@@ -325,7 +488,7 @@ export function InspectorPanel() {
                 value,
                 (next) => onFieldChange(component, field, next),
                 {
-                  onDragStart,
+                  onDragStart: () => onFieldDragStart(component, field),
                   onDragEnd: () => onFieldDragEnd(component, field),
                 },
               )}

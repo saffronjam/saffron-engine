@@ -246,6 +246,8 @@ export function renderField(
           type="text"
           className="h-7 rounded-sm bg-background px-1.5 py-0.5 font-mono text-[11px]"
           value={typeof value === "string" ? value : JSON.stringify(value)}
+          onFocus={ctx.onDragStart}
+          onBlur={ctx.onDragEnd}
           onChange={(event) => onChange(event.currentTarget.value)}
         />
       );

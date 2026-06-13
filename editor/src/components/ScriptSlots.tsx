@@ -177,11 +177,38 @@ export function ScriptSlots({ entityId, scripts }: { entityId: string; scripts: 
     return c;
   };
 
+  // Undo capture for a scrubbed/focused override field: the prior value (undefined =
+  // "was default") + which (slot, field), recorded as one entry at the gesture's end.
+  const overrideGesture = useRef<{ slotIndex: number; name: string; prior: unknown } | null>(null);
+
+  // Record one scene-tab undo entry for an override edit; a no-op is dropped. Clearing
+  // an override (null) is the reset-to-default path; undo re-applies the prior value.
+  const recordOverrideEdit = (
+    slotIndex: number,
+    name: string,
+    prior: unknown,
+    after: unknown,
+  ): void => {
+    if (JSON.stringify(prior ?? null) === JSON.stringify(after ?? null)) {
+      return;
+    }
+    useEditorStore.getState().pushEdit(
+      {
+        label: humanizeFieldName(name),
+        selectionId: entityId,
+        undo: () => client.setScriptOverride(entityId, slotIndex, name, prior ?? null),
+        redo: () => client.setScriptOverride(entityId, slotIndex, name, after ?? null),
+      },
+      "scene",
+    );
+  };
+
   const onOverride = (slotIndex: number, name: string, value: unknown): void => {
     const slot = scripts[slotIndex];
     if (!slot) {
       return;
     }
+    const prior = slot.overrides[name];
     const overrides = { ...slot.overrides };
     if (value === null) {
       delete overrides[name];
@@ -189,14 +216,39 @@ export function ScriptSlots({ entityId, scripts }: { entityId: string; scripts: 
       overrides[name] = value;
     }
     const next = scripts.map((s, i) => (i === slotIndex ? { ...s, overrides } : s));
+    // A discrete edit (bool toggle, reset, string commit — no active gesture) records
+    // one entry; a scrub's ticks are skipped and recorded at its end.
+    if (overrideGesture.current === null) {
+      recordOverrideEdit(slotIndex, name, prior, value === null ? undefined : value);
+    }
     applyOptimisticComponent("Script", { scripts: next });
     overrideCoalescer(slotIndex, name).push({ value });
   };
 
-  const drag = {
-    onDragStart: () => setDragActive(true),
-    onDragEnd: () => setDragActive(false),
+  // Per-field gesture brackets (scrub drag, or a string field's focus..blur): capture
+  // the prior override, gate the poll, and record one entry at the end.
+  const onOverrideDragStart = (slotIndex: number, name: string): void => {
+    setDragActive(true);
+    overrideGesture.current = { slotIndex, name, prior: scripts[slotIndex]?.overrides[name] };
   };
+  const onOverrideDragEnd = (slotIndex: number, name: string): void => {
+    setDragActive(false);
+    const gesture = overrideGesture.current;
+    overrideGesture.current = null;
+    if (!gesture || gesture.slotIndex !== slotIndex || gesture.name !== name) {
+      return;
+    }
+    const live = useEditorStore.getState().componentsBySelected?.components as
+      | Record<string, unknown>
+      | undefined;
+    const after = (live?.["Script"] as { scripts?: ScriptSlot[] } | undefined)?.scripts?.[slotIndex]
+      ?.overrides?.[name];
+    recordOverrideEdit(slotIndex, name, gesture.prior, after);
+  };
+  const fieldDrag = (slotIndex: number, name: string) => ({
+    onDragStart: () => onOverrideDragStart(slotIndex, name),
+    onDragEnd: () => onOverrideDragEnd(slotIndex, name),
+  });
 
   const renderFieldWidget = (
     slotIndex: number,
@@ -219,6 +271,8 @@ export function ScriptSlots({ entityId, scripts }: { entityId: string; scripts: 
             type="text"
             className="h-7 rounded-sm bg-background px-1.5 py-0.5 font-mono text-[11px]"
             value={typeof value === "string" ? value : ""}
+            onFocus={() => onOverrideDragStart(slotIndex, field.name)}
+            onBlur={() => onOverrideDragEnd(slotIndex, field.name)}
             onChange={(event) => onOverride(slotIndex, field.name, event.currentTarget.value)}
           />
         );
@@ -232,7 +286,7 @@ export function ScriptSlots({ entityId, scripts }: { entityId: string; scripts: 
               const merged = { ...record, ...patch };
               onOverride(slotIndex, field.name, [merged.x, merged.y, merged.z]);
             }}
-            {...drag}
+            {...fieldDrag(slotIndex, field.name)}
           />
         );
       }
@@ -241,7 +295,7 @@ export function ScriptSlots({ entityId, scripts }: { entityId: string; scripts: 
           <NumberDrag
             value={typeof value === "number" ? value : 0}
             onChange={(v) => onOverride(slotIndex, field.name, v)}
-            {...drag}
+            {...fieldDrag(slotIndex, field.name)}
           />
         );
     }
