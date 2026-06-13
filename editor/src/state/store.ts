@@ -8,6 +8,41 @@ import { COMMANDS_BY_ID, isCommandId, type CommandId } from "../lib/keybindings"
 import { routeAlarmToasts } from "../lib/alarmToasts";
 import { resetScriptErrorToasts, routeScriptErrorToasts } from "../lib/scriptErrorToasts";
 import { appendFrameSamples } from "../lib/frameSeries";
+import { errorText, notifyError } from "../lib/flash";
+import {
+  appendEdit,
+  emptyHistory,
+  takeRedo,
+  takeUndo,
+  type TabHistory,
+  type UndoableEdit,
+} from "../lib/undo";
+import { emitLayoutSettled } from "../app/layoutBus";
+import {
+  DEFAULT_LEAF,
+  type DockLayout,
+  type DockNodeId,
+  type DockPanelId,
+  type DockSpaceKind,
+  type DropTarget,
+  defaultDockLayout,
+  defaultDockLayouts,
+  findPanelLeaf,
+  hasNode,
+  hasRequiredPanels,
+  isPanelOpenIn,
+  knownPanelIds,
+  movePanel as movePanelInLayout,
+  normalize,
+  openPanelResolve,
+  panelKind,
+  pruneLastLocation,
+  removePanel,
+  reorderTab as reorderTabInLayout,
+  setBranchSizes as setBranchSizesInLayout,
+  setLeafActiveTab,
+  validate as validateLayout,
+} from "./dockLayout";
 import type {
   ActiveAlarmDto,
   AlarmEventDto,
@@ -38,16 +73,6 @@ const CAPTURE_WINDOW_STORAGE_KEY = "saffron.captureWindowFrames";
 const CAPTURE_STATS_STORAGE_KEY = "saffron.captureIncludeStats";
 
 export type EnginePhase = "idle" | "starting" | "attaching" | "ready" | "error";
-/// The active left-bottom dock tab. Tree rows switch it (the Environment sentinel
-/// selects-and-switches); the tab strip itself stays clickable as before.
-export type BottomTab = "inspector" | "environment" | "render";
-
-/// The performance tools openable into the right sidebar from the Topbar wrench menu.
-export type RightTool = "stats" | "profiler" | "material";
-
-/// The tools openable into the bottom dock from the Topbar. A parallel, independent
-/// slice to the right-tools model; `'timeline'` is the only member until more land.
-export type BottomTool = "timeline";
 
 /// The profiler capture lifecycle, mirrored from the engine's recorder. On-demand: a
 /// capture is armed by a button, never polled on the metrics lane.
@@ -97,7 +122,6 @@ export interface EditorState {
   /// the sceneVersion/selectionVersion keying so a scene mutation never collapses
   /// the tree; setEntities prunes ids that vanished from the scene.
   expandedIds: Set<string>;
-  bottomTab: BottomTab;
   sceneVersion: number;
   selectionVersion: number;
   componentsBySelected: InspectResult | null;
@@ -115,14 +139,14 @@ export interface EditorState {
   assetMarqueeActive: boolean;
   viewTabs: ViewTab[];
   activeViewTabId: string;
-  /// Performance tools open in the right sidebar (order = tab order); empty ⇒ the sidebar is
-  /// closed. Session-only — opened from the Topbar wrench menu.
-  rightTools: RightTool[];
-  activeRightTool: RightTool | null;
-  /// Tools open in the bottom dock (order = tab order); empty ⇒ the dock is closed.
-  /// Session-only — opened from the Topbar timeline button. Parallel to rightTools.
-  bottomTools: BottomTool[];
-  activeBottomTool: BottomTool | null;
+  /// One dock-layout tree PER main-tab kind (Scene, asset editor). The two kinds carry
+  /// disjoint `DockPanelId` spaces, so a panel can never resolve into the other island's
+  /// tree — the structural no-cross-main-tab guarantee. Region emptiness (a leaf's
+  /// `tabs.length`) drives the Scene-region mount/unmount, replacing the old tool slices.
+  dockLayouts: Record<DockSpaceKind, DockLayout>;
+  /// Unreal-style re-open memory: the leaf each panel last lived in, so `openPanel`
+  /// returns it home. Written by `closePanel` and `movePanel`.
+  lastLocation: Partial<Record<DockPanelId, DockNodeId>>;
   environment: Environment | null;
   renderStats: RenderStats | null;
   /// Performance-telemetry slices (phases 1-4), filled by the gated metrics poll only
@@ -213,6 +237,13 @@ export interface EditorState {
   /// UI flows (e.g. the project menu's Reload Project). Toggled by the hidden gesture
   /// in the titlebar; read by any panel that wants a dev-only affordance.
   devMode: boolean;
+  /// Per-main-tab undo/redo history, keyed by `ViewTab.id` (the scene tab owns the
+  /// scene-edit history; each material-graph tab owns its own). Read-only tabs never
+  /// get an entry. Editor-only — the engine is unaware undo exists.
+  historyByTab: Record<string, TabHistory>;
+  /// True while an undo/redo replay's inverse command is in flight; suppresses
+  /// re-recording (a replay must not record itself) and re-entrancy.
+  historyReplaying: boolean;
 
   setEntities(entities: EntityListEntry[]): void;
   /// Optimistically rename one entity's hierarchy row between polls (inline rename).
@@ -223,7 +254,6 @@ export interface EditorState {
   selectEntity(id: string): void;
   toggleExpanded(id: string): void;
   setExpanded(id: string, expanded: boolean): void;
-  setBottomTab(bottomTab: BottomTab): void;
   /// Engine-authoritative reparent (null detaches to root): optimistically relink the
   /// moved entity's parentId in place — selection untouched — and hold dragActive over
   /// the round trip so the poll cannot clobber the relink. A rejection falls back to
@@ -287,16 +317,25 @@ export interface EditorState {
   closeViewTab(id: string): void;
   setActiveViewTab(id: string): void;
   moveViewTab(id: string, index: number): void;
-  /// Open (or focus) a performance tool in the right sidebar.
-  openRightTool(tool: RightTool): void;
-  /// Close a right-sidebar tool; reassigns the active tool (or closes the sidebar).
-  closeRightTool(tool: RightTool): void;
-  setActiveRightTool(tool: RightTool): void;
-  /// Open (or focus) a tool in the bottom dock.
-  openBottomTool(tool: BottomTool): void;
-  /// Close a bottom-dock tool; reassigns the active tool (or closes the dock).
-  closeBottomTool(tool: BottomTool): void;
-  setActiveBottomTool(tool: BottomTool): void;
+  /// Focus-or-open a panel: activate it if already open, else resolve a leaf
+  /// (last-location ⇒ default ⇒ first non-locked ⇒ a fresh leaf) and insert it.
+  openPanel(id: DockPanelId): void;
+  /// Close a panel; the active tab falls back to the index−1 neighbor and the leaf is
+  /// remembered in `lastLocation`.
+  closePanel(id: DockPanelId): void;
+  /// Make an already-open panel its leaf's active tab (no-op when closed).
+  activatePanel(id: DockPanelId): void;
+  /// Move a panel to a drop target (tab-merge or split), then normalize.
+  movePanel(id: DockPanelId, target: DropTarget): void;
+  /// Reorder a tab within its leaf; `index` is in the without-moving-tab space.
+  reorderTab(leafId: DockNodeId, id: DockPanelId, index: number): void;
+  /// Persist a branch's child sizes (the rrp `onLayoutChanged` round-trip).
+  setBranchSizes(branchId: DockNodeId, sizes: Record<string, number>): void;
+  /// Reset one island's dock tree to its default factory.
+  resetDockLayout(kind: DockSpaceKind): void;
+  /// Load both dock trees + last-location memory from the per-project key (validated;
+  /// per-kind fallback to the default factory). No-op without a loaded project.
+  hydrateDockLayouts(): void;
   setEnvironment(environment: Environment | null): void;
   /// Set the selected rig's animation state and available clips together (poll-driven).
   setAnimationState(state: AnimationStateResult | null, clips: AnimationClipDto[]): void;
@@ -355,6 +394,22 @@ export interface EditorState {
   setSettingsOpen(settingsOpen: boolean): void;
   /// Set developer mode and persist it (localStorage, like the view-preference toggles).
   setDevMode(devMode: boolean): void;
+  /// Record an edit onto a tab's history (default: the active tab). No-ops on a
+  /// read-only tab and while a replay is in flight.
+  pushEdit(edit: UndoableEdit, tabId?: string): void;
+  /// Replay the next undo on a tab's history (default: the active tab).
+  undo(tabId?: string): Promise<void>;
+  /// Replay the next redo on a tab's history (default: the active tab).
+  redo(tabId?: string): Promise<void>;
+  /// Open a gesture transaction: capture `prior` now and push exactly one entry at
+  /// `commit` (the drag/scrub end), so a burst of ticks becomes one undo entry.
+  beginEdit<T>(opts: { prior: T; selectionId?: string }): {
+    commit(final: T, build: (prior: T, final: T) => UndoableEdit): void;
+  };
+  /// Drop one tab's history (on tab close).
+  clearTabHistory(tabId: string): void;
+  /// Drop the scene history and every orphaned non-scene history (on scene replace).
+  clearSceneHistory(): void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -362,7 +417,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   selectedId: null,
   selectedMaterialId: null,
   expandedIds: new Set<string>(),
-  bottomTab: "inspector",
   sceneVersion: -1,
   selectionVersion: -1,
   componentsBySelected: null,
@@ -374,10 +428,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   assetMarqueeActive: false,
   viewTabs: [{ id: "scene", kind: "scene", title: "Scene", closable: false }],
   activeViewTabId: "scene",
-  rightTools: [],
-  activeRightTool: null,
-  bottomTools: [],
-  activeBottomTool: null,
+  dockLayouts: defaultDockLayouts(),
+  lastLocation: {},
   environment: null,
   renderStats: null,
   perfConfig: null,
@@ -413,6 +465,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   keyBindings: {},
   settingsOpen: false,
   devMode: loadDevMode(),
+  historyByTab: {},
+  historyReplaying: false,
 
   setEntities: (entities) =>
     set((s) => {
@@ -459,7 +513,6 @@ export const useEditorStore = create<EditorState>((set) => ({
       persistExpanded(expandedIds);
       return { expandedIds };
     }),
-  setBottomTab: (bottomTab) => set({ bottomTab }),
   setParent: async (id, parentId) => {
     const previous = useEditorStore.getState().entities.find((e) => e.id === id)?.parentId;
     useEditorStore.getState().setDragActive(true);
@@ -470,6 +523,15 @@ export const useEditorStore = create<EditorState>((set) => ({
     }));
     try {
       await client.setParent(id, parentId);
+      useEditorStore.getState().pushEdit(
+        {
+          label: "Reparent",
+          selectionId: id,
+          undo: () => client.setParent(id, previous ?? null),
+          redo: () => client.setParent(id, parentId),
+        },
+        "scene",
+      );
     } catch (err) {
       // A rejected reparent never bumps sceneVersion, so the poll will not restore
       // the row — roll the optimistic relink back by hand.
@@ -527,6 +589,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   // surfaces it through notifyError (the AGENTS toast rule); they refresh the catalog on success.
   instantiateModel: async (modelId, name) => {
     const entity = await client.instantiateModel(modelId, name);
+    if (entity.id) {
+      recordEntityCreation(entity.id, "Add to scene");
+    }
     return entity.id ?? null;
   },
   extractSubAsset: async (modelId, subAssetId) => {
@@ -729,7 +794,13 @@ export const useEditorStore = create<EditorState>((set) => ({
         s.activeViewTabId === id
           ? (viewTabs[Math.max(0, index - 1)]?.id ?? "scene")
           : s.activeViewTabId;
-      return { viewTabs, activeViewTabId };
+      const patch: Partial<EditorState> = { viewTabs, activeViewTabId };
+      if (id in s.historyByTab) {
+        const historyByTab = { ...s.historyByTab };
+        delete historyByTab[id];
+        patch.historyByTab = historyByTab;
+      }
+      return patch;
     }),
   setActiveViewTab: (id) =>
     set((s) => (s.viewTabs.some((tab) => tab.id === id) ? { activeViewTabId: id } : {})),
@@ -748,46 +819,90 @@ export const useEditorStore = create<EditorState>((set) => ({
         viewTabs: [...without.slice(0, nextIndex), moving, ...without.slice(nextIndex)],
       };
     }),
-  openRightTool: (tool) =>
-    set((s) => ({
-      rightTools: s.rightTools.includes(tool) ? s.rightTools : [...s.rightTools, tool],
-      activeRightTool: tool,
-    })),
-  closeRightTool: (tool) =>
+  openPanel: (id) =>
     set((s) => {
-      const index = s.rightTools.indexOf(tool);
-      if (index < 0) {
+      const kind = panelKind(id);
+      const resolved = openPanelResolve(s.dockLayouts[kind], id, {
+        defaultLeafId: DEFAULT_LEAF[id],
+        lastLeafId: s.lastLocation[id],
+      });
+      return { dockLayouts: { ...s.dockLayouts, [kind]: resolved.layout } };
+    }),
+  closePanel: (id) =>
+    set((s) => {
+      const kind = panelKind(id);
+      const leafId = findPanelLeaf(s.dockLayouts[kind], id);
+      if (leafId === null) {
         return {};
       }
-      const rightTools = s.rightTools.filter((t) => t !== tool);
-      const activeRightTool =
-        s.activeRightTool === tool
-          ? (rightTools[Math.max(0, index - 1)] ?? null)
-          : s.activeRightTool;
-      return { rightTools, activeRightTool };
+      const layout = normalize(removePanel(s.dockLayouts[kind], id));
+      return {
+        dockLayouts: { ...s.dockLayouts, [kind]: layout },
+        lastLocation: { ...s.lastLocation, [id]: leafId },
+      };
     }),
-  setActiveRightTool: (tool) =>
-    set((s) => (s.rightTools.includes(tool) ? { activeRightTool: tool } : {})),
-  openBottomTool: (tool) =>
-    set((s) => ({
-      bottomTools: s.bottomTools.includes(tool) ? s.bottomTools : [...s.bottomTools, tool],
-      activeBottomTool: tool,
-    })),
-  closeBottomTool: (tool) =>
+  activatePanel: (id) =>
     set((s) => {
-      const index = s.bottomTools.indexOf(tool);
-      if (index < 0) {
+      const kind = panelKind(id);
+      const layout = setLeafActiveTab(s.dockLayouts[kind], id);
+      return layout === s.dockLayouts[kind]
+        ? {}
+        : { dockLayouts: { ...s.dockLayouts, [kind]: layout } };
+    }),
+  movePanel: (id, target) =>
+    set((s) => {
+      const kind = panelKind(id);
+      const layout = movePanelInLayout(s.dockLayouts[kind], id, target);
+      const leafId = findPanelLeaf(layout, id);
+      return {
+        dockLayouts: { ...s.dockLayouts, [kind]: layout },
+        lastLocation: leafId ? { ...s.lastLocation, [id]: leafId } : s.lastLocation,
+      };
+    }),
+  reorderTab: (leafId, id, index) =>
+    set((s) => {
+      const kind = panelKind(id);
+      return {
+        dockLayouts: {
+          ...s.dockLayouts,
+          [kind]: reorderTabInLayout(s.dockLayouts[kind], leafId, id, index),
+        },
+      };
+    }),
+  setBranchSizes: (branchId, sizes) =>
+    set((s) => {
+      const kind: DockSpaceKind = hasNode(s.dockLayouts.scene, branchId) ? "scene" : "assetEditor";
+      return {
+        dockLayouts: {
+          ...s.dockLayouts,
+          [kind]: setBranchSizesInLayout(s.dockLayouts[kind], branchId, sizes),
+        },
+      };
+    }),
+  resetDockLayout: (kind) =>
+    set((s) => ({ dockLayouts: { ...s.dockLayouts, [kind]: defaultDockLayout(kind) } })),
+  hydrateDockLayouts: () =>
+    set((s) => {
+      const loaded = loadDockLayouts(s.project?.path);
+      if (!loaded) {
         return {};
       }
-      const bottomTools = s.bottomTools.filter((t) => t !== tool);
-      const activeBottomTool =
-        s.activeBottomTool === tool
-          ? (bottomTools[Math.max(0, index - 1)] ?? null)
-          : s.activeBottomTool;
-      return { bottomTools, activeBottomTool };
+      // Validate, then reject a tree that lacks a structural panel — i.e. one saved by a
+      // build before those panels joined the tree — for the default. No layout migration.
+      const accept = (raw: DockLayout | undefined, kind: DockSpaceKind): DockLayout => {
+        const validated = raw ? validateLayout(raw, knownPanelIds(kind)) : null;
+        return validated && hasRequiredPanels(validated, kind)
+          ? validated
+          : defaultDockLayout(kind);
+      };
+      const scene = accept(loaded.layouts?.scene, "scene");
+      const assetEditor = accept(loaded.layouts?.assetEditor, "assetEditor");
+      const lastLocation = {
+        ...pruneLastLocation(scene, loaded.lastLocation),
+        ...pruneLastLocation(assetEditor, loaded.lastLocation),
+      };
+      return { dockLayouts: { scene, assetEditor }, lastLocation };
     }),
-  setActiveBottomTool: (tool) =>
-    set((s) => (s.bottomTools.includes(tool) ? { activeBottomTool: tool } : {})),
   setEnvironment: (environment) => set({ environment }),
   setAnimationState: (animationState, animationClips) => set({ animationState, animationClips }),
   setRenderStats: (renderStats) => set({ renderStats }),
@@ -885,6 +1000,9 @@ export const useEditorStore = create<EditorState>((set) => ({
       // One-shot UI intent; never meaningful across a scene swap. The subrows
       // toggle survives — it is a view preference, not scene state.
       focusComponent: null,
+      // Every captured prior value is stale against the loaded scene, and the rebuilt
+      // viewTabs drop every non-scene tab; clear all per-tab history.
+      historyByTab: {},
     });
   },
   setEngineStatus: (patch) => set((s) => ({ engineStatus: { ...s.engineStatus, ...patch } })),
@@ -972,7 +1090,169 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
       return { devMode };
     }),
+  pushEdit: (edit, tabId) =>
+    set((s) => {
+      if (s.historyReplaying) {
+        return {};
+      }
+      const id = tabId ?? s.activeViewTabId;
+      if (!isHistoryTab(s.viewTabs, id)) {
+        return {};
+      }
+      // The scene tab edits a throwaway duplicate during play; those edits are discarded
+      // on Stop, so they never enter the authored-scene history (which is preserved, not
+      // cleared, across a play session).
+      if (id === "scene" && s.playState !== "edit") {
+        return {};
+      }
+      const history = s.historyByTab[id] ?? emptyHistory();
+      return { historyByTab: { ...s.historyByTab, [id]: appendEdit(history, edit) } };
+    }),
+  undo: (tabId) => replayHistory("undo", tabId),
+  redo: (tabId) => replayHistory("redo", tabId),
+  beginEdit: ({ prior, selectionId }) => ({
+    commit: (final, build) => {
+      const edit = build(prior, final);
+      if (selectionId !== undefined && edit.selectionId === undefined) {
+        edit.selectionId = selectionId;
+      }
+      useEditorStore.getState().pushEdit(edit);
+    },
+  }),
+  clearTabHistory: (tabId) =>
+    set((s) => {
+      if (!(tabId in s.historyByTab)) {
+        return {};
+      }
+      const historyByTab = { ...s.historyByTab };
+      delete historyByTab[tabId];
+      return { historyByTab };
+    }),
+  clearSceneHistory: () => set((s) => ({ historyByTab: sceneHistoryCleared(s) })),
 }));
+
+/// True when a panel is open in its island's tree (in any leaf, active or not). The
+/// metrics poll keys on *open*, not *active*, so a hidden-but-mounted Stats panel keeps
+/// polling. Use as a selector: `useEditorStore((s) => isPanelOpen(s, "stats"))`.
+export function isPanelOpen(state: EditorState, id: DockPanelId): boolean {
+  return isPanelOpenIn(state.dockLayouts[panelKind(id)], id);
+}
+
+// The one viewport re-glue path for every dock mutation: a `dockLayouts` identity change
+// fires a forced layout-settled on the next frame, so no open/close/move/drop/reset/load
+// call site can forget to re-commit the subsurface bounds. Over-emitting is harmless —
+// the inactive island's host sits at 0×0 and computeBounds skips degenerate rects.
+let lastDockLayouts = useEditorStore.getState().dockLayouts;
+useEditorStore.subscribe((s) => {
+  if (s.dockLayouts !== lastDockLayouts) {
+    lastDockLayouts = s.dockLayouts;
+    requestAnimationFrame(() => emitLayoutSettled({ force: true }));
+  }
+});
+
+// Debounced dock persistence: any change to the trees or last-location memory writes the
+// per-project key ~300 ms later (coalescing rapid drags). No-op without a loaded project.
+let lastPersistedDock = useEditorStore.getState().dockLayouts;
+let lastPersistedLoc = useEditorStore.getState().lastLocation;
+let dockPersistTimer: ReturnType<typeof setTimeout> | undefined;
+useEditorStore.subscribe((s) => {
+  if (s.dockLayouts === lastPersistedDock && s.lastLocation === lastPersistedLoc) {
+    return;
+  }
+  lastPersistedDock = s.dockLayouts;
+  lastPersistedLoc = s.lastLocation;
+  clearTimeout(dockPersistTimer);
+  dockPersistTimer = setTimeout(() => {
+    const state = useEditorStore.getState();
+    persistDockLayouts(state.project?.path, state.dockLayouts, state.lastLocation);
+  }, 300);
+});
+
+/// The tab kinds whose edits feed an undo history — the editable surfaces. A viewer
+/// kind (`flamegraph`/`imageViewer`) or any future kind defaults out, so only an
+/// editable tab ever records; the asset editor is in by design.
+const HISTORY_TAB_KINDS = new Set<ViewTab["kind"]>(["scene", "materialGraph", "assetEditor"]);
+
+/// True when a tab id resolves to a live, editable tab that records history.
+function isHistoryTab(viewTabs: ViewTab[], id: string): boolean {
+  const tab = viewTabs.find((t) => t.id === id);
+  return tab !== undefined && HISTORY_TAB_KINDS.has(tab.kind);
+}
+
+/// The historyByTab with the scene history and every orphaned non-scene history dropped,
+/// keeping live non-scene (e.g. material-graph) tabs. Shared by the scene-swap
+/// invalidation and the play-enter transition.
+function sceneHistoryCleared(s: EditorState): Record<string, TabHistory> {
+  const live = new Set(s.viewTabs.map((tab) => tab.id));
+  const next: Record<string, TabHistory> = {};
+  for (const [id, history] of Object.entries(s.historyByTab)) {
+    if (id !== "scene" && live.has(id)) {
+      next[id] = history;
+    }
+  }
+  return next;
+}
+
+/// Resolve and replay the next undo/redo on a tab's history. Holds `historyReplaying`
+/// over the in-flight inverse so no edit site records the replay, moves the entry
+/// between stacks regardless of success (a half-applied replay is repaired by the
+/// reconcile poll), and surfaces a rejection through the toast path.
+async function replayHistory(direction: "undo" | "redo", tabId?: string): Promise<void> {
+  const store = useEditorStore.getState();
+  const id = tabId ?? store.activeViewTabId;
+  // Undo/redo edits the authored scene; while playing, the scene tab targets the
+  // throwaway play duplicate, so it is paused until Stop (the history is untouched).
+  if (id === "scene" && store.playState !== "edit") {
+    return;
+  }
+  const history = store.historyByTab[id];
+  if (history === undefined) {
+    return;
+  }
+  const taken = direction === "undo" ? takeUndo(history) : takeRedo(history);
+  if (taken === null) {
+    return;
+  }
+  useEditorStore.setState({ historyReplaying: true });
+  try {
+    await (direction === "undo" ? taken.edit.undo() : taken.edit.redo());
+  } catch (err) {
+    notifyError(errorText(err));
+    console.error(`${direction} rejected:`, err);
+  } finally {
+    useEditorStore.setState((s) => ({
+      historyByTab: { ...s.historyByTab, [id]: taken.next },
+      historyReplaying: false,
+    }));
+    restoreSelectionContext(id, taken.edit);
+  }
+}
+
+/// After a scene-tab replay, land selection back on the entity the edit touched so
+/// the gizmo follows it. Only the scene tab carries entity selectionIds; other tabs'
+/// ids are not entities, so they are left untouched.
+function restoreSelectionContext(tabId: string, edit: UndoableEdit): void {
+  if (tabId !== "scene" || edit.selectionId === undefined) {
+    return;
+  }
+  useEditorStore.getState().setSelectedId(edit.selectionId);
+  void client.selectEntity(edit.selectionId).catch(() => {});
+}
+
+/// Record an entity-creation edit (undo-only: undo destroys the entity; redo is
+/// dropped, since re-creation would mint a new id). Shared by every creation site.
+export function recordEntityCreation(entityId: string, label: string): void {
+  useEditorStore.getState().pushEdit(
+    {
+      label,
+      redoable: false,
+      selectionId: entityId,
+      undo: () => client.destroyEntity(entityId),
+      redo: () => Promise.resolve(),
+    },
+    "scene",
+  );
+}
 
 /// Fire-and-forget settings write; the in-memory state stays applied on rejection
 /// (the global shortcut hook has no panel to flash, so the failure goes to the console).
@@ -1070,101 +1350,51 @@ function loadExpanded(path: string): Set<string> {
   return new Set<string>();
 }
 
-/// Sidebar-width persistence, keyed by project path like the expand-state (the
-/// dock split ratios persist separately via react-resizable-panels' useDefaultLayout).
-const SIDEBAR_WIDTH_STORAGE_PREFIX = "saffron.layout.sidebarWidth:";
+/// Dock-layout persistence: both island trees + last-location memory under one per-project
+/// key, written debounced on any dock mutation, validated on load. No-op without a project
+/// (session-only before one loads). Phase 07 retires the sidebar-width helpers below; this
+/// subsumes them.
+const DOCK_LAYOUT_STORAGE_PREFIX = "saffron.layout.dock:";
 
-export function persistSidebarWidth(path: string | undefined, width: number): void {
+interface PersistedDockLayouts {
+  version: 1;
+  layouts: Record<DockSpaceKind, DockLayout>;
+  lastLocation: Partial<Record<DockPanelId, DockNodeId>>;
+}
+
+export function persistDockLayouts(
+  path: string | undefined,
+  layouts: Record<DockSpaceKind, DockLayout>,
+  lastLocation: Partial<Record<DockPanelId, DockNodeId>>,
+): void {
   if (!path) {
     return;
   }
   try {
-    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_PREFIX + path, String(Math.round(width)));
+    const payload: PersistedDockLayouts = { version: 1, layouts, lastLocation };
+    localStorage.setItem(DOCK_LAYOUT_STORAGE_PREFIX + path, JSON.stringify(payload));
   } catch {
-    // Storage may be unavailable (private mode); the width is then session-only.
+    // Storage may be unavailable (private mode); the layout is then session-only.
   }
 }
 
-export function loadSidebarWidth(path: string | undefined): number | null {
+function loadDockLayouts(path: string | undefined): PersistedDockLayouts | null {
   if (!path) {
     return null;
   }
   try {
-    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_PREFIX + path);
-    if (raw !== null) {
-      const width = Number(raw);
-      if (Number.isFinite(width)) {
-        return width;
-      }
+    const raw = localStorage.getItem(DOCK_LAYOUT_STORAGE_PREFIX + path);
+    if (!raw) {
+      return null;
     }
+    const parsed = JSON.parse(raw) as PersistedDockLayouts;
+    if (parsed?.version !== 1 || !parsed.layouts) {
+      return null;
+    }
+    return parsed;
   } catch {
-    // Fall through to the default.
-  }
-  return null;
-}
-
-/// Right-sidebar (perf tools) width persistence, mirroring the left sidebar.
-const RIGHT_SIDEBAR_WIDTH_STORAGE_PREFIX = "saffron.layout.rightSidebarWidth:";
-
-export function persistRightSidebarWidth(path: string | undefined, width: number): void {
-  if (!path) {
-    return;
-  }
-  try {
-    localStorage.setItem(RIGHT_SIDEBAR_WIDTH_STORAGE_PREFIX + path, String(Math.round(width)));
-  } catch {
-    // Storage may be unavailable (private mode); the width is then session-only.
-  }
-}
-
-export function loadRightSidebarWidth(path: string | undefined): number | null {
-  if (!path) {
     return null;
   }
-  try {
-    const raw = localStorage.getItem(RIGHT_SIDEBAR_WIDTH_STORAGE_PREFIX + path);
-    if (raw !== null) {
-      const width = Number(raw);
-      if (Number.isFinite(width)) {
-        return width;
-      }
-    }
-  } catch {
-    // Fall through to the default.
-  }
-  return null;
-}
-
-/// Bottom-dock (timeline) height persistence, mirroring the right-sidebar width.
-const BOTTOM_DOCK_HEIGHT_STORAGE_PREFIX = "saffron.layout.bottomDockHeight:";
-
-export function persistBottomDockHeight(path: string | undefined, height: number): void {
-  if (!path) {
-    return;
-  }
-  try {
-    localStorage.setItem(BOTTOM_DOCK_HEIGHT_STORAGE_PREFIX + path, String(Math.round(height)));
-  } catch {
-    // Storage may be unavailable (private mode); the height is then session-only.
-  }
-}
-
-export function loadBottomDockHeight(path: string | undefined): number | null {
-  if (!path) {
-    return null;
-  }
-  try {
-    const raw = localStorage.getItem(BOTTOM_DOCK_HEIGHT_STORAGE_PREFIX + path);
-    if (raw !== null) {
-      const height = Number(raw);
-      if (Number.isFinite(height)) {
-        return height;
-      }
-    }
-  } catch {
-    // Fall through to the default.
-  }
-  return null;
 }
 
 /// The component-subrows toggle is a view preference (one key, unlike the
@@ -1386,6 +1616,9 @@ export function startReconcile(client: Client): () => void {
         if (sceneChanged) {
           if (sceneVersion < previousSceneVersion) {
             invalidateThumbnails();
+            // A backwards version step is a different scene loaded under us; the captured
+            // prior values are stale, so drop the scene history (graph tabs survive).
+            useEditorStore.getState().clearSceneHistory();
           }
           void useEditorStore.getState().refreshAssets();
           client
@@ -1514,7 +1747,7 @@ export function startReconcile(client: Client): () => void {
         useEditorStore.getState().setPerfConfig(config);
       }
 
-      if (useEditorStore.getState().rightTools.includes("stats")) {
+      if (isPanelOpen(useEditorStore.getState(), "stats")) {
         const history = await client.frameHistory(FRAME_HISTORY_SAMPLES);
         if (stopped) {
           return;
