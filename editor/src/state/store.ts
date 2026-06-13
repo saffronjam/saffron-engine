@@ -18,6 +18,7 @@ import {
   type UndoableEdit,
 } from "../lib/undo";
 import { emitLayoutSettled } from "../app/layoutBus";
+import { getDockDrag } from "../components/dock/dockDrag";
 import {
   DEFAULT_LEAF,
   type DockLayout,
@@ -25,6 +26,7 @@ import {
   type DockPanelId,
   type DockSpaceKind,
   type DropTarget,
+  allOpenPanels,
   defaultDockLayout,
   defaultDockLayouts,
   findPanelLeaf,
@@ -39,6 +41,7 @@ import {
   pruneLastLocation,
   removePanel,
   reorderTab as reorderTabInLayout,
+  resetLayoutPreservingOpen,
   setBranchSizes as setBranchSizesInLayout,
   setLeafActiveTab,
   validate as validateLayout,
@@ -191,6 +194,11 @@ export interface EditorState {
   uiFrameMs: number;
   engineStatus: EngineStatus;
   dragActive: boolean;
+  /// True only when the engine is confirmed rendering the authored scene view, so the reconcile poll may
+  /// write `entities` (the Scene hierarchy source). Held false while an asset-editor tab is active and
+  /// through a view switch until set-active-view resolves, so the preview scene's entities never reach
+  /// the Scene hierarchy and the asset→scene switch shows no one-frame stale list. App.tsx drives it.
+  sceneEntitiesLive: boolean;
   gizmo: GizmoState;
   /// Editor play mode, mirrored from the engine via the reconcile poll
   /// (get-selection carries playState/playVersion; the poll dedups on the version).
@@ -332,7 +340,7 @@ export interface EditorState {
   /// Persist a branch's child sizes (the rrp `onLayoutChanged` round-trip).
   setBranchSizes(branchId: DockNodeId, sizes: Record<string, number>): void;
   /// Reset one island's dock tree to its default factory.
-  resetDockLayout(kind: DockSpaceKind): void;
+  resetDockLayout(): void;
   /// Load both dock trees + last-location memory from the per-project key (validated;
   /// per-kind fallback to the default factory). No-op without a loaded project.
   hydrateDockLayouts(): void;
@@ -373,6 +381,7 @@ export interface EditorState {
   setEngineStatus(patch: Partial<EngineStatus>): void;
   setPhase(phase: EnginePhase, error?: string): void;
   setDragActive(dragActive: boolean): void;
+  setSceneEntitiesLive(live: boolean): void;
   setGizmo(patch: Partial<GizmoState>): void;
   /// Optimistic play-state write (the reconcile poll repairs it from the engine).
   setPlayState(playState: PlayState): void;
@@ -453,6 +462,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   uiFrameMs: 0,
   engineStatus: { running: false, phase: "idle" },
   dragActive: false,
+  // True at startup: the scene view is the active view from the first frame, so authored entities load
+  // immediately. App.tsx holds it false while an asset tab is active / during a view switch.
+  sceneEntitiesLive: true,
   gizmo: { op: "translate", space: "world", preserveChildren: false },
   playState: "edit",
   animationState: null,
@@ -871,6 +883,12 @@ export const useEditorStore = create<EditorState>((set) => ({
     }),
   setBranchSizes: (branchId, sizes) =>
     set((s) => {
+      // A torn drag renders an effective (panel-subtracted) layout whose collapse remounts an rrp
+      // group and fires `onLayoutChanged` with transient sizes — ignore those so they never reach
+      // the real tree; real resizes resume the moment the drag clears.
+      if (getDockDrag() !== null) {
+        return {};
+      }
       const kind: DockSpaceKind = hasNode(s.dockLayouts.scene, branchId) ? "scene" : "assetEditor";
       return {
         dockLayouts: {
@@ -879,8 +897,17 @@ export const useEditorStore = create<EditorState>((set) => ({
         },
       };
     }),
-  resetDockLayout: (kind) =>
-    set((s) => ({ dockLayouts: { ...s.dockLayouts, [kind]: defaultDockLayout(kind) } })),
+  resetDockLayout: () =>
+    set((s) => ({
+      dockLayouts: {
+        scene: resetLayoutPreservingOpen("scene", allOpenPanels(s.dockLayouts.scene)),
+        assetEditor: resetLayoutPreservingOpen(
+          "assetEditor",
+          allOpenPanels(s.dockLayouts.assetEditor),
+        ),
+      },
+      lastLocation: {},
+    })),
   hydrateDockLayouts: () =>
     set((s) => {
       const loaded = loadDockLayouts(s.project?.path);
@@ -1016,6 +1043,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       },
     })),
   setDragActive: (dragActive) => set({ dragActive }),
+  setSceneEntitiesLive: (sceneEntitiesLive) => set({ sceneEntitiesLive }),
   // Keeps the object identity when the patch changes nothing, so the reconcile
   // poll confirming an unchanged gizmo doesn't re-render every subscriber.
   setGizmo: (patch) =>
@@ -1413,9 +1441,12 @@ const HIDE_BONES_STORAGE_KEY = "saffron.hideBones";
 
 function loadHideBones(): boolean {
   try {
-    return localStorage.getItem(HIDE_BONES_STORAGE_KEY) === "1";
+    // Default hidden: skeleton bones belong in the asset/rig editor, not the scene
+    // outliner (the UE5/Godot convention). An explicit "0" opts back into showing them.
+    const raw = localStorage.getItem(HIDE_BONES_STORAGE_KEY);
+    return raw === null ? true : raw === "1";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -1624,8 +1655,9 @@ export function startReconcile(client: Client): () => void {
           client
             .getEnvironment()
             .then((env) => {
-              if (!stopped && !useEditorStore.getState().dragActive) {
-                useEditorStore.getState().setEnvironment(env);
+              const s = useEditorStore.getState();
+              if (!stopped && !s.dragActive && s.sceneEntitiesLive) {
+                s.setEnvironment(env);
               }
             })
             .catch(() => {});
@@ -1634,14 +1666,19 @@ export function startReconcile(client: Client): () => void {
           if (stopped) {
             return;
           }
-          if (!useEditorStore.getState().dragActive) {
-            useEditorStore.getState().setEntities(list.entities);
+          // Only write the Scene hierarchy when the scene view is the confirmed active view — never the
+          // preview scene's entities (asset tab active), and never mid-switch (sceneEntitiesLive false
+          // until set-active-view resolves), so the asset→scene switch shows no stale preview-entity frame.
+          const live = useEditorStore.getState();
+          if (!live.dragActive && live.sceneEntitiesLive) {
+            live.setEntities(list.entities);
           }
         }
 
         if (selectedId === null) {
-          if (!useEditorStore.getState().dragActive) {
-            useEditorStore.getState().setComponentsBySelected(null);
+          const s = useEditorStore.getState();
+          if (!s.dragActive && s.sceneEntitiesLive) {
+            s.setComponentsBySelected(null);
           }
           return;
         }
@@ -1650,8 +1687,11 @@ export function startReconcile(client: Client): () => void {
         if (stopped) {
           return;
         }
-        if (!useEditorStore.getState().dragActive) {
-          useEditorStore.getState().setComponentsBySelected(inspected);
+        // Freeze the inspector on the authored selection while the preview view is active / mid-switch,
+        // so it never flashes the previewed entity's components when the scene tab reappears.
+        const s = useEditorStore.getState();
+        if (!s.dragActive && s.sceneEntitiesLive) {
+          s.setComponentsBySelected(inspected);
         }
       } catch {
       } finally {
@@ -1851,7 +1891,11 @@ export function startReconcile(client: Client): () => void {
 
       live.setSelectionVersion(selection.selectionVersion);
       live.setSceneVersion(selection.sceneVersion);
-      if (selectionChanged) {
+      // Only mirror the selection into the Scene dock when the scene view is the confirmed active view —
+      // never the preview scene's selection (asset tab active / mid-switch), so the inspector doesn't
+      // flash the previewed entity on the asset→scene switch. The version stamps above still advance so
+      // the next post-switch poll picks up the authored selection.
+      if (selectionChanged && live.sceneEntitiesLive) {
         live.setSelectedId(nextSelectedId);
       }
 
