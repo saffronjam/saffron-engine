@@ -334,6 +334,74 @@ namespace
                         result.value("hasPrimaryCamera", false) ? "ok" : "missing");
             return;
         }
+        if (cmd == "physics-state")
+        {
+            std::printf("physics=%s  bodies=%d  dynamic=%d\n", result.value("active", false) ? "active" : "inactive",
+                        result.value("bodyCount", 0), result.value("dynamicCount", 0));
+            return;
+        }
+        if (cmd == "fit-collider")
+        {
+            const json he = result.value("halfExtents", json::object());
+            const json off = result.value("offset", json::object());
+            std::printf("fitted %s  entity=%s  halfExtents=(%.3f, %.3f, %.3f)  offset=(%.3f, %.3f, %.3f)\n",
+                        result.value("shape", "").c_str(), result.value("entity", std::string{}).c_str(),
+                        he.value("x", 0.0), he.value("y", 0.0), he.value("z", 0.0), off.value("x", 0.0),
+                        off.value("y", 0.0), off.value("z", 0.0));
+            return;
+        }
+        if (cmd == "raycast" || cmd == "shapecast")
+        {
+            if (result.value("hit", false))
+            {
+                const json p = result.value("point", json::object());
+                const json n = result.value("normal", json::object());
+                std::printf("hit entity=%s  point=(%.3f, %.3f, %.3f)  normal=(%.2f, %.2f, %.2f)  dist=%.3f\n",
+                            result.value("entity", std::string{}).c_str(), p.value("x", 0.0), p.value("y", 0.0),
+                            p.value("z", 0.0), n.value("x", 0.0), n.value("y", 0.0), n.value("z", 0.0),
+                            result.value("distance", 0.0));
+            }
+            else
+            {
+                std::printf("no hit\n");
+            }
+            return;
+        }
+        if (cmd == "enable-ragdoll" || cmd == "set-ragdoll" || cmd == "get-ragdoll")
+        {
+            std::printf("ragdoll=%s  active=%s  bodyWeight=%.2f  bones=%d\n",
+                        result.value("present", false) ? "present" : "none",
+                        result.value("active", false) ? "yes" : "no", result.value("bodyWeight", 0.0),
+                        result.value("bones", 0));
+            return;
+        }
+        if (cmd == "move-character")
+        {
+            const json p = result.value("position", json::object());
+            std::printf("position=(%.3f, %.3f, %.3f)  onGround=%s\n", p.value("x", 0.0), p.value("y", 0.0),
+                        p.value("z", 0.0), result.value("onGround", false) ? "yes" : "no");
+            return;
+        }
+        if (cmd == "set-kinematic-bones")
+        {
+            std::printf("kinematic-bones=%s  entity=%s  bones=%d\n", result.value("enabled", false) ? "on" : "off",
+                        result.value("entity", std::string{}).c_str(), result.value("boneCount", 0));
+            return;
+        }
+        if (cmd == "drain-contacts")
+        {
+            const auto events = result.value("events", json::array());
+            for (const auto& e : events)
+            {
+                std::printf("  #%-5lld  %-6s %-6s  %s <-> %s\n", e.value("seq", 0LL), e.value("kind", "").c_str(),
+                            e.value("sensor", false) ? "sensor" : "solid", e.value("entityA", std::string{}).c_str(),
+                            e.value("entityB", std::string{}).c_str());
+            }
+            std::printf("  high=%lld  oldest=%lld  overflowed=%s  (%zu events)\n", result.value("highWaterSeq", 0LL),
+                        result.value("oldestSeq", 0LL), result.value("overflowed", false) ? "yes" : "no",
+                        events.size());
+            return;
+        }
         if (cmd == "viewport-native-info")
         {
             std::printf("%s  %s  %ux%u  sock=%s\n", result.value("status", "").c_str(),

@@ -27,6 +27,7 @@ import Saffron.Rendering;
 import Saffron.Scene;
 import Saffron.SceneEdit;
 import Saffron.Assets;
+import Saffron.Physics;
 
 namespace se
 {
@@ -153,6 +154,7 @@ namespace se
         registerSceneCommands(reg);
         registerAssetCommands(reg);
         registerAnimationCommands(reg);
+        registerPhysicsCommands(reg);
     }
 
     auto controlSocketPath() -> std::string
@@ -357,13 +359,13 @@ namespace se
     }
 
     void pollControl(ControlContext& ctx, Window& window, Renderer& renderer, SceneEditContext& editor,
-                     AssetServer& assets)
+                     AssetServer& assets, PhysicsWorld* physics)
     {
         if (!ctx.active)
         {
             return;
         }
-        EngineContext engine{ window, renderer, editor, assets };
+        EngineContext engine{ window, renderer, editor, assets, physics };
         drainControlServer(ctx.server, ctx.registry, engine);
     }
 }
