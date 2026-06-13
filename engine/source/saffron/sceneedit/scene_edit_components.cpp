@@ -120,5 +120,23 @@ namespace se
         // survives a round trip ahead of the physics phase.
         registerComponent<BonePhysicsComponent>(
             reg, "BonePhysics", [](Scene&, Entity) {}, bonePhysicsComponentToJson, bonePhysicsComponentFromJson, true);
+
+        // The split physics components. onAdd is a no-op here — the AABB auto-fit needs the asset +
+        // renderer handles the registry's (Scene&, Entity) hook can't reach, so `add-component` runs
+        // fitColliderToMesh after the default-construct (a Collider with no Rigidbody is static).
+        registerComponent<RigidbodyComponent>(
+            reg, "Rigidbody", [](Scene&, Entity) {}, rigidbodyComponentToJson, rigidbodyComponentFromJson, true);
+        registerComponent<ColliderComponent>(
+            reg, "Collider", [](Scene&, Entity) {}, colliderComponentToJson, colliderComponentFromJson, true);
+
+        // Opts a rig into kinematic-bone physics. onAdd is a no-op here — the per-bone capsule auto-fit
+        // needs the skeleton geometry, so set-kinematic-bones runs it from the control plane.
+        registerComponent<KinematicBonesComponent>(
+            reg, "KinematicBones", [](Scene&, Entity) {}, kinematicBonesComponentToJson,
+            kinematicBonesComponentFromJson, true);
+
+        registerComponent<CharacterControllerComponent>(
+            reg, "CharacterController", [](Scene&, Entity) {}, characterControllerComponentToJson,
+            characterControllerComponentFromJson, true);
     }
 }

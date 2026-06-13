@@ -174,6 +174,82 @@ export namespace se
         std::vector<BonePhysics> bones;
     };
 
+    // A simulated body. Motion type decides how the solver treats it: Dynamic moves under forces,
+    // Kinematic is script/animation-driven (infinite mass, pushes dynamics), Static never moves.
+    // A ColliderComponent WITHOUT a RigidbodyComponent is an implicit Static body (floors/walls);
+    // with one present, this motion type wins. Per-axis locks freeze a DOF on a Dynamic body.
+    struct RigidbodyComponent
+    {
+        enum class Motion : u8
+        {
+            Static,
+            Kinematic,
+            Dynamic
+        } motion = Motion::Dynamic;
+        f32 mass = 1.0f;            // kg; ignored for Static/Kinematic
+        f32 linearDamping = 0.05f;  // per-second velocity decay
+        f32 angularDamping = 0.05f;
+        f32 gravityFactor = 1.0f;          // 0 = float, 1 = full gravity
+        glm::bvec3 lockPosition{ false };  // freeze X/Y/Z translation
+        glm::bvec3 lockRotation{ false };  // freeze X/Y/Z rotation
+        i32 collisionLayer = 0;            // index into the (later) layer table; 0 = the default moving layer
+    };
+
+    // Friction/restitution for a collider's surface (the layers phase makes these load-bearing).
+    struct PhysicsMaterial
+    {
+        f32 friction = 0.5f;     // 0 = ice, 1 = rubber
+        f32 restitution = 0.0f;  // bounciness 0..1
+    };
+
+    // The collision geometry for an entity. Box-only this phase (Sphere/Capsule/ConvexHull/Mesh
+    // land with the shapes phase). Dimensions are interpreted per-shape; auto-fit to the entity
+    // mesh AABB on add, editable after. `offset` places the shape in the body's local space.
+    struct ColliderComponent
+    {
+        enum class Shape : u8
+        {
+            Box,
+            Sphere,
+            Capsule,
+            ConvexHull,
+            Mesh
+        } shape = Shape::Box;
+        glm::vec3 halfExtents{ 0.5f };  // Box: half-size; radius/height packed for other shapes (later)
+        Uuid sourceMesh;                // ConvexHull/Mesh cook source; 0 = none (Box ignores it)
+        glm::vec3 offset{ 0.0f };       // local-space shape centre offset
+        PhysicsMaterial material;
+        bool isSensor = false;  // trigger volume: reports overlaps, no contact response (later)
+    };
+
+    // Opt a SkinnedMesh rig into kinematic-bone physics: each driven joint gets a kinematic body that
+    // follows the animated pose each step, so a moving character shoves the world (binding mode b,
+    // animation -> physics; no pose write-back — that is the ragdoll). Per-bone collider sizes come
+    // from BonePhysicsComponent.bones[i].shapeHalfExtents, auto-fit on add (editable after).
+    struct KinematicBonesComponent
+    {
+        bool enabled = true;
+        std::vector<i32> driven;  // indices into SkinnedMeshComponent.bones; empty = every joint
+    };
+
+    // Marks an entity as a walking capsule character driven by a Jolt CharacterVirtual. The capsule
+    // is the entity's ColliderComponent (Shape::Capsule) — this carries only movement params. The
+    // controller drives the entity-root TransformComponent each step; animation plays independently
+    // on top (binding mode a). An entity with this never becomes a static body (the capsule is the
+    // CharacterVirtual's, not a world body).
+    struct CharacterControllerComponent
+    {
+        f32 maxSpeed = 4.0f;            // horizontal walk-speed cap, m/s
+        f32 maxSlopeAngle = 0.785398f;  // radians (~45°); steeper ground is a wall, not floor
+        f32 maxStepHeight = 0.3f;       // ledges/stairs up to this are stepped over
+        f32 gravityFactor = 1.0f;       // scales world gravity applied each step
+        // Runtime state (serialize as zero): the desired horizontal velocity move-character writes,
+        // the vertical velocity the controller integrates, and the last step's ground state.
+        glm::vec3 desiredVelocity{ 0.0f };
+        f32 verticalVelocity = 0.0f;
+        bool onGround = false;
+    };
+
     // References a mesh asset by stable id; the AssetServer resolves it to a GPU mesh.
     struct MeshComponent
     {
@@ -1047,6 +1123,16 @@ export namespace se
         return glm::vec3{ jsonF32Or(j, "x", 0.0f), jsonF32Or(j, "y", 0.0f), jsonF32Or(j, "z", 0.0f) };
     }
 
+    auto bvec3ToJson(const glm::bvec3& v) -> nlohmann::json
+    {
+        return nlohmann::json{ { "x", v.x }, { "y", v.y }, { "z", v.z } };
+    }
+
+    auto bvec3FromJson(const nlohmann::json& j) -> glm::bvec3
+    {
+        return glm::bvec3{ jsonBoolOr(j, "x", false), jsonBoolOr(j, "y", false), jsonBoolOr(j, "z", false) };
+    }
+
     auto vec4ToJson(const glm::vec4& v) -> nlohmann::json
     {
         return nlohmann::json{ { "x", v.x }, { "y", v.y }, { "z", v.z }, { "w", v.w } };
@@ -1092,6 +1178,14 @@ export namespace se
     auto footIkComponentFromJson(FootIkComponent& c, const nlohmann::json& j) -> Result<void>;
     auto bonePhysicsComponentToJson(const BonePhysicsComponent& c) -> nlohmann::json;
     auto bonePhysicsComponentFromJson(BonePhysicsComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto rigidbodyComponentToJson(const RigidbodyComponent& c) -> nlohmann::json;
+    auto rigidbodyComponentFromJson(RigidbodyComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto colliderComponentToJson(const ColliderComponent& c) -> nlohmann::json;
+    auto colliderComponentFromJson(ColliderComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto kinematicBonesComponentToJson(const KinematicBonesComponent& c) -> nlohmann::json;
+    auto kinematicBonesComponentFromJson(KinematicBonesComponent& c, const nlohmann::json& j) -> Result<void>;
+    auto characterControllerComponentToJson(const CharacterControllerComponent& c) -> nlohmann::json;
+    auto characterControllerComponentFromJson(CharacterControllerComponent& c, const nlohmann::json& j) -> Result<void>;
     auto environmentToJson(const SceneEnvironment& env) -> nlohmann::json;
     auto environmentFromJson(const nlohmann::json& j) -> SceneEnvironment;
 

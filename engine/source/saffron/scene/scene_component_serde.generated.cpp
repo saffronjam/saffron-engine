@@ -551,6 +551,142 @@ namespace se
         return {};
     }
 
+    auto rigidbodyComponentToJson(const RigidbodyComponent& c) -> nlohmann::json
+    {
+        auto motionName = [](RigidbodyComponent::Motion m) -> const char*
+        {
+            switch (m)
+            {
+                case RigidbodyComponent::Motion::Static: return "static";
+                case RigidbodyComponent::Motion::Kinematic: return "kinematic";
+                case RigidbodyComponent::Motion::Dynamic: return "dynamic";
+            }
+            return "dynamic";
+        };
+        return nlohmann::json{ { "motion", motionName(c.motion) },
+                               { "mass", c.mass },
+                               { "linearDamping", c.linearDamping },
+                               { "angularDamping", c.angularDamping },
+                               { "gravityFactor", c.gravityFactor },
+                               { "lockPosition", bvec3ToJson(c.lockPosition) },
+                               { "lockRotation", bvec3ToJson(c.lockRotation) },
+                               { "collisionLayer", c.collisionLayer } };
+    }
+
+    auto rigidbodyComponentFromJson(RigidbodyComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        auto motionFromName = [](const std::string& name) -> RigidbodyComponent::Motion
+        {
+            if (name == "static") { return RigidbodyComponent::Motion::Static; }
+            if (name == "kinematic") { return RigidbodyComponent::Motion::Kinematic; }
+            return RigidbodyComponent::Motion::Dynamic;
+        };
+        c.motion = motionFromName(jsonStringOr(j, "motion", std::string{ "dynamic" }));
+        c.mass = jsonF32Or(j, "mass", 1.0f);
+        c.linearDamping = jsonF32Or(j, "linearDamping", 0.05f);
+        c.angularDamping = jsonF32Or(j, "angularDamping", 0.05f);
+        c.gravityFactor = jsonF32Or(j, "gravityFactor", 1.0f);
+        c.lockPosition = bvec3FromJson(j.value("lockPosition", nlohmann::json::object()));
+        c.lockRotation = bvec3FromJson(j.value("lockRotation", nlohmann::json::object()));
+        c.collisionLayer = static_cast<i32>(j.value("collisionLayer", 0));
+        return {};
+    }
+
+    auto colliderComponentToJson(const ColliderComponent& c) -> nlohmann::json
+    {
+        auto shapeName = [](ColliderComponent::Shape s) -> const char*
+        {
+            switch (s)
+            {
+                case ColliderComponent::Shape::Box: return "box";
+                case ColliderComponent::Shape::Sphere: return "sphere";
+                case ColliderComponent::Shape::Capsule: return "capsule";
+                case ColliderComponent::Shape::ConvexHull: return "convexhull";
+                case ColliderComponent::Shape::Mesh: return "mesh";
+            }
+            return "box";
+        };
+        return nlohmann::json{ { "shape", shapeName(c.shape) },
+                               { "halfExtents", vec3ToJson(c.halfExtents) },
+                               { "sourceMesh", std::to_string(c.sourceMesh.value) },
+                               { "offset", vec3ToJson(c.offset) },
+                               { "material",
+                                 nlohmann::json{ { "friction", c.material.friction },
+                                                 { "restitution", c.material.restitution } } },
+                               { "isSensor", c.isSensor } };
+    }
+
+    auto colliderComponentFromJson(ColliderComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        auto shapeFromName = [](const std::string& name) -> ColliderComponent::Shape
+        {
+            if (name == "sphere") { return ColliderComponent::Shape::Sphere; }
+            if (name == "capsule") { return ColliderComponent::Shape::Capsule; }
+            if (name == "convexhull") { return ColliderComponent::Shape::ConvexHull; }
+            if (name == "mesh") { return ColliderComponent::Shape::Mesh; }
+            return ColliderComponent::Shape::Box;
+        };
+        c.shape = shapeFromName(jsonStringOr(j, "shape", std::string{ "box" }));
+        c.halfExtents = vec3FromJson(j.value("halfExtents", nlohmann::json::object()));
+        c.sourceMesh = Uuid{ u64FromJson(j.value("sourceMesh", nlohmann::json{})) };
+        c.offset = vec3FromJson(j.value("offset", nlohmann::json::object()));
+        const nlohmann::json material = j.value("material", nlohmann::json::object());
+        c.material.friction = jsonF32Or(material, "friction", 0.5f);
+        c.material.restitution = jsonF32Or(material, "restitution", 0.0f);
+        c.isSensor = jsonBoolOr(j, "isSensor", false);
+        return {};
+    }
+
+    auto kinematicBonesComponentToJson(const KinematicBonesComponent& c) -> nlohmann::json
+    {
+        nlohmann::json driven = nlohmann::json::array();
+        for (i32 index : c.driven)
+        {
+            driven.push_back(index);
+        }
+        return nlohmann::json{ { "enabled", c.enabled }, { "driven", std::move(driven) } };
+    }
+
+    auto kinematicBonesComponentFromJson(KinematicBonesComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        c.enabled = jsonBoolOr(j, "enabled", true);
+        c.driven.clear();
+        if (j.contains("driven") && j["driven"].is_array())
+        {
+            for (const nlohmann::json& entry : j["driven"])
+            {
+                if (entry.is_number())
+                {
+                    c.driven.push_back(static_cast<i32>(entry.get<i64>()));
+                }
+            }
+        }
+        return {};
+    }
+
+    auto characterControllerComponentToJson(const CharacterControllerComponent& c) -> nlohmann::json
+    {
+        // Only the authored movement params round-trip; the runtime velocity/ground state serialize
+        // as their defaults (move-character writes them at play time).
+        return nlohmann::json{ { "maxSpeed", c.maxSpeed },
+                               { "maxSlopeAngle", c.maxSlopeAngle },
+                               { "maxStepHeight", c.maxStepHeight },
+                               { "gravityFactor", c.gravityFactor } };
+    }
+
+    auto characterControllerComponentFromJson(CharacterControllerComponent& c, const nlohmann::json& j)
+        -> Result<void>
+    {
+        c.maxSpeed = jsonF32Or(j, "maxSpeed", 4.0f);
+        c.maxSlopeAngle = jsonF32Or(j, "maxSlopeAngle", 0.785398f);
+        c.maxStepHeight = jsonF32Or(j, "maxStepHeight", 0.3f);
+        c.gravityFactor = jsonF32Or(j, "gravityFactor", 1.0f);
+        c.desiredVelocity = glm::vec3(0.0f);
+        c.verticalVelocity = 0.0f;
+        c.onGround = false;
+        return {};
+    }
+
     auto environmentToJson(const SceneEnvironment& env) -> nlohmann::json
     {
         return nlohmann::json{
