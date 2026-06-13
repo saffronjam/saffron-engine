@@ -523,18 +523,67 @@ namespace se
             {
                 return;
             }
+            const bool wasSuspended = ctx.previewSuspended;
             ctx.previewScene.reset();
             ctx.previewAsset = Uuid{ 0 };
             ctx.previewRootEntity = Entity{ entt::null };
             ctx.previewFloorEntity = Entity{ entt::null };
             ctx.previewBoneByNode.clear();
+            ctx.previewSuspended = false;
+            // While suspended the authored fly-cam/overlay/selection are already live (suspend restored
+            // them), so only an ACTIVE exit restores the enter-time stash.
+            if (!wasSuspended)
+            {
+                ctx.camera = ctx.savedCamera;
+                ctx.skeletonOverlay = ctx.savedOverlay;
+                const Entity restore = ctx.savedSelection.handle != entt::null && valid(ctx.scene, ctx.savedSelection)
+                                           ? ctx.savedSelection
+                                           : Entity{ entt::null };
+                ctx.savedSelection = Entity{ entt::null };
+                setSelection(ctx, restore);
+            }
+            ctx.sceneVersion += 1;
+            ctx.animationVersion += 1;
+        }
+
+        // Park the active preview: restore the authored fly-cam/overlay/selection (so the scene tab shows
+        // the authored scene) while keeping previewScene alive for an instant resume. activeScene routes
+        // back to the authored scene and previewing() clears, so the scene is editable again.
+        void suspendAssetPreview(SceneEditContext& ctx)
+        {
+            if (!ctx.previewScene || ctx.previewSuspended)
+            {
+                return;
+            }
+            ctx.suspendedCamera = ctx.camera;  // park the preview orbit
             ctx.camera = ctx.savedCamera;
             ctx.skeletonOverlay = ctx.savedOverlay;
             const Entity restore = ctx.savedSelection.handle != entt::null && valid(ctx.scene, ctx.savedSelection)
                                        ? ctx.savedSelection
                                        : Entity{ entt::null };
-            ctx.savedSelection = Entity{ entt::null };
             setSelection(ctx, restore);
+            ctx.previewSuspended = true;
+            ctx.sceneVersion += 1;
+            ctx.animationVersion += 1;
+        }
+
+        // Resume a suspended preview: re-stash the authored view (the user may have moved the fly-cam or
+        // changed selection on the scene tab), restore the parked preview orbit + overlay, and reselect
+        // the previewed root. No re-spawn — the preview scene persisted.
+        void resumeAssetPreview(SceneEditContext& ctx)
+        {
+            if (!ctx.previewScene || !ctx.previewSuspended)
+            {
+                return;
+            }
+            ctx.savedCamera = ctx.camera;
+            ctx.savedSelection = ctx.selected;
+            ctx.savedOverlay = ctx.skeletonOverlay;
+            ctx.camera = ctx.suspendedCamera;
+            ctx.skeletonOverlay.show = true;  // the preview forces the skeleton overlay on (mirrors enter)
+            ctx.skeletonOverlay.highlightJoint = -1;
+            ctx.previewSuspended = false;
+            setSelection(ctx, ctx.previewRootEntity);
             ctx.sceneVersion += 1;
             ctx.animationVersion += 1;
         }
@@ -1144,6 +1193,35 @@ namespace se
             [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
             {
                 leaveAssetPreview(ctx.sceneEdit);  // no-op when not previewing (idempotent on tab close)
+                return PlayStateResult{
+                    playStateName(ctx.sceneEdit.playState),           static_cast<i32>(ctx.sceneEdit.playVersion),
+                    static_cast<i32>(ctx.sceneEdit.sceneVersion),     ctx.sceneEdit.hadPrimaryCamera,
+                    static_cast<i32>(ctx.sceneEdit.animationVersion), WireUuid{ ctx.sceneEdit.previewAsset.value }
+                };
+            });
+
+        // Park/un-park the preview without dropping it, so the asset tab staying open across a tab switch
+        // resumes instantly (no re-spawn, the orbit camera is preserved). Both are idempotent no-ops when
+        // the state doesn't match.
+        registerCommand<EmptyParams, PlayStateResult>(
+            reg, "suspend-asset-preview",
+            "suspend-asset-preview — park the active preview (restore the authored scene; keep it for resume)",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
+            {
+                suspendAssetPreview(ctx.sceneEdit);
+                return PlayStateResult{
+                    playStateName(ctx.sceneEdit.playState),           static_cast<i32>(ctx.sceneEdit.playVersion),
+                    static_cast<i32>(ctx.sceneEdit.sceneVersion),     ctx.sceneEdit.hadPrimaryCamera,
+                    static_cast<i32>(ctx.sceneEdit.animationVersion), WireUuid{ ctx.sceneEdit.previewAsset.value }
+                };
+            });
+
+        registerCommand<EmptyParams, PlayStateResult>(
+            reg, "resume-asset-preview",
+            "resume-asset-preview — un-park a suspended preview (restore its orbit + selection)",
+            [](EngineContext& ctx, const EmptyParams&) -> Result<PlayStateResult>
+            {
+                resumeAssetPreview(ctx.sceneEdit);
                 return PlayStateResult{
                     playStateName(ctx.sceneEdit.playState),           static_cast<i32>(ctx.sceneEdit.playVersion),
                     static_cast<i32>(ctx.sceneEdit.sceneVersion),     ctx.sceneEdit.hadPrimaryCamera,

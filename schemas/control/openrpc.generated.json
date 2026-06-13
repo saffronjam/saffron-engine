@@ -1842,6 +1842,42 @@
       }
     },
     {
+      "name": "suspend-asset-preview",
+      "summary": "suspend-asset-preview — park the active preview (keep it alive for an instant resume)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
+        }
+      }
+    },
+    {
+      "name": "resume-asset-preview",
+      "summary": "resume-asset-preview — un-park a suspended preview (restore its orbit + selection)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PlayStateResult"
+        }
+      }
+    },
+    {
       "name": "clean-assets",
       "summary": "clean-assets [exclude] — categorized cleanup report (dry-run; never deletes)",
       "params": [

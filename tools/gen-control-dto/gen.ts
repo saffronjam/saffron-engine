@@ -663,6 +663,18 @@ const commands: CommandDef[] = [
     summary: "exit-asset-preview — close the asset preview and restore the authored scene + camera",
   },
   {
+    name: "suspend-asset-preview",
+    params: "EmptyParams",
+    result: "PlayStateResult",
+    summary: "suspend-asset-preview — park the active preview (keep it alive for an instant resume)",
+  },
+  {
+    name: "resume-asset-preview",
+    params: "EmptyParams",
+    result: "PlayStateResult",
+    summary: "resume-asset-preview — un-park a suspended preview (restore its orbit + selection)",
+  },
+  {
     name: "clean-assets",
     params: "CleanAssetsParams",
     result: "CleanReport",
@@ -946,6 +958,8 @@ const commandSkips = new Map<string, string>([
   ["get-asset-model", "needs an imported model — covered in make e2e"],
   ["enter-asset-preview", "needs an imported model — covered in make e2e"],
   ["exit-asset-preview", "needs an active asset preview — covered in make e2e"],
+  ["suspend-asset-preview", "needs an active asset preview — covered in make e2e"],
+  ["resume-asset-preview", "needs a suspended asset preview — covered in make e2e"],
   ["set-skeleton-highlight", "needs an active asset preview — covered in make e2e"],
   ["pick-skeleton-joint", "needs an active rigged asset preview — covered in make e2e"],
   ["set-asset-preview-options", "needs an active asset preview — covered in make e2e"],

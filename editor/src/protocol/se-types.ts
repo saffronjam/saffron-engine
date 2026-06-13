@@ -1513,6 +1513,8 @@ export interface CommandParamsMap {
   "get-asset-model": GetAssetModelParams;
   "enter-asset-preview": EnterAssetPreviewParams;
   "exit-asset-preview": EmptyParams;
+  "suspend-asset-preview": EmptyParams;
+  "resume-asset-preview": EmptyParams;
   "clean-assets": CleanAssetsParams;
   "delete-unused": DeleteUnusedParams;
   "rename-asset": RenameAssetParams;
@@ -1651,6 +1653,8 @@ export interface CommandResultMap {
   "get-asset-model": AssetModelResult;
   "enter-asset-preview": AssetPreviewResult;
   "exit-asset-preview": PlayStateResult;
+  "suspend-asset-preview": PlayStateResult;
+  "resume-asset-preview": PlayStateResult;
   "clean-assets": CleanReport;
   "delete-unused": DeleteUnusedResult;
   "rename-asset": AssetRef;
