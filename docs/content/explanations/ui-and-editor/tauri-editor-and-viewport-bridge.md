@@ -22,9 +22,10 @@ its own.
 
 The Rust backend spawns `SaffronEngine` with `SAFFRON_EDITOR_NATIVE_VIEWPORT=1` (hidden
 window), a per-instance `SAFFRON_CONTROL_SOCK` (pid-scoped, so two editor windows do not
-collide), `SAFFRON_VIEWPORT_SHM` naming the shared-memory segment frames publish into, and
-a `SAFFRON_MAX_FPS` cap. The engine is then the renderer and the webview is the UI,
-talking only over that socket.
+collide), **two** shared-memory segment names — `SAFFRON_VIEWPORT_SHM_SCENE` and
+`SAFFRON_VIEWPORT_SHM_ASSET`, one ring per [view](../viewport-compositing/) so each pane's
+subsurface has frames even while parked — and a `SAFFRON_MAX_FPS` cap. The engine is then the
+renderer and the webview is the UI, talking only over that socket.
 
 The TypeScript side is a typed client over one generic Rust passthrough. Every scene,
 asset, and render command is `invoke('control', { cmd, params })`; the Rust layer forwards
@@ -42,8 +43,9 @@ async function call<C extends keyof CommandResultMap>(
 ```
 
 Rust handles only the lifecycle and presenter commands directly — `start_engine`,
-`set_viewport_bounds`, `set_viewport_hidden`, `quit_engine`, `engine_alive` — because
-those manage the child process and the compositor-side subsurface rather than the scene.
+`set_viewport_bounds(view, …)`, `set_viewport_parked(view, …)`, `quit_engine`, `engine_alive`
+— because those manage the child process and the two compositor-side subsurfaces rather than
+the scene.
 
 > [!NOTE]
 > The presenter is a Wayland subsurface, so the editor requires a Wayland session.
@@ -70,7 +72,7 @@ and it offers **Retry** (re-probe) and **Restart** (quit, re-spawn, re-probe).
 | What | File | Symbols |
 |---|---|---|
 | Typed passthrough client | `editor/src/control/client.ts` | `call`, `callRaw`, `client` |
-| Lifecycle + presenter commands | `editor/src/control/client.ts` | `startEngine`, `setViewportBounds`, `setViewportHidden`, `quitEngine`, `engineAlive` |
+| Lifecycle + presenter commands | `editor/src/control/client.ts` | `startEngine`, `setViewportBounds` (view), `setViewportParked` (view), `setActiveView`, `quitEngine`, `engineAlive` |
 | Engine spawn + env | `editor/src-tauri/src/lib.rs` | `spawn_engine`, `auto_start`, `nvidia_present` |
 | App shell + lifecycle events | `editor/src/app/App.tsx` | `App`, `engine-phase` / `viewport-error` listeners |
 | Phase state machine | `editor/src/state/store.ts` | `EngineStatus`, `setPhase` |

@@ -6,24 +6,30 @@ weight = 2
 # Viewport panel
 
 The viewport panel is the editor's window onto the 3D scene: a transparent `div` that owns
-a screen rectangle and keeps the engine's subsurface glued to it. The panel renders no
-pixels of its own. The scene inside it is the engine's render showing through the
+a screen rectangle and keeps the engine's **Scene-view** subsurface glued to it. The panel
+renders no pixels of its own. The scene inside it is the engine's render showing through the
 transparent page ([viewport compositing](../viewport-compositing/)).
 
-Its responsibilities are bounds-sync, input forwarding, and parking. The subsurface sits
-below the webview, so the panel's role is to report where it should be, translate input
-into engine intent, and hand the region back to the DOM when something else needs it.
+It is one of two viewport panes — the [asset-editor](../asset-editor/) preview is the other —
+and each pane drives its **own** subsurface + render target through the shared
+`useSubsurfaceBounds` hook, parameterized by a view id (`"scene"` here). The subsurfaces sit
+below the webview, so this panel's role is bounds-sync (report where the Scene view should be)
+and input forwarding (translate pointer input into engine intent). Parking the region — when a
+modal or another tab owns it — is driven from `App` per view.
 
 ## Bounds-sync
 
-The panel reports its logical CSS rect plus the window scale factor through one Tauri
-command, `set_viewport_bounds`. Rust fans it out: the logical rect (plus the webview's
-CSD-aware offset within the toplevel, tracked GTK-side) positions and sizes the subsurface,
-and the device-pixel size goes to the engine as `set-viewport-size` so the render matches
-the panel one-to-one.
+`useSubsurfaceBounds(hostRef, "scene")` reports the panel's logical CSS rect plus the window
+scale factor through one Tauri command, `set_viewport_bounds(view, …)`. Rust fans it out for
+that view: the logical rect (plus the webview's CSD-aware offset within the toplevel, tracked
+GTK-side) positions and sizes the Scene subsurface, and the device-pixel size goes to the
+engine as `set-viewport-size {scene}` so the render matches the panel one-to-one. The
+asset-editor preview drives the same hook with `"assetPreview"`, so the two surfaces are sized
+independently.
 
-Two tiers keep the subsurface glued through dock drags without paying the engine's
-target-recreation cost per tick:
+Each surface is permanently its pane's size, so a tab switch never resizes it — only an
+in-pane resize (a dock-divider drag) does. That resize uses two tiers so it never pays the
+engine's target-recreation cost per drag tick:
 
 - a **throttled live sync** (~16ms) on every geometry change — a `ResizeObserver` on the
   host div fires during a drag, and each tick moves and stretches the subsurface only
@@ -46,11 +52,14 @@ probes `viewport-native-info` until the engine's socket answers, then flips the 
 ## Parking
 
 Web UI composites freely over the live viewport — that is the point of the architecture —
-but when the region should show no scene at all (the asset View modal, the asset
-workspace tab), the store's `viewportHidden` flag parks the presenter: the subsurface
-detaches its buffer and vanishes, and the panel paints an opaque background so the
-transparent hole does not expose the desktop behind the window. `App` forwards the flag
-over `set_viewport_hidden` so it works even while this panel is unmounted.
+but when a pane should show no scene (its tab is inactive, or a modal owns the region), its
+surface is *parked*. `App` owns this per view: it calls `set_viewport_parked(view, true)` so
+the surface keeps its last frame frozen rather than going black (the shared backdrop fills any
+transparent gap). The Scene view is parked when the scene tab is inactive or a modal hides it
+(the store's `viewportHidden` flag, now modal-only); the asset-preview view is parked whenever
+its tab is not the active one. Because `App` drives it, parking works even while this panel is
+unmounted, and the panel still paints an opaque background over its own region when
+`viewportHidden` so the page never exposes the desktop.
 
 ## Pointer forwarding
 
@@ -73,12 +82,12 @@ key code).
 
 | What | File | Symbols |
 |---|---|---|
-| The panel | `editor/src/panels/ViewportPanel.tsx` | `ViewportPanel`, `computeBounds`, `eventToUv` |
-| Two-tier bounds-sync | `editor/src/panels/ViewportPanel.tsx` | `liveSync`, `scheduleEndCommit`, `onLayoutSettled` |
+| The panel | `editor/src/panels/ViewportPanel.tsx` | `ViewportPanel`, `eventToUv` |
+| Per-view two-tier bounds-sync hook | `editor/src/lib/useSubsurfaceBounds.ts` | `useSubsurfaceBounds`, `computeBounds`, `liveSync`, `scheduleEndCommit` |
 | Pointer-lock fly streaming | `editor/src/panels/ViewportPanel.tsx` | the fly `useEffect`, `FLY_STREAM_MS` |
-| Rect + park bridge (Rust) | `editor/src-tauri/src/lib.rs` | `set_viewport_bounds`, `set_viewport_hidden` |
-| Subsurface side | `editor/src-tauri/src/wayland_viewport.rs` | `ViewportShared`, `install` |
-| Render size (engine) | `control_commands_render.cpp` | `set-viewport-size`, `viewport-native-info` |
+| Per-view rect + park bridge (Rust) | `editor/src-tauri/src/lib.rs` | `set_viewport_bounds`, `set_viewport_parked` |
+| Subsurface side | `editor/src-tauri/src/wayland_viewport.rs` | `Viewports`, `ViewportShared`, `View`, `install` |
+| Render size + active view (engine) | `control_commands_render.cpp` / `control_commands_asset.cpp` | `set-viewport-size`, `viewport-native-info`, `set-active-view` |
 
 ## Related
 

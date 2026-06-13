@@ -14,13 +14,13 @@ Every editor operation rides the JSON-over-unix-socket [control protocol](../too
 
 | Page | Covers | Code |
 |---|---|---|
-| `tauri-editor-and-viewport-bridge` | Tauri/React shell, the one generic control passthrough, engine spawn env, auto-start + crash recovery | `editor/src/control/client.ts` · `App.tsx` · `LoadingOverlay.tsx` |
-| `viewport-compositing` | shm/seqlock/subsurface/dma-buf foundations, offscreen render → pipelined shm ring → wl_subsurface below the transparent toplevel, backdrop + segment-remap traps, two-tier resize | `renderer_capture.cpp` · `wayland_viewport.rs` |
-| `viewport-panel` | the transparent host div, two-tier bounds-sync over `set_viewport_bounds`, parking, gizmo + pointer-lock fly forwarding | `ViewportPanel.tsx` |
+| `tauri-editor-and-viewport-bridge` | Tauri/React shell, the one generic control passthrough, engine spawn env (two per-view shm segments), auto-start + crash recovery | `editor/src/control/client.ts` · `App.tsx` · `LoadingOverlay.tsx` |
+| `viewport-compositing` | shm/seqlock/subsurface/dma-buf foundations, offscreen render → pipelined shm ring → wl_subsurface below the transparent toplevel, two views / two subsurfaces + shared backdrop, per-view park, segment-remap traps | `renderer_capture.cpp` · `wayland_viewport.rs` |
+| `viewport-panel` | the transparent host div, per-view two-tier bounds-sync over `set_viewport_bounds {view}`, per-view parking, gizmo + pointer-lock fly forwarding | `ViewportPanel.tsx` · `useSubsurfaceBounds.ts` |
 | `editor-camera` | the engine `EditorCamera`, fly input streamed over `fly-input`, driven by `get-/set-camera` | `editor_camera.cpp` |
 | `gizmo` | the engine-rendered overlay gizmo, `gizmo-pointer`, the Topbar T/R/S + world/local | `Topbar.tsx` · `useGizmoShortcuts.ts` |
 | `play-mode` | play/pause/stop/step, scene-duplication discard, camera handover + fallback, live-tune-and-discard tint + locks | `scene_edit_play.cpp` · `Topbar.tsx` · `state/store.ts` |
-| [`asset-editor`](asset-editor/) | the asset-editor tab for every model: the preview scene (Edit/Play/Preview triad), one-viewport takeover, `get-asset-model` + capability-gated panels, skeleton tree + highlight channel, clip list, the shared timeline, byte-identity | `control_commands_asset.cpp` · `AssetEditorWorkspace.tsx` · `scene_edit_context.cppm` |
+| [`asset-editor`](asset-editor/) | the asset-editor tab for every model: the preview scene (Edit/Play/Preview triad), its own AssetPreview view + surface, `set-active-view` park, `get-asset-model` + capability-gated panels, skeleton tree + highlight channel, clip list, the shared timeline, byte-identity | `control_commands_asset.cpp` · `AssetEditorWorkspace.tsx` · `scene_edit_context.cppm` |
 | `editor-settings` | the gear-button settings modal, the rebindable-keybinding registry + delta `settings.json`, the `load/save_editor_settings` bridge | `SettingsModal.tsx` · `lib/keybindings.ts` · `src-tauri/src/lib.rs` |
 | `hierarchy-panel` | the React tree outliner (`parentId` → forest), drag-reparent, the Environment sentinel, Create presets | `HierarchyPanel.tsx` · `HierarchyTree.tsx` |
 | `inspector` | the DTO-typed component inspector (fieldRenderer + FIELD_HINTS), RMW writes, add/remove guarded | `InspectorPanel.tsx` · `fieldRenderer.tsx` |

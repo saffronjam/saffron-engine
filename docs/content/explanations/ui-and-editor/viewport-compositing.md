@@ -35,10 +35,12 @@ pixel buffer attached; the compositor — not the application — blends all sur
 final image each refresh. A `wl_subsurface` glues one surface to a parent at an offset and
 a z-order, and crucially the z-order may be *below* the parent. That inversion is the trick
 the X11 reparent could never do: the engine's pixels sit under the UI's, so every
-translucent UI pixel blends over the scene in the compositor, for free. `wp_viewport`
-adds a crop/scale stage — the compositor samples the attached buffer at whatever
-destination size the surface declares, which is what lets an old frame stretch during a
-resize before the engine catches up.
+translucent UI pixel blends over the scene in the compositor, for free. The editor runs
+**two** such viewport subsurfaces — one per [view](../asset-editor/), the Scene viewport and
+the asset-editor preview — each permanently glued to its own pane, plus a shared opaque
+backdrop subsurface below both. `wp_viewport` adds a crop/scale stage, so each view's buffer
+is sampled to its pane's destination size independently; a *parked* view (its tab inactive)
+keeps its last attached buffer frozen on screen at no cost.
 
 **DMA, for what comes next.** Today's transport still costs one GPU→CPU readback (the
 engine) and one CPU→GPU texture upload (the compositor) per frame. DMA — direct memory
@@ -52,10 +54,10 @@ is scoped in `plans/dmabuf-viewport/`.
 
 ```mermaid
 flowchart LR
-    A[engine renders offscreen] --> B[blit to BGRA8 + copy to staging<br>recorded in the frame's own command buffer]
-    B --> C[shm ring segment<br>header + 4 slots, seqlock]
-    C --> D[editor worker attaches the newest slot<br>to a wl_subsurface below the toplevel]
-    D --> E[compositor blends the transparent UI<br>over the viewport at monitor refresh]
+    A[engine renders the ACTIVE view offscreen] --> B[blit to BGRA8 + copy to staging<br>recorded in the frame's own command buffer]
+    B --> C[that view's shm ring segment<br>header + 4 slots, seqlock]
+    C --> D[editor worker attaches the newest slot<br>to that view's wl_subsurface below the toplevel]
+    D --> E[compositor blends the transparent UI<br>over both viewports at monitor refresh]
 ```
 
 The engine side is a pipelined readback with zero added stalls. Each frame-in-flight slot
@@ -63,21 +65,26 @@ owns a BGRA8 image and a persistently mapped staging buffer; `endFrame` records 
 offscreen→BGRA8 blit (the GPU does the format conversion) and the image→buffer copy into
 the frame's normal command buffer, then submits with the frame fence only — no swapchain
 acquire, no present, no `waitIdle`. When `beginFrame` waits that fence two frames later,
-the readback is complete by construction and a `memcpy` publishes it into the shared
-segment. The segment is grow-only with a 32-byte header (`magic, width, height, seq,
-ringSlots, slotCapacity`) and a fixed-capacity 4-slot ring: frame `s` lands in slot
-`s % 4`, the header is written pixels-first with `seq` bumped last behind a release fence,
-so a reader that sees a new `seq` is guaranteed matching dimensions and pixels.
+the readback is complete by construction and a `memcpy` publishes it into the **active
+view's** shared segment. Each view owns its own segment + ring, and only the active view is
+rendered and published each frame, so the inactive view's last frame stays put. A segment is
+grow-only with a 32-byte header (`magic, width, height, seq, ringSlots, slotCapacity`) and a
+fixed-capacity 4-slot ring: frame `s` lands in slot `s % 4`, the header is written
+pixels-first with `seq` bumped last behind a release fence, so a reader that sees a new `seq`
+is guaranteed matching dimensions and pixels.
 
 The editor side runs one worker thread that wraps GTK's own `wl_display` connection with a
 private event queue, binds `wl_compositor`/`wl_subcompositor`/`wl_shm`/`wp_viewporter`,
-and creates a **desync subsurface placed below** the toplevel. A `wl_shm_pool` wraps the
-engine's segment directly — the compositor reads the very memory the engine wrote, one
-copy end to end. The loop attaches the newest ring slot, damages, and commits, paced by
-frame callbacks (one per monitor refresh) with a bounded self-paced fallback for the spans
-when callbacks are withheld. `wp_viewport` scales the buffer to the panel's logical rect
-and `set_position` pins it, both fed from the [viewport panel](../viewport-panel/)'s
-bounds through a Tauri command.
+and creates **two desync subsurfaces placed below** the toplevel (one per view), plus a
+shared opaque backdrop subsurface below both. One `wl_shm_pool` per view wraps that view's
+segment directly — the compositor reads the very memory the engine wrote, one copy end to
+end. The single loop polls both segments and, for each *unparked* view, attaches its newest
+ring slot, damages, and commits, paced by frame callbacks (one per monitor refresh) with a
+bounded self-paced fallback for the spans when callbacks are withheld. `wp_viewport` scales
+each view's buffer to its pane's logical rect and `set_position` pins it, both fed per-view
+from the [viewport panel](../viewport-panel/)'s bounds through a Tauri command
+(`set_viewport_bounds(view, …)`); a parked view's surface is left untouched, freezing its
+last frame.
 
 ## Load-bearing details
 
@@ -95,18 +102,25 @@ seamed, or absent — none of them fails with an error.
   its opaque region so the compositor blends below it.
 - **The page must resolve against a backdrop, not the desktop.** The page is transparent,
   and not every pixel of it is opaque — panel borders are 10%-alpha hairlines, and a
-  webview repaint lags an interactive resize by a frame. A second subsurface below the
-  viewport subsurface stretches a single opaque theme-colored pixel (`wp_viewport` again)
-  over the whole window, so every translucent or unpainted page pixel blends against
+  webview repaint lags an interactive resize by a frame. A backdrop subsurface below *both*
+  viewport subsurfaces stretches a single opaque theme-colored pixel (`wp_viewport` again)
+  over the whole window — including a parked view's frozen hole — so every translucent or
+  unpainted page pixel blends against
   theme-dark exactly as it would in an opaque app. Painting that backdrop from GTK under
   the webview does not work: WebKit's GL blit *replaces* the pixels beneath its
   allocation rather than blending over them.
-- **The segment can be replaced under the reader.** The engine recreates the shm segment
+- **A segment can be replaced under the reader.** The engine recreates a view's shm segment
   if a frame ever outgrows the slot capacity, and a restarted engine makes a fresh one —
   same name, new inode. A mapping is per-inode, so a reader that keeps its old `mmap`
   reads a frozen orphan forever. The capacity is floored at 4K so ordinary resizes never
   trigger this (shm pages are sparse; unused capacity costs nothing), and the presenter
-  probes the inode every 250ms and remaps its pool + buffers when it changes.
+  probes each view's inode every 250ms and remaps that view's pool + buffers when it changes.
+- **Parking freezes, it does not clear.** A parked view (its tab inactive, or a modal owns
+  the region) is simply left out of the commit loop — its surface keeps the last buffer it
+  was given, so the inactive pane shows its last rendered frame frozen rather than going
+  black. Unparking resumes attaching that view's fresh frames; because the surface was never
+  re-bound and the engine resumes publishing the same segment, the live image returns within
+  a frame.
 - **Frame callbacks pace, they do not certify.** A callback per commit proves cadence, not
   that those pixels reached glass. `wp_presentation` feedback (counted per second behind
   `SAFFRON_VIEWPORT_STATS=1`) reports `presented`/`discarded` plus the vblank delta — and
@@ -116,15 +130,24 @@ seamed, or absent — none of them fails with an error.
 Because the engine never presents, nothing throttles its loop; the editor caps it via
 `SAFFRON_MAX_FPS` (default 500) so slots are not rewritten mid-read at thousands of fps.
 
-## Resizing in two tiers
+## Two views, two surfaces
 
-Changing the engine's render size recreates the whole offscreen chain (color, depth, and
-every post-process target) behind a device idle — far too expensive per drag tick. The
-panel therefore splits its bounds sync: live ticks (~16ms) only move and stretch the
-subsurface, applying the new position and `wp_viewport` destination to the
-already-attached buffer, so the viewport stays glued to the divider showing a scaled old
-frame. One debounced end commit (~150ms after the gesture settles) sends
-`set-viewport-size`, and the next frames arrive sharp at the final resolution.
+The editor has two viewport panes — the Scene viewport and the [asset-editor](../asset-editor/)
+preview — and each owns a permanent triple: an offscreen render target, an shm ring segment,
+and a Wayland subsurface glued to its pane. Switching tabs never re-binds a surface or resizes
+a target. The engine just changes which view is active (`set-active-view {scene|assetPreview}`),
+and the editor parks the surface whose pane is now hidden and unparks the one now showing. The
+appearing pane was already sized to its pane, so its first composited frame is correct — there
+is no resize, no device idle, and no stale-size frame on the switch.
+
+Only the active view is rendered and advances its seqlock each frame; the parked view's surface
+holds its last color frame frozen. The tradeoff is deliberate: per-view temporal state (TAA
+history, motion vectors, ReSTIR reservoirs, the DDGI volume) resets when a view becomes active
+again, so GI and antialiasing re-converge over a few frames rather than the engine paying to
+keep two histories warm. Resizing a pane debounces a `set-viewport-size {view}` after the
+gesture settles (~150ms); a parked view defers the actual target recreation — recreating the
+whole offscreen chain behind a device idle — until it is next activated, so a hidden pane never
+stalls the visible one.
 
 > [!NOTE]
 > On NVIDIA, WebKitGTK's default DMABUF renderer draws nothing under Wayland and its
@@ -151,14 +174,15 @@ engine smooths gizmo drag samples toward their target each rendered frame
 
 | What | File | Symbols |
 |---|---|---|
-| Publish state + slots | `renderer_types.cppm` | `ShmPublish`, `ShmPublishSlot` |
-| Slot lifecycle + segment | `renderer_capture.cpp` | `enableViewportShmPublish`, `ensureShmPublishSlot`, `publishShmPublishSlot`, `destroyShmPublish` |
-| Recorded readback + fence-only submit | `renderer.cppm` | `recordShmPublishCopy`, the `shmPublish` branches in `beginFrame`/`endFrame` |
+| Per-view targets + identity | `renderer_types.cppm` | `ViewId`, `ViewTargets`, `ShmPublish`, `ShmPublishSlot`, `activeView`, `activeShmPublish` |
+| Active view + temporal reset | `renderer.cppm` / `renderer_types.cppm` | `setActiveView`, `resetViewTemporal` |
+| Slot lifecycle + segment | `renderer_capture.cpp` | `enableViewportShmPublish` (per view), `ensureShmPublishSlot`, `publishShmPublishSlot`, `destroyShmPublish` |
+| Recorded readback + fence-only submit | `renderer.cppm` | `recordShmPublishCopy`, the active-view `shmPublish` branches in `beginFrame`/`endFrame` |
 | Loop cap | `app.cppm` | `maxFpsFromEnv` |
-| Subsurface presenter | `editor/src-tauri/src/wayland_viewport.rs` | `install`, `run`, `ViewportShared`, `PresentationStats` |
-| Backdrop + segment remap | `editor/src-tauri/src/wayland_viewport.rs` | `backdrop_pixel_fd`, `stat_shm` |
-| Rect + park bridge | `editor/src-tauri/src/lib.rs` | `set_viewport_bounds`, `set_viewport_hidden`, `spawn_engine` |
-| Render size command | `control_commands_render.cpp` | `set-viewport-size` |
+| Two subsurfaces + one loop | `editor/src-tauri/src/wayland_viewport.rs` | `install`, `run`, `Viewports`, `ViewportShared`, `View`, `PresentationStats` |
+| Backdrop + per-view segment remap | `editor/src-tauri/src/wayland_viewport.rs` | `backdrop_pixel_fd`, `stat_shm` |
+| Rect + park bridge (per view) | `editor/src-tauri/src/lib.rs` | `set_viewport_bounds`, `set_viewport_parked`, `viewport_shm_name`, `spawn_engine` |
+| Render size + active-view commands | `control_commands_render.cpp` / `control_commands_asset.cpp` | `set-viewport-size`, `set-active-view` |
 
 ## Related
 
