@@ -14,7 +14,9 @@
 import { useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { client, type EntityPreset, type ProjectInfo } from "../control/client";
-import { useEditorStore } from "../state/store";
+import { recordEntityCreation, useEditorStore } from "../state/store";
+import { canRedo, canUndo, redoLabel, undoLabel } from "../lib/undo";
+import { useShallow } from "zustand/react/shallow";
 import { CREATE_PRESETS } from "./CreateMenu";
 import {
   Menubar,
@@ -22,6 +24,7 @@ import {
   MenubarItem,
   MenubarMenu,
   MenubarSeparator,
+  MenubarShortcut,
   MenubarTrigger,
 } from "@/components/ui/menubar";
 
@@ -39,6 +42,20 @@ export function MenuBar() {
   const resetSceneState = useEditorStore((s) => s.resetSceneState);
   const setProject = useEditorStore((s) => s.setProject);
   const project = useEditorStore((s) => s.project);
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
+  // The active main tab's history powers the Edit menu's enabled state + next-entry label.
+  const history = useEditorStore(
+    useShallow((s) => {
+      const h = s.historyByTab[s.activeViewTabId];
+      return {
+        canUndo: h ? canUndo(h) : false,
+        canRedo: h ? canRedo(h) : false,
+        undoLabel: h ? undoLabel(h) : null,
+        redoLabel: h ? redoLabel(h) : null,
+      };
+    }),
+  );
   const [status, setStatus] = useState<string | null>(null);
 
   const ready = phase === "ready";
@@ -184,7 +201,10 @@ export function MenuBar() {
   const create = (preset: EntityPreset): void => {
     void client
       .addEntity(preset)
-      .then((ref) => selectEntity(ref.id))
+      .then((ref) => {
+        selectEntity(ref.id);
+        recordEntityCreation(ref.id, "Create entity");
+      })
       .catch((err: unknown) => flash(`Create failed: ${errorText(err)}`));
   };
 
@@ -210,6 +230,21 @@ export function MenuBar() {
             <MenubarSeparator />
             <MenubarItem onSelect={() => void screenshotViewport()}>
               Screenshot Viewport…
+            </MenubarItem>
+          </MenubarContent>
+        </MenubarMenu>
+        <MenubarMenu>
+          <MenubarTrigger disabled={!ready} className="h-8 px-2 text-sm">
+            Edit
+          </MenubarTrigger>
+          <MenubarContent align="start" className="min-w-48">
+            <MenubarItem disabled={!history.canUndo} onSelect={() => void undo()}>
+              Undo{history.undoLabel ? ` ${history.undoLabel}` : ""}
+              <MenubarShortcut>Ctrl+Z</MenubarShortcut>
+            </MenubarItem>
+            <MenubarItem disabled={!history.canRedo} onSelect={() => void redo()}>
+              Redo{history.redoLabel ? ` ${history.redoLabel}` : ""}
+              <MenubarShortcut>Ctrl+Shift+Z</MenubarShortcut>
             </MenubarItem>
           </MenubarContent>
         </MenubarMenu>
