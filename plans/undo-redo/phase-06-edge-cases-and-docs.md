@@ -3,19 +3,24 @@
 **Status:** NOT STARTED
 
 **Depends on:** phases 01–05 (the full feature exists — the pure history primitive, the routed
-scene edits, the keybindings + Edit menu, mouse Back/Forward, and the per-tab material-graph
-history). This phase hardens the boundaries those open and documents the result; it adds no new
-behaviour, only correctness guards, docs, and one engine-side e2e assertion.
+scene edits, the keybindings + Edit menu, mouse Back/Forward, and the per-tab snapshot history with
+its reusable `useTabSnapshotHistory` hook). This phase hardens the boundaries those open, writes the
+**extension recipe** so a new editable tab (the rig/asset editor) gains undo by following a pattern
+rather than rediscovering it, and documents the result; it adds no new product behaviour, only
+correctness guards, the recipe, docs, and one engine-side e2e assertion.
 
 ## Goal
 
 Undo/redo is now reachable everywhere, but it opens three correctness boundaries that the earlier
 phases left to here: an undone entity-create cannot be cleanly redone (re-creation mints a new id),
 the history must be invalidated whenever the scene under it is replaced (project/scene load, scene
-swap, play enter), and a poll tick that lands mid-replay must read consistent state. Close all three,
-then write the docs page that explains the feature honestly (the engine has no idea undo exists) and
-add the single e2e assertion that is genuinely reachable — the engine round-tripping an inverse
-command. After this phase the feature is safe at its edges and explained.
+swap, play enter), and a poll tick that lands mid-replay must read consistent state. Close all three;
+write the **extension recipe** — the two ways a future UI element joins the history (an inverse-command
+edit site, or a `useTabSnapshotHistory` editable tab), with the asset editor as the worked example —
+so coverage of new UI is a checklist, not a redesign; then write the docs page that explains the
+feature honestly (the engine has no idea undo exists) and add the single e2e assertion that is
+genuinely reachable — the engine round-tripping an inverse command. After this phase the feature is
+safe at its edges, extensible by recipe, and explained.
 
 ## What exists to build on
 
@@ -42,6 +47,13 @@ command. After this phase the feature is safe at its edges and explained.
   engine round-trips an inverse command — it cannot see the React history.
 - `docs/content/explanations/ui-and-editor/_index.md` (the hub row table) and its siblings
   (`gizmo.md`, `inspector.md`, `selection.md`, `play-mode.md`) for house style and cross-links.
+- The two extension points the recipe documents: the **inverse-command edit site** (phase 02 — capture
+  the prior value at the mutation site, push `{ undo, redo }` closures over existing `client.ts` calls)
+  and the **`useTabSnapshotHistory` editable tab** (phase 05 — a tab with a local model + one apply
+  command supplies `read`/`write`/`equals`). These are the only two shapes any new edit needs.
+- The `rigEditor` ViewTab kind (phase 01's kind list; `plans/editor-view` opens `` `rigEditor:${meshId}` ``).
+  It is a viewer in v1, so its history is dormant — the worked example for "what the asset editor does
+  when it gains authoring." No rig-editor code is written in this plan; the recipe just names the seam.
 
 ## Work
 
@@ -61,7 +73,7 @@ would replay against a vanished entity.
    `future`, so once the unredoable create is dropped the menu shows the next real redo or "Nothing to
    redo". No extra menu wiring — the truncation makes the menu correct for free.
 3. Sanity: a normal (redoable) edit undone *after* a create-undo behaves normally — only the
-   create entry itself is non-restorable. Document the rule plainly (see step 4): "undo removes a
+   create entry itself is non-restorable. Document the rule plainly (see step 5): "undo removes a
    created entity; you cannot redo it back."
 
 ### 2. History invalidation when the scene is replaced
@@ -119,7 +131,54 @@ invariants the earlier phases established hold under a burst:
    Ctrl+Z retries the same boundary rather than silently swallowing it. `historyReplaying` is cleared
    in a `finally`.
 
-### 4. Docs: `undo-redo.md`
+### 4. The extension recipe (the asset-editor seam)
+
+Capture — in the plan, then in the docs page (step 5) — the two, and only two, ways a new UI element
+joins the history. A new editable surface picks one shape; nothing else is touched, because the
+keybindings (phase 03), the Edit menu, the mouse handler (phase 04), and the per-tab dispatch are all
+generic over `activeViewTabId`.
+
+**Shape A — an inverse-command edit site** (a control/panel that mutates engine state in place; the
+phase-02 pattern):
+
+1. At the mutation, capture the prior value the editor already holds (the Inspector via
+   `componentsBySelected`, the hierarchy via `entities`, the environment panel via `environment`)
+   *before* the optimistic write.
+2. Build `{ label, selectionId, undo: () => client.X(id, prior), redo: () => client.X(id, next) }` and
+   `pushEdit(edit)` (defaults to the active tab).
+3. For a continuous gesture (drag/scrub), wrap it in `beginEdit({ prior, selectionId }).commit(final,
+   build)` so the burst yields one entry; a discrete edit pushes immediately.
+4. Guard the recording site with `if (historyReplaying) return;` so a replay does not record itself.
+
+Use Shape A when the engine is the source of truth and the inverse is the same command fed the prior
+value.
+
+**Shape B — a `useTabSnapshotHistory` editable tab** (an editor with a local model + one apply command;
+the phase-05 pattern):
+
+1. The tab opens as a `ViewTab` with a stable id — the history keys on it.
+2. Call `useTabSnapshotHistory<M>(tabId, { read, write, equals, label, selectionId })`.
+3. `seed(read())` after the model loads; `record()` at the apply boundary; `if (consumeReplay()) return;`
+   at the top of the apply effect.
+
+Use Shape B when the editor holds the canonical model locally between debounced/explicit saves and there
+is no engine prior-value to read back.
+
+**Worked example — the rig / asset editor.** When `plans/editor-view`'s rig editor (or a new asset
+editor) gains authoring, it is Shape B: it already opens as `` `rigEditor:${meshId}` ``, it holds a
+local rig/clip model, and it persists through one apply command. Wiring undo is then
+`useTabSnapshotHistory<RigModel>(\`rigEditor:${meshId}\`, { read, write: saveRig, equals, label: "Edit
+rig" })`, seed on load, record at the save boundary — with **no change** to `lib/undo.ts`, the store
+slice, the keybindings, the Edit menu, or the mouse handler. The one precondition the recipe states up
+front: the editor must keep a local model and a single replayable apply command. An editor that instead
+fires many fine-grained mutations straight at a catalog/disk (rename/move/delete) fits neither shape and
+stays on the deferred list — say so plainly so a future author *designs* the editor around Shape B
+rather than discovering the mismatch late.
+
+This section writes no editor code; it is the canonical checklist (mirrored into the docs page) so a new
+editable surface — the asset editor first — is covered by following it, not by re-deriving it.
+
+### 5. Docs: `undo-redo.md`
 
 Add `docs/content/explanations/ui-and-editor/undo-redo.md` in house style (TOML front matter; the
 sentence-case `# H1` must equal the front-matter `title`; lead with the concept and why, not "file X
@@ -143,12 +202,17 @@ does Y"; a slim `What | File | Symbols` table of code pointers). Cover:
   default Back/Forward navigation (and Alt+Left/Right) is suppressed so the single-page app stays
   alive.
 - **Invalidation:** loading a project, swapping the scene, or entering play clears the scene history;
-  material-graph histories survive play.
+  snapshot-tab histories survive play.
+- **Extending undo to a new editable surface:** the two shapes from step 4 — an inverse-command edit
+  site, or a `useTabSnapshotHistory` tab (a local model + one apply command) — with the asset editor as
+  the worked Shape-B example, and the precondition stated plainly (a new editor must keep a local model
+  and a single replayable apply command, or it stays deferred). This is the reference a future author
+  reads before adding a new editor; keep it concrete and short.
 
 Add the hub row to `_index.md` (an `undo-redo` row in the Pages table, code column
 `state/store.ts · lib/undo.ts · lib/keybindings.ts`). Run the `humanizer` pass over the prose.
 
-### 5. e2e: the inverse-command round-trip
+### 6. e2e: the inverse-command round-trip
 
 Add one `tests/e2e` case (a new file or a block in `scene.test.ts`) that proves the engine-side
 replay *primitive* the React history depends on:
@@ -178,6 +242,10 @@ charter: it drives the engine over the wire, so an editor-only feature has limit
   replay; a rejected replay raises one toast and leaves the stack at the same boundary for a retry.
 - `docs/`: the new page renders under `hugo server`, the hub `_index.md` row links it, and the
   humanizer pass has been applied.
+- The docs page carries the **extension recipe** (Shape A / Shape B + the asset-editor worked example +
+  the local-model-and-one-apply precondition), so adding undo to a new editable surface is a documented
+  checklist. Sanity-check it against phase 05: the `useTabSnapshotHistory` signature it cites
+  (`read`/`write`/`equals`) matches the shipped hook exactly.
 
 ## Notes / gotchas
 

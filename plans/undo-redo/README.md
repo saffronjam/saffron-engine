@@ -1,6 +1,47 @@
 # Undo/redo — per-main-tab edit history
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (implementation) — all 6 phases implemented and validated (editor-only;
+every file I touched is type/lint/format-clean, 34 `bun` unit tests + 2 e2e inverse-command tests
+pass). Unstaged, pending the user's commit; a fully-green shared `tsc` also waits on the concurrent
+ViewTab/dock refactor settling (see the concurrency note).
+
+> **## Progress (implementation, resumable)**
+>
+> - **Phase 1 — DONE.** `editor/src/lib/undo.ts` (pure `UndoableEdit`/`TabHistory` +
+>   `appendEdit`/`takeUndo`/`takeRedo`/`canUndo`/`canRedo`/labels), `lib/undo.test.ts` (bun),
+>   store slice in `state/store.ts` (`historyByTab`, `historyReplaying`, `pushEdit`/`undo`/`redo`/
+>   `beginEdit`/`clearTabHistory`/`clearSceneHistory`, `isHistoryTab` allowlist incl. `assetEditor`,
+>   `replayHistory`/`restoreSelectionContext` helpers, lifecycle clears in `closeViewTab`/
+>   `resetSceneState`), `package.json` `test` script + `tools/ci/check.sh` (`bun test`),
+>   `tsconfig.json` excludes `*.test.ts`.
+> - **Phase 2 — DONE.** Recording wired at every in-scope scene edit site: `InspectorPanel` (field
+>   gesture + discrete + MaterialSet slots + add/remove component, via the `applyWrite` router),
+>   `fieldRenderer` (text focus/blur bracket), `ScriptSlots` (override gesture/discrete),
+>   `ViewportPanel` (gizmo gesture → `inspect`-settled transform), `EnvironmentPanel`
+>   (env/atmosphere, gesture-field captured from first `patch`), `RenderPanel` (toggles + AA +
+>   exposure), reparent in store `setParent`, rename in `HierarchyPanel`, creation undo-only via the
+>   shared `recordEntityCreation` (CreateMenu/MenuBar/HierarchyPanel copy/store `instantiateModel`).
+> - **Phase 3 — DONE.** `edit.undo`/`edit.redo` in `lib/keybindings.ts`, `useUndoRedoShortcuts`
+>   (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y), `isTextEntryFocused` exported from `useGizmoShortcuts`, Edit
+>   menu in `MenuBar` (per-active-tab enabled state + next-entry label), mounted in `App.tsx`.
+> - **Phase 4 — DONE.** `useMouseHistoryNav` (window `pointerdown`; button 3 = undo, 4 = redo,
+>   `preventDefault`), Alt+Left/Right trap folded into `useUndoRedoShortcuts`, mounted in `App.tsx`.
+> - **Phase 5 — DONE.** `lib/useTabSnapshotHistory.ts` (generic `read`/`write`/`equals` +
+>   `seed`/`record`/`consumeReplay` with the replay guard that outlives `historyReplaying`) +
+>   `MaterialGraphEditor` wired as the first consumer (seed on load, record at the debounced apply,
+>   `graphsEqual` order-insensitive). A future asset editor is a drop-in `assetEditor:<id>` consumer.
+> - **Phase 6 — DONE.** Create-redo truncation (already in the Phase 1 primitive); scene-history
+>   invalidation on project/scene load, in-session scene swap (the poll's backwards-version branch),
+>   and the edit→play transition (centralized in `setPlayState`, graph tabs survive) via the shared
+>   `sceneHistoryCleared`; `docs/content/explanations/ui-and-editor/undo-redo.md` + the `_index.md`
+>   hub row + the Shape-A/Shape-B extension recipe; `tests/e2e/undo-redo.test.ts` (the inverse-command
+>   round-trip — **passing**: the engine round-trips a replayed command).
+> - **Concurrency note:** a second agent is mid-refactor of the `ViewTab`/dock store (it removed
+>   `rightTools`/`bottomTools`/`bottomTab`/`RightTool`/`BottomTool`/`BottomTab`), so a full
+>   `tsc --noEmit` currently fails in *their* files (Layout/Topbar/RightSidebar/BottomDock/
+>   AlarmBadge/HierarchyTree + a stale `store.ts:~1713` ref) — NOT in any undo/redo file. Validate
+>   undo work by excluding those. The `ViewTab` kinds are now `scene | flamegraph | materialGraph |
+>   assetEditor | imageViewer`; history records for `scene | materialGraph | assetEditor`.
 
 Undo/redo is implemented **entirely in the Tauri/React editor**. The engine stays unaware of it: no
 new engine command exists to support undo, no engine-side history, no engine-side snapshot. Undo is
@@ -70,13 +111,17 @@ against the existing control surface.
    selection itself is editor view-state mirrored from the engine, not an authored-scene edit, so a
    bare select/deselect is never its own undo step.
 
-7. **The material-graph tab snapshots the JS `MaterialGraph` model around each debounced apply.** The
-   graph's canonical state between the debounced `material-set-graph` saves is the React Flow
-   `nodes`/`edges` state (`materials/graph.ts`) — the engine only ever sees the debounced result. So a
-   graph-tab record carries `{ before: MaterialGraph, after: MaterialGraph }` (via `flowToGraph`); undo
-   loads `before` into the canvas (`graphToFlow` → `setNodes`/`setEdges`) and pushes it to the engine
-   (`materialSetGraph`), re-rendering the preview. This is the second concrete per-main-tab history and
-   the one place a local snapshot, not an inverse command, is the right shape.
+7. **Editable asset tabs share one reusable snapshot-history hook; the material graph is its first
+   consumer.** Some editors hold their canonical state *locally* — between debounced saves the React
+   Flow `nodes`/`edges` (`materials/graph.ts`) is the authority, and the engine only ever sees the
+   debounced result, so there is no engine prior-value to read back. For these, a record carries
+   `{ before, after }` snapshots of the local model and undo replays the editor's own apply command with
+   the prior snapshot. Rather than bake this into the material graph alone, phase 05 ships it as a
+   reusable hook — `useTabSnapshotHistory<M>(tabId, { read, write, equals })` — and wires the material
+   graph as the first consumer. **A new editable asset tab (the rig editor when it gains authoring, any
+   future asset editor) gets undo by passing those three functions — no new history design, no engine
+   change.** This is the one place a local snapshot, not an inverse command, is the right shape, and it
+   is built generic so the next editor is a drop-in (the extension recipe is phase 06).
 
 8. **Mouse Back/Forward and Alt+Left/Right must be trapped app-wide or the SPA dies.** The webview
    treats button 3/4 and Alt+Arrow as history navigation; an unhandled one calls `history.back()` and
@@ -92,6 +137,15 @@ against the existing control surface.
   `flamegraph` | `materialGraph` | `asset` | `rigEditor`). Coordinate with, but do not gate on,
   `plans/tabsystem-revamp` (NOT STARTED): it replaces the *panel dock* slices and leaves `ViewTab`
   untouched, and keying history by the stable `ViewTab.id` survives the revamp.
+- **The asset editor is already covered — by reuse, not rework.** `plans/editor-view`'s rig editor is a
+  *viewer* in v1 (it makes no persisted edits, so it has nothing to undo yet) and opens as
+  `` `rigEditor:${meshId}` ``; the store no-ops history on a tab with no recorded edits. When it (or any
+  new asset editor) gains authoring, it adopts the phase-05 `useTabSnapshotHistory` hook by supplying
+  `read`/`write`/`equals` — the per-tab keying, keybindings, Edit menu, and mouse Back/Forward all
+  already dispatch generically over `activeViewTabId`. The one precondition (carried in phase 06's
+  recipe): the editor must keep a local model + a single replayable apply command. Designing the asset
+  editor that way makes its undo free; an editor that fires fine-grained catalog/disk mutations instead
+  stays on the deferred list.
 - **Mirror the coalescer, don't replace it.** `makeCoalescer` keeps its single-in-flight role for the
   wire; history brackets ride the *same* drag begin/end the gizmo and scrub fields already emit
   (`onDragStart`/`onFieldDragEnd` in `InspectorPanel`, gizmo `begin`/`end` in `ViewportPanel`). The two
@@ -119,6 +173,10 @@ against the existing control surface.
 - Creating an entity then Ctrl+Z removes it (undo-only; redo of a create is disabled).
 - In a material-graph tab: add/connect/move/edit nodes, then Ctrl+Z reverts to the prior graph (canvas
   + engine preview), independently of the scene tab's history.
+- The snapshot history is a **reusable hook**, not material-graph-specific: a new editable asset tab
+  (the rig/asset editor) gains undo/redo by supplying `read`/`write`/`equals` to
+  `useTabSnapshotHistory`, with no change to the history core, keybindings, menu, or mouse handler — the
+  path is written up as a recipe in the docs page.
 - Mouse Back = undo and Forward = redo, routed to the active tab's history; the webview never navigates
   (no SPA reload) and Alt+Left/Right are trapped too.
 - The Edit menu shows Undo/Redo with correct enabled/disabled state and the next entry's label, scoped
@@ -144,8 +202,8 @@ assertion lands in phase 6). Phases are dependency-ordered and non-overlapping.
 | [2 — route the in-scope scene edits through history](phase-02-route-scene-edits.md) | every in-scope scene-tab mutation records an `UndoableEdit` when it fires; gizmo/scrub bursts collapse to one entry per gesture via the existing drag brackets, discrete edits push one each. | NOT STARTED |
 | [3 — keybindings + Edit menu](phase-03-keybindings-and-menu.md) | rebindable `edit.undo`/`edit.redo` (Ctrl+Z, Ctrl+Shift+Z + Ctrl+Y), a global handler dispatching to the active tab's history, and an Edit menu with correct enabled/disabled + next-entry label. | NOT STARTED |
 | [4 — mouse Back/Forward → undo/redo + kill the webview default navigation](phase-04-mouse-back-forward.md) | mouse button 3 = undo / 4 = redo across the app, and the webview's default Back/Forward (incl. Alt+Left/Right) is suppressed so no input ever navigates the webview. | NOT STARTED |
-| [5 — per-tab material-graph history](phase-05-material-graph-history.md) | each material-graph tab gets its own history keyed by its `ViewTab.id`, snapshotting the `MaterialGraph` before/after each debounced apply; undo loads the prior graph into the canvas + pushes it to the engine. | NOT STARTED |
-| [6 — edge cases, hardening, docs, e2e](phase-06-edge-cases-and-docs.md) | entity-create redo handling, history invalidation on project load / scene swap / play mode, the poll/replay race, the docs page, and the one reachable e2e assertion. | NOT STARTED |
+| [5 — per-tab snapshot history (reusable hook)](phase-05-material-graph-history.md) | a reusable `useTabSnapshotHistory` hook for any editable tab (local model + one apply command), wired to the material graph as its first consumer; the seam the asset editor plugs into by supplying `read`/`write`/`equals`. | NOT STARTED |
+| [6 — edge cases, the extension recipe, docs, e2e](phase-06-edge-cases-and-docs.md) | entity-create redo handling, history invalidation on project load / scene swap / play mode, the poll/replay race, the **extension recipe** (Shape A inverse-command vs Shape B snapshot tab, asset editor worked), the docs page, and the one reachable e2e assertion. | NOT STARTED |
 
 ## Explicitly OUT (deferred)
 
