@@ -61,15 +61,6 @@ namespace se
         return json{};
     }
 
-    auto asString(const json& value, std::string fallback) -> std::string
-    {
-        if (value.is_string())
-        {
-            return value.get<std::string>();
-        }
-        return fallback;
-    }
-
     auto viewIdFromWire(const std::string& wire) -> Result<ViewId>
     {
         if (wire == "scene")
@@ -85,7 +76,11 @@ namespace se
 
     auto viewIdWire(ViewId view) -> std::string
     {
-        return view == ViewId::AssetPreview ? "assetPreview" : "scene";
+        if (view == ViewId::AssetPreview)
+        {
+            return "assetPreview";
+        }
+        return "scene";
     }
 
     auto resolveEntity(EngineContext& ctx, const json& params) -> Result<Entity>
@@ -150,11 +145,6 @@ namespace se
     {
         return EntityRef{ WireUuid{ getComponent<IdComponent>(scene, entity).id.value },
                           getComponent<NameComponent>(scene, entity).name };
-    }
-
-    auto entityRef(Scene& scene, Entity entity) -> json
-    {
-        return dtoToJson(entityRefDto(scene, entity));
     }
 
     void registerBuiltinCommands(CommandRegistry& reg)

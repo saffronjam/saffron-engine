@@ -76,7 +76,6 @@ export namespace se
     // params[name] if present, else the index-th element of params["args"], else null.
     // Lets every command accept either `--name value` or a bare positional.
     auto positionalOr(const json& params, const std::string& name, std::size_t index) -> json;
-    auto asString(const json& value, std::string fallback) -> std::string;
 
     // The render-view wire string <-> ViewId mapping, the single place the control layer translates a
     // view name (set-active-view / set-viewport-size). "scene" -> Scene, "assetPreview" -> AssetPreview.
@@ -85,10 +84,6 @@ export namespace se
 
     auto resolveEntity(EngineContext& ctx, const json& params) -> Result<Entity>;
     auto entityRefDto(Scene& scene, Entity entity) -> EntityRef;
-    auto entityRef(Scene& scene, Entity entity) -> json;
-
-    // Builds the render-stats DTO.
-    auto renderStatsJson(Renderer& renderer) -> json;
 
     // The built-in commands, grouped by concern. Registered in render → scene → asset
     // order (help/list iterate the registry in insertion order).
