@@ -4,6 +4,7 @@ import {
   type DockLayout,
   type DockLeaf,
   type DockPanelId,
+  allOpenPanels,
   DEFAULT_LEAF,
   defaultAssetEditorLayout,
   defaultSceneLayout,
@@ -21,6 +22,7 @@ import {
   removePanel,
   renderedChildIds,
   reorderTab,
+  resetLayoutPreservingOpen,
   splitLeaf,
   subtreeMinPx,
   validate,
@@ -69,23 +71,44 @@ describe("default factories", () => {
     expect(leafTabs(n, "leaf:bottom")).toEqual([]);
   });
 
-  test("defaultAssetEditorLayout: locked preview, vertical root over horizontal row", () => {
+  test("defaultAssetEditorLayout: horizontal root [aeLeft | content | aeRight], locked preview", () => {
     const l = defaultAssetEditorLayout();
     const root = l.nodes[l.rootId];
-    expect(root.type === "branch" && root.orientation).toBe("vertical");
+    expect(root.type === "branch" && root.orientation).toBe("horizontal");
+    expect(root.type === "branch" && root.children).toEqual([
+      "leaf:aeLeft",
+      "branch:ae-content",
+      "leaf:aeRight",
+    ]);
+    const content = l.nodes["branch:ae-content"];
+    expect(content.type === "branch" && content.orientation).toBe("vertical");
+    expect(content.type === "branch" && content.children).toEqual([
+      "branch:ae-row",
+      "leaf:assetTimeline",
+      "leaf:aeBottom",
+    ]);
     const preview = l.nodes["leaf:preview"];
     expect(isLeaf(preview) && preview.locked).toBe(true);
     const row = l.nodes["branch:ae-row"];
     expect(row.type === "branch" && row.orientation).toBe("horizontal");
+    // The three dedicated empty edge docks are persistent so their reveal bands never dangle.
+    for (const id of ["leaf:aeLeft", "leaf:aeRight", "leaf:aeBottom"]) {
+      const node = l.nodes[id];
+      expect(isLeaf(node) && node.persistent).toBe(true);
+    }
   });
 
   test("defaultAssetEditorLayout survives normalize (locked preview + persistent empties kept)", () => {
     const n = normalize(defaultAssetEditorLayout());
     expect(n.nodes["leaf:preview"]).toBeDefined();
-    // skeleton/clips/assetTimeline start empty + persistent (capability gating fills them).
+    // skeleton/clips/assetTimeline + the edge docks start empty + persistent (capability gating fills
+    // skeleton/clips/assetTimeline; the edge docks stay empty until a drop).
     expect(leafTabs(n, "leaf:skeleton")).toEqual([]);
     expect(n.nodes["leaf:skeleton"]).toBeDefined();
     expect(n.nodes["leaf:assetTimeline"]).toBeDefined();
+    expect(n.nodes["leaf:aeLeft"]).toBeDefined();
+    expect(n.nodes["leaf:aeRight"]).toBeDefined();
+    expect(n.nodes["leaf:aeBottom"]).toBeDefined();
   });
 
   test("a static asset (no rig/clips) renders only the locked preview", () => {
@@ -429,5 +452,47 @@ describe("openPanelResolve", () => {
     expect(r.leafId).not.toBe("v");
     const root = r.layout.nodes[r.layout.rootId];
     expect(root.type).toBe("branch");
+  });
+});
+
+describe("resetLayoutPreservingOpen", () => {
+  test("keeps open tools open but snaps them back to their default leaves", () => {
+    // Drag material + timeline out of their homes into the leftBottom trio leaf.
+    let l = defaultSceneLayout();
+    l = movePanel(l, "material", { kind: "tab", leafId: "leaf:leftBottom", index: 3 });
+    l = movePanel(l, "timeline", { kind: "tab", leafId: "leaf:leftBottom", index: 4 });
+    const open = allOpenPanels(l);
+    expect(open).toContain("material");
+    expect(open).toContain("timeline");
+
+    const reset = resetLayoutPreservingOpen("scene", open);
+    // Still open — but back at their canonical leaves. The timeline's home is the Assets group.
+    expect(findPanelLeaf(reset, "material")).toBe("leaf:right");
+    expect(findPanelLeaf(reset, "timeline")).toBe("leaf:assets");
+    // Structural panels keep their home, untouched.
+    expect(leafTabs(reset, "leaf:leftBottom")).toEqual(["inspector", "environment", "render"]);
+    expect(findPanelLeaf(reset, "assets")).toBe("leaf:assets");
+  });
+
+  test("a tree with no extra tools resets to exactly the default node set", () => {
+    const reset = resetLayoutPreservingOpen("scene", allOpenPanels(defaultSceneLayout()));
+    expect(Object.keys(reset.nodes).sort()).toEqual(Object.keys(defaultSceneLayout().nodes).sort());
+  });
+
+  test("asset editor: an open skeleton tab returns to its default leaf", () => {
+    let l = insertPanel(defaultAssetEditorLayout(), "skeleton", "leaf:skeleton", 0);
+    l = movePanel(l, "skeleton", { kind: "tab", leafId: "leaf:clips", index: 0 });
+    const reset = resetLayoutPreservingOpen("assetEditor", allOpenPanels(l));
+    expect(findPanelLeaf(reset, "skeleton")).toBe("leaf:skeleton");
+  });
+});
+
+describe("assets closable", () => {
+  test("leaf:assets is persistent and assets is no longer structurally required", () => {
+    const closed = normalize(removePanel(defaultSceneLayout(), "assets"));
+    expect(findPanelLeaf(closed, "assets")).toBeNull();
+    // persistent: the leaf collapses (reclaims space) but stays in the model so reopen lands home.
+    expect(closed.nodes["leaf:assets"]).toBeDefined();
+    expect(hasRequiredPanels(closed, "scene")).toBe(true);
   });
 });

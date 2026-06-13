@@ -748,6 +748,7 @@ export function defaultSceneLayout(): DockLayout {
         id: "leaf:assets",
         tabs: ["assets"],
         activeTab: "assets",
+        persistent: true,
       },
       "leaf:bottom": {
         type: "leaf",
@@ -767,9 +768,12 @@ export function defaultSceneLayout(): DockLayout {
   };
 }
 
-/// The asset-editor tree: a horizontal `skeleton | preview(locked) | clips` row over a bottom
-/// `assetTimeline`. Panel presence stays capability-gated via `openPanel`/`normalize`, never a
-/// second render branch.
+/// The asset-editor tree: a horizontal root [aeLeft | content | aeRight], where `content` is a
+/// vertical [skeleton | preview(locked) | clips horizontal row, over `assetTimeline`, over
+/// `aeBottom`]. `aeLeft`/`aeRight`/`aeBottom` are persistent empty drop regions (mirroring the
+/// Scene's docks) so a panel can dock to any edge even while the timeline occupies its own leaf;
+/// each collapses (reclaims space) while empty. Presence of skeleton/clips/assetTimeline stays
+/// capability-gated via `openPanel`/`normalize`, never a second render branch.
 export function defaultAssetEditorLayout(): DockLayout {
   return {
     version: 1,
@@ -778,9 +782,16 @@ export function defaultAssetEditorLayout(): DockLayout {
       "branch:ae-root": {
         type: "branch",
         id: "branch:ae-root",
+        orientation: "horizontal",
+        children: ["leaf:aeLeft", "branch:ae-content", "leaf:aeRight"],
+        sizes: { "leaf:aeLeft": 16, "branch:ae-content": 68, "leaf:aeRight": 16 },
+      },
+      "branch:ae-content": {
+        type: "branch",
+        id: "branch:ae-content",
         orientation: "vertical",
-        children: ["branch:ae-row", "leaf:assetTimeline"],
-        sizes: { "branch:ae-row": 78, "leaf:assetTimeline": 22 },
+        children: ["branch:ae-row", "leaf:assetTimeline", "leaf:aeBottom"],
+        sizes: { "branch:ae-row": 72, "leaf:assetTimeline": 16, "leaf:aeBottom": 12 },
       },
       "branch:ae-row": {
         type: "branch",
@@ -821,6 +832,27 @@ export function defaultAssetEditorLayout(): DockLayout {
         activeTab: null,
         persistent: true,
       },
+      "leaf:aeRight": {
+        type: "leaf",
+        id: "leaf:aeRight",
+        tabs: [],
+        activeTab: null,
+        persistent: true,
+      },
+      "leaf:aeLeft": {
+        type: "leaf",
+        id: "leaf:aeLeft",
+        tabs: [],
+        activeTab: null,
+        persistent: true,
+      },
+      "leaf:aeBottom": {
+        type: "leaf",
+        id: "leaf:aeBottom",
+        tabs: [],
+        activeTab: null,
+        persistent: true,
+      },
     },
   };
 }
@@ -841,7 +873,7 @@ export const DEFAULT_LEAF: Record<DockPanelId, DockNodeId> = {
   stats: "leaf:right",
   profiler: "leaf:right",
   material: "leaf:right",
-  timeline: "leaf:bottom",
+  timeline: "leaf:assets",
   hierarchy: "leaf:hierarchy",
   assets: "leaf:assets",
   viewport: "leaf:viewport",
@@ -850,6 +882,27 @@ export const DEFAULT_LEAF: Record<DockPanelId, DockNodeId> = {
   clips: "leaf:clips",
   assetTimeline: "leaf:assetTimeline",
 };
+
+/// Reset a kind's tree to its default positions WITHOUT closing the panels currently open:
+/// rebuild the default layout, then re-insert every open panel the default doesn't already carry
+/// into its canonical `DEFAULT_LEAF`. Structural panels (already in the default) keep their spot;
+/// the closable tools snap back to their home leaf. Pure — the caller passes the open panel ids.
+export function resetLayoutPreservingOpen(kind: DockSpaceKind, open: DockPanelId[]): DockLayout {
+  let layout = defaultDockLayout(kind);
+  const present = new Set<DockPanelId>(allOpenPanels(layout));
+  for (const id of open) {
+    if (present.has(id)) {
+      continue;
+    }
+    const leafId = DEFAULT_LEAF[id];
+    layout =
+      hasNode(layout, leafId) && isLeaf(layout.nodes[leafId])
+        ? insertPanel(layout, id, leafId, leafTabs(layout, leafId).length)
+        : openPanelResolve(layout, id, { defaultLeafId: leafId }).layout;
+    present.add(id);
+  }
+  return normalize(layout);
+}
 
 const PANEL_IDS_BY_KIND: Record<DockSpaceKind, ReadonlySet<string>> = {
   scene: new Set(SCENE_PANEL_IDS),
@@ -865,7 +918,7 @@ export function knownPanelIds(kind: DockSpaceKind): ReadonlySet<string> {
 /// saved before these panels joined the tree); it is discarded for the default factory, since
 /// there is no layout migration — start fresh.
 const REQUIRED_PANELS: Record<DockSpaceKind, DockPanelId[]> = {
-  scene: ["inspector", "environment", "render", "hierarchy", "assets", "viewport"],
+  scene: ["inspector", "environment", "render", "hierarchy", "viewport"],
   assetEditor: ["preview"],
 };
 
