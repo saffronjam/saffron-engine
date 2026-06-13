@@ -347,8 +347,7 @@ export namespace se
     };
 
     /// How a texture's bytes are interpreted on upload. Recovered from a container chunk flag (embedded)
-    /// or a `.smeta` sidecar (standalone); supersedes the older `AssetEntry.linear` bool. `Auto` defers
-    /// the choice to a heuristic at scan time.
+    /// or a `.smeta` sidecar (standalone). `Auto` defers the choice to a heuristic at scan time.
     enum class Colorspace : u8
     {
         Auto,
@@ -371,7 +370,7 @@ export namespace se
         bool rigged = false;  // belongs to a rigged .smodel (the container has a skin); scan-derived
         Uuid container;       // 0 = standalone file; else the owning model's id
         i32 chunk = -1;       // TOC chunk index inside the container (-1 = standalone / n/a)
-        Colorspace colorspace = Colorspace::Auto;  // texture colorspace provenance (phase 10 fills it)
+        Colorspace colorspace = Colorspace::Auto;  // texture: how its bytes are interpreted on upload
     };
 
     struct AssetCatalog
@@ -612,7 +611,11 @@ export namespace se
             }
         };
         visit(visit, root.handle);
-        return found.handle != entt::null ? found : root;
+        if (found.handle != entt::null)
+        {
+            return found;
+        }
+        return root;
     }
 
     // The model instance's root: the nearest ancestor (including `entity`) carrying a
@@ -627,9 +630,14 @@ export namespace se
             {
                 return Entity{ cursor };
             }
-            cursor = scene.registry.all_of<RelationshipComponent>(cursor)
-                         ? scene.registry.get<RelationshipComponent>(cursor).parentHandle
-                         : entt::null;
+            if (scene.registry.all_of<RelationshipComponent>(cursor))
+            {
+                cursor = scene.registry.get<RelationshipComponent>(cursor).parentHandle;
+            }
+            else
+            {
+                cursor = entt::null;
+            }
         }
         return entity;
     }
@@ -697,8 +705,12 @@ export namespace se
                 auto it = uuidToHandle.find(rel.parent.value);
                 if (it == uuidToHandle.end() || it->second == entity.handle)
                 {
-                    logWarn(std::format("relationship parent {} {}; treating as root", rel.parent.value,
-                                        it == uuidToHandle.end() ? "not found" : "is the entity itself"));
+                    std::string_view reason = "is the entity itself";
+                    if (it == uuidToHandle.end())
+                    {
+                        reason = "not found";
+                    }
+                    logWarn(std::format("relationship parent {} {}; treating as root", rel.parent.value, reason));
                     rel.parent = Uuid{ 0 };
                     return;
                 }
@@ -874,9 +886,23 @@ export namespace se
             {
                 continue;
             }
-            const glm::mat4 inverseBind = i < skin.inverseBind.size() ? skin.inverseBind[i] : glm::mat4(1.0f);
+            glm::mat4 inverseBind{ 1.0f };
+            if (i < skin.inverseBind.size())
+            {
+                inverseBind = skin.inverseBind[i];
+            }
             out[i] = worldMatrix(scene, Entity{ bone }) * inverseBind;
         }
+    }
+
+    // A quaternion in the engine's stable Rz*Ry*Rx Euler convention. glm::eulerAngles is
+    // numerically unstable at yaw +-90 degrees (its asin/atan2 split poisons pitch/roll), so
+    // go through the ZYX matrix extraction. The one place quaternions become a TransformComponent Euler.
+    auto quatToEulerZYX(const glm::quat& q) -> glm::vec3
+    {
+        glm::vec3 euler;
+        glm::extractEulerAngleZYX(glm::mat4_cast(q), euler.z, euler.y, euler.x);
+        return euler;
     }
 
     // Decomposes `local` into the entity's TransformComponent. TRS-only — under a sheared
@@ -894,14 +920,9 @@ export namespace se
         {
             return false;
         }
-        // Euler XYZ via the stable ZYX matrix extraction: glm::quat(eulerXYZ) composes
-        // Rz*Ry*Rx, and glm::eulerAngles is numerically unstable at yaw +-90 degrees
-        // (its asin/atan2 split poisons pitch/roll there).
-        glm::vec3 euler;
-        glm::extractEulerAngleZYX(glm::mat4_cast(orientation), euler.z, euler.y, euler.x);
         TransformComponent& transform = getComponent<TransformComponent>(scene, entity);
         transform.translation = translation;
-        transform.rotation = euler;
+        transform.rotation = quatToEulerZYX(orientation);
         transform.scale = scale;
         return true;
     }
@@ -944,15 +965,28 @@ export namespace se
             addComponent<RelationshipComponent>(scene, child);
         }
 
-        const glm::mat4 childWorld = keepWorld ? composeWorldMatrix(scene, child) : glm::mat4{ 1.0f };
+        glm::mat4 childWorld{ 1.0f };
+        if (keepWorld)
+        {
+            childWorld = composeWorldMatrix(scene, child);
+        }
 
-        getComponent<RelationshipComponent>(scene, child).parent =
-            newParent.handle == entt::null ? Uuid{ 0 } : getComponent<IdComponent>(scene, newParent).id;
+        if (newParent.handle == entt::null)
+        {
+            getComponent<RelationshipComponent>(scene, child).parent = Uuid{ 0 };
+        }
+        else
+        {
+            getComponent<RelationshipComponent>(scene, child).parent = getComponent<IdComponent>(scene, newParent).id;
+        }
 
         if (keepWorld && hasComponent<TransformComponent>(scene, child))
         {
-            const glm::mat4 parentWorld =
-                newParent.handle == entt::null ? glm::mat4{ 1.0f } : composeWorldMatrix(scene, newParent);
+            glm::mat4 parentWorld{ 1.0f };
+            if (newParent.handle != entt::null)
+            {
+                parentWorld = composeWorldMatrix(scene, newParent);
+            }
             setLocalFromMatrix(scene, child, glm::inverse(parentWorld) * childWorld);
         }
 
@@ -1301,7 +1335,7 @@ export namespace se
     }
 
     // Headless round-trip check: build a registry, populate a scene, write + read
-    // it back, and confirm the data survives. Replaces the old ECS smoke test.
+    // it back, and confirm the data survives.
     void runSceneSerializationSelfTest()
     {
         ComponentRegistry reg;

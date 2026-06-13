@@ -22,10 +22,26 @@ namespace se
 {
     void syncNativeGizmo(SceneEditContext& ctx)
     {
-        ctx.nativeGizmo.mode = ctx.gizmoOp == GizmoOp::Rotate  ? NativeGizmoMode::Rotate
-                               : ctx.gizmoOp == GizmoOp::Scale ? NativeGizmoMode::Scale
-                                                               : NativeGizmoMode::Translate;
-        ctx.nativeGizmo.space = ctx.gizmoSpace == GizmoSpace::Local ? NativeGizmoSpace::Local : NativeGizmoSpace::World;
+        switch (ctx.gizmoOp)
+        {
+        case GizmoOp::Rotate:
+            ctx.nativeGizmo.mode = NativeGizmoMode::Rotate;
+            break;
+        case GizmoOp::Scale:
+            ctx.nativeGizmo.mode = NativeGizmoMode::Scale;
+            break;
+        case GizmoOp::Translate:
+            ctx.nativeGizmo.mode = NativeGizmoMode::Translate;
+            break;
+        }
+        if (ctx.gizmoSpace == GizmoSpace::Local)
+        {
+            ctx.nativeGizmo.space = NativeGizmoSpace::Local;
+        }
+        else
+        {
+            ctx.nativeGizmo.space = NativeGizmoSpace::World;
+        }
     }
 
     auto viewportProject(const CameraView& cam, u32 width, u32 height, glm::vec3 world) -> GizmoProjection
@@ -342,9 +358,7 @@ namespace se
         }
         gizmo.startParentWorld = composeWorldMatrix(editor.scene, Entity{ parent });
         gizmo.startTranslation = worldTranslation(editor.scene, target);
-        glm::vec3 euler;
-        glm::extractEulerAngleZYX(glm::mat4_cast(worldRotation(editor.scene, target)), euler.z, euler.y, euler.x);
-        gizmo.startRotation = euler;
+        gizmo.startRotation = quatToEulerZYX(worldRotation(editor.scene, target));
     }
 
     void applyNativeGizmoDrag(SceneEditContext& editor, const CameraView& cam, u32 width, u32 height, glm::vec2 mouse)
@@ -437,12 +451,9 @@ namespace se
                 rebasePreservedChildren(editor);
                 return;
             }
-            // Peel the frozen parent rotation off the world result, then extract a stable
-            // Euler (extractEulerAngleZYX matches the engine's Rz*Ry*Rx convention).
+            // Peel the frozen parent rotation off the world result, then convert to the engine Euler.
             const glm::quat localRot = glm::inverse(rotationOf(gizmo.startParentWorld)) * glm::quat(worldEuler);
-            glm::vec3 euler;
-            glm::extractEulerAngleZYX(glm::mat4_cast(localRot), euler.z, euler.y, euler.x);
-            transform.rotation = euler;
+            transform.rotation = quatToEulerZYX(localRot);
             rebasePreservedChildren(editor);
             return;
         }
@@ -520,26 +531,29 @@ namespace se
                       [&](const TransformSmoothTarget& entry) { return entry.entity.handle == entity.handle; });
     }
 
-    // Exponential step toward target; true once within epsilon (current then snaps exact).
-    template <typename T>
-    static auto blendToward(T& current, const T& target, f32 alpha, f32 epsilon) -> bool
+    namespace
     {
-        current += (target - current) * alpha;
-        bool close;
-        if constexpr (std::is_same_v<T, f32>)
+        // Exponential step toward target; true once within epsilon (current then snaps exact).
+        template <typename T>
+        auto blendToward(T& current, const T& target, f32 alpha, f32 epsilon) -> bool
         {
-            close = std::abs(target - current) <= epsilon;
+            current += (target - current) * alpha;
+            bool close;
+            if constexpr (std::is_same_v<T, f32>)
+            {
+                close = std::abs(target - current) <= epsilon;
+            }
+            else
+            {
+                close = glm::all(glm::lessThanEqual(glm::abs(target - current), T{ epsilon }));
+            }
+            if (!close)
+            {
+                return false;
+            }
+            current = target;
+            return true;
         }
-        else
-        {
-            close = glm::all(glm::lessThanEqual(glm::abs(target - current), T{ epsilon }));
-        }
-        if (!close)
-        {
-            return false;
-        }
-        current = target;
-        return true;
     }
 
     void stepEditSmoothing(SceneEditContext& editor, f32 dt)

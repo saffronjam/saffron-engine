@@ -51,12 +51,20 @@ namespace se
 
     auto gizmoSpaceName(GizmoSpace space) -> const char*
     {
-        return space == GizmoSpace::Local ? "local" : "world";
+        if (space == GizmoSpace::Local)
+        {
+            return "local";
+        }
+        return "world";
     }
 
     auto gizmoSpaceFromName(const std::string& name) -> GizmoSpace
     {
-        return name == "local" ? GizmoSpace::Local : GizmoSpace::World;
+        if (name == "local")
+        {
+            return GizmoSpace::Local;
+        }
+        return GizmoSpace::World;
     }
 
     auto newSceneEditContext() -> SceneEditContext*
