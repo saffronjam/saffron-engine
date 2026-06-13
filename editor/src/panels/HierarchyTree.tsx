@@ -490,7 +490,7 @@ function ComponentSubrows({ entity, depth }: { entity: EntityListEntry; depth: n
 /// one-shot focus signal that scrolls the matching section into view.
 function SubRow({ entity, name, depth }: { entity: EntityListEntry; name: string; depth: number }) {
   const selectEntity = useEditorStore((s) => s.selectEntity);
-  const setBottomTab = useEditorStore((s) => s.setBottomTab);
+  const openPanel = useEditorStore((s) => s.openPanel);
   const setFocusComponent = useEditorStore((s) => s.setFocusComponent);
   return (
     <button
@@ -500,7 +500,7 @@ function SubRow({ entity, name, depth }: { entity: EntityListEntry; name: string
       style={{ paddingLeft: Math.min(depth, MAX_INDENT_DEPTH) * INDENT_PX + 24 }}
       onClick={() => {
         selectEntity(entity.id);
-        setBottomTab("inspector");
+        openPanel("inspector");
         setFocusComponent(name);
       }}
     >

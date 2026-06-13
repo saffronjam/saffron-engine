@@ -9,15 +9,19 @@ import {
   Move3D,
   Pause,
   Play,
+  Redo2,
   Rotate3D,
   Scaling,
   Settings,
   Square,
   StepForward,
+  Undo2,
   Wrench,
 } from "lucide-react";
 import { client } from "../control/client";
 import { useEditorStore } from "../state/store";
+import { canRedo, canUndo, redoLabel, undoLabel } from "../lib/undo";
+import { useShallow } from "zustand/react/shallow";
 import { COMMANDS_BY_ID, bindingFor, formatBinding, type CommandId } from "../lib/keybindings";
 import { notify } from "../lib/flash";
 import type { GizmoState } from "../protocol";
@@ -27,11 +31,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ProjectMenu } from "../app/ProjectMenu";
 import { AlarmBadge } from "../components/AlarmBadge";
+import { SCENE_PANEL_REGISTRY } from "@/components/dock/panelRegistry";
 import { logRender } from "../lib/renderLog";
+
+/// The closable Scene panels, in registry order — the Panels-menu reopen list.
+const SCENE_PANEL_MENU = Object.values(SCENE_PANEL_REGISTRY).filter((def) => def.closable);
 
 type GizmoOp = GizmoState["op"];
 type GizmoSpace = GizmoState["space"];
@@ -44,9 +53,26 @@ export function Topbar() {
   const playState = useEditorStore((s) => s.playState);
   const setPlayState = useEditorStore((s) => s.setPlayState);
   const keyBindings = useEditorStore((s) => s.keyBindings);
-  const openRightTool = useEditorStore((s) => s.openRightTool);
-  const openBottomTool = useEditorStore((s) => s.openBottomTool);
+  const openPanel = useEditorStore((s) => s.openPanel);
+  const resetDockLayout = useEditorStore((s) => s.resetDockLayout);
   const setSettingsOpen = useEditorStore((s) => s.setSettingsOpen);
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
+  // The active main tab's history drives the undo/redo buttons' enabled state + labels.
+  const history = useEditorStore(
+    useShallow((s) => {
+      const h = s.historyByTab[s.activeViewTabId];
+      // The scene tab targets the throwaway play duplicate while playing, so its undo is
+      // paused until Stop (the pre-play history is preserved, not cleared).
+      const locked = s.activeViewTabId === "scene" && s.playState !== "edit";
+      return {
+        canUndo: !locked && !!h && canUndo(h),
+        canRedo: !locked && !!h && canRedo(h),
+        undoLabel: h ? undoLabel(h) : null,
+        redoLabel: h ? redoLabel(h) : null,
+      };
+    }),
+  );
 
   const ready = phase === "ready";
   // The gizmo is hidden during play (the engine rejects gizmo commands), so its
@@ -106,8 +132,44 @@ export function Topbar() {
         playState === "edit" ? "border-border" : "border-amber-500/60 bg-amber-500/5"
       }`}
     >
-      <div className="flex min-w-0 items-baseline gap-2">
+      <div className="flex min-w-0 items-center gap-2">
         <ProjectMenu />
+        <div className="flex items-center gap-0.5" role="group" aria-label="History">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => void undo()}
+                disabled={!ready || !history.canUndo}
+                aria-label="Undo"
+              >
+                <Undo2 />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {history.undoLabel ? `Undo ${history.undoLabel}` : "Undo"} ({shortcut("edit.undo")})
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => void redo()}
+                disabled={!ready || !history.canRedo}
+                aria-label="Redo"
+              >
+                <Redo2 />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {history.redoLabel ? `Redo ${history.redoLabel}` : "Redo"} ({shortcut("edit.redo")})
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
       <div className="flex items-center gap-2.5">
         <div
@@ -288,7 +350,7 @@ export function Topbar() {
                 type="button"
                 size="icon-sm"
                 variant="ghost"
-                onClick={() => openBottomTool("timeline")}
+                onClick={() => openPanel("timeline")}
                 aria-label="Timeline"
               >
                 <Clapperboard />
@@ -303,12 +365,14 @@ export function Topbar() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
-              <DropdownMenuItem onSelect={() => openRightTool("stats")}>Stats</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => openRightTool("profiler")}>
-                Profiler
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => openRightTool("material")}>
-                Material
+              {SCENE_PANEL_MENU.map((def) => (
+                <DropdownMenuItem key={def.id} onSelect={() => openPanel(def.id)}>
+                  {def.title}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => resetDockLayout("scene")}>
+                Reset layout
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

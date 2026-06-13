@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 export function AlarmBadge() {
   const activeAlarms = useEditorStore((s) => s.activeAlarms);
-  const openRightTool = useEditorStore((s) => s.openRightTool);
+  const openPanel = useEditorStore((s) => s.openPanel);
 
   if (activeAlarms.length === 0) {
     return null;
@@ -28,7 +28,7 @@ export function AlarmBadge() {
           size="xs"
           variant="ghost"
           className={`gap-1 ${tone}`}
-          onClick={() => openRightTool(target)}
+          onClick={() => openPanel(target)}
           aria-label="Active performance alarms"
         >
           <TriangleAlert className="size-3.5" />
