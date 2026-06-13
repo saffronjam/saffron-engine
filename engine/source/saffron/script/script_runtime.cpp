@@ -252,6 +252,50 @@ namespace se
             return {};
         }
 
+        void pushVec3Table(lua_State* L, f32 x, f32 y, f32 z)
+        {
+            lua_createtable(L, 0, 3);
+            lua_pushnumber(L, static_cast<lua_Number>(x));
+            lua_setfield(L, -2, "x");
+            lua_pushnumber(L, static_cast<lua_Number>(y));
+            lua_setfield(L, -2, "y");
+            lua_pushnumber(L, static_cast<lua_Number>(z));
+            lua_setfield(L, -2, "z");
+        }
+
+        // Calls self:<name>(other, [point, normal]) for the instance at selfRef. An absent method is
+        // a successful no-op (contact handlers are all optional). Mirrors callInstanceMethod's stack.
+        auto callContactHandler(ScriptHost& host, int selfRef, const char* name, Entity other, bool withManifold,
+                                f32 px, f32 py, f32 pz, f32 nx, f32 ny, f32 nz) -> Result<void>
+        {
+            lua_State* L = host.vm.state;
+            lua_pushcfunction(L, tracebackHandler);
+            const int msghIndex = lua_gettop(L);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, selfRef);
+            lua_getfield(L, -1, name);
+            if (!lua_isfunction(L, -1))
+            {
+                lua_pop(L, 3);  // nil handler, self, msgh
+                return {};
+            }
+            lua_pushvalue(L, -2);                                                              // self (arg 1)
+            auto pushed = luabridge::push(L, ScriptEntity{ .entity = other, .host = &host });  // other (arg 2)
+            static_cast<void>(pushed);
+            int nargs = 2;
+            if (withManifold)
+            {
+                pushVec3Table(L, px, py, pz);
+                pushVec3Table(L, nx, ny, nz);
+                nargs = 4;
+            }
+            if (lua_pcall(L, nargs, 0, msghIndex) != LUA_OK)
+            {
+                return Err(popError(L, 3));  // error, self, msgh
+            }
+            lua_pop(L, 2);  // self, msgh
+            return {};
+        }
+
         // Loads + runs the script file, which must return a class table carrying
         // on_update. The ref is cached per path for the VM's lifetime.
         auto loadClass(ScriptHost& host, const std::string& path) -> Result<int>
@@ -444,6 +488,38 @@ namespace se
                                  });
                              return found;
                          })
+            // Cast a ray against the live physics world: se.raycast(ox,oy,oz, dx,dy,dz, maxDist)
+            // returns { hit, distance, point={x,y,z}, normal={x,y,z}, entity=<se.Entity or nil> }.
+            .addFunction(
+                "raycast",
+                [&host](float ox, float oy, float oz, float dx, float dy, float dz, float maxDist) -> luabridge::LuaRef
+                {
+                    luabridge::LuaRef result = luabridge::newTable(host.vm.state);
+                    if (!host.raycast)
+                    {
+                        result["hit"] = false;
+                        return result;
+                    }
+                    const ScriptRayHit hit = host.raycast(ox, oy, oz, dx, dy, dz, maxDist);
+                    result["hit"] = hit.hit;
+                    result["distance"] = hit.distance;
+                    const luabridge::LuaRef point = luabridge::newTable(host.vm.state);
+                    point["x"] = hit.px;
+                    point["y"] = hit.py;
+                    point["z"] = hit.pz;
+                    result["point"] = point;
+                    const luabridge::LuaRef normal = luabridge::newTable(host.vm.state);
+                    normal["x"] = hit.nx;
+                    normal["y"] = hit.ny;
+                    normal["z"] = hit.nz;
+                    result["normal"] = normal;
+                    if (hit.hit && hit.entity != 0 && host.currentScene != nullptr)
+                    {
+                        result["entity"] =
+                            ScriptEntity{ .entity = findEntityByUuid(*host.currentScene, hit.entity), .host = &host };
+                    }
+                    return result;
+                })
             .endNamespace();
 
         host.currentScene = &scene;
@@ -514,6 +590,63 @@ namespace se
                                           .message = std::move(ran.error()) };
                 break;
             }
+        }
+        host.currentScene = nullptr;
+        return failure;
+    }
+
+    auto dispatchContact(ScriptHost& host, Scene& scene, u64 entityA, u64 entityB, bool begin, bool sensor, f32 px,
+                         f32 py, f32 pz, f32 nx, f32 ny, f32 nz) -> std::optional<ScriptRunError>
+    {
+        if (host.vm.state == nullptr || host.instances.empty())
+        {
+            return std::nullopt;
+        }
+        // v1 emits sensor enter/exit + solid Begin; a solid End has no handler.
+        const char* handler = nullptr;
+        bool withManifold = false;
+        if (sensor)
+        {
+            handler = begin ? "on_trigger_enter" : "on_trigger_exit";
+        }
+        else if (begin)
+        {
+            handler = "on_contact";
+            withManifold = true;
+        }
+        if (handler == nullptr)
+        {
+            return std::nullopt;
+        }
+        auto dispatchOne = [&](u64 selfUuid, u64 otherUuid) -> std::optional<ScriptRunError>
+        {
+            if (selfUuid == 0)
+            {
+                return std::nullopt;
+            }
+            const Entity other = findEntityByUuid(scene, otherUuid);
+            for (const ScriptInstance& instance : host.instances)
+            {
+                if (instance.entityUuid != selfUuid)
+                {
+                    continue;
+                }
+                auto ran =
+                    callContactHandler(host, instance.selfRef, handler, other, withManifold, px, py, pz, nx, ny, nz);
+                if (!ran)
+                {
+                    return ScriptRunError{ .entityUuid = instance.entityUuid,
+                                           .script = instance.scriptPath,
+                                           .message = std::move(ran.error()) };
+                }
+            }
+            return std::nullopt;
+        };
+        host.currentScene = &scene;
+        std::optional<ScriptRunError> failure = dispatchOne(entityA, entityB);
+        if (!failure)
+        {
+            failure = dispatchOne(entityB, entityA);
         }
         host.currentScene = nullptr;
         return failure;

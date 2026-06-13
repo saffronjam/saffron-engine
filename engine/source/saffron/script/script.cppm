@@ -15,6 +15,7 @@ extern "C"
 
 #include <expected>
 #include <format>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -74,6 +75,21 @@ export namespace se
         std::string message;
     };
 
+    /// A physics ray hit surfaced to Lua (Jolt-free POD). The Host fills it from raycastWorld; this
+    /// keeps Saffron.Script free of a Physics edge — the binding only ever sees plain components.
+    struct ScriptRayHit
+    {
+        bool hit = false;
+        u64 entity = 0;
+        f32 px = 0.0f;
+        f32 py = 0.0f;
+        f32 pz = 0.0f;
+        f32 nx = 0.0f;
+        f32 ny = 0.0f;
+        f32 nz = 0.0f;
+        f32 distance = 0.0f;
+    };
+
     /// The per-entity script runtime: one VM for the whole play session, class
     /// tables cached by path, instances in deterministic creation order. The scene
     /// is borrowed only while a start/tick/stop call is on the stack; the registry
@@ -86,6 +102,9 @@ export namespace se
         Scene* currentScene = nullptr;
         const ComponentRegistry* currentRegistry = nullptr;
         const std::unordered_set<std::string>* inputKeys = nullptr;
+        // se.raycast bridge: the Host binds this to raycastWorld so the Lua query reaches the live
+        // physics world without Saffron.Script importing Saffron.Physics. Unset = the query misses.
+        std::function<ScriptRayHit(f32, f32, f32, f32, f32, f32, f32)> raycast;
     };
 
     /// Create the VM and instantiate every ScriptComponent slot in the scene:
@@ -100,6 +119,14 @@ export namespace se
     /// failing instance halts the tick and is returned (pause-on-error policy);
     /// the VM and all instances survive.
     auto tickScripts(ScriptHost& host, Scene& scene, f32 dt) -> std::optional<ScriptRunError>;
+
+    /// Dispatch a contact transition to both entities' scripts: a sensor Begin calls
+    /// on_trigger_enter(self, other), a sensor End on_trigger_exit(self, other), a solid Begin
+    /// on_contact(self, other, point, normal). A missing handler is a silent skip; the first
+    /// failing handler is returned (pause-on-error, like tickScripts). point/normal are world
+    /// space, passed as components since this interface stays glm-free.
+    auto dispatchContact(ScriptHost& host, Scene& scene, u64 entityA, u64 entityB, bool begin, bool sensor, f32 px,
+                         f32 py, f32 pz, f32 nx, f32 ny, f32 nz) -> std::optional<ScriptRunError>;
 
     /// Call on_destroy(self) where present, drop every instance + class, and close
     /// the VM. Never touches a scene — safe after the play duplicate is gone.
