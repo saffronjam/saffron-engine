@@ -23,11 +23,16 @@ import { HierarchyPanel } from "../../panels/HierarchyPanel";
 import { AssetsPanel } from "../../panels/AssetsPanel";
 import { ViewportPanel } from "../../panels/ViewportPanel";
 
+/// The Tools-menu group a closable Scene panel belongs to (editor panels vs diagnostics).
+export type PanelGroup = "editing" | "diagnostics";
+
 export interface DockPanelDef {
   id: DockPanelId;
   title: string;
   icon?: LucideIcon;
   closable: boolean;
+  /// Tools-menu grouping for the closable Scene panels (omitted for the rest).
+  group?: PanelGroup;
   /// `always`: stay mounted (hidden) when not the active tab — for panels with expensive
   /// live state (Material's GPU preview, Assets' thumbnails). `onlyWhenVisible`: unmount
   /// when hidden, leaving an empty attached host div.
@@ -62,6 +67,7 @@ export const SCENE_PANEL_REGISTRY: Record<SceneDockPanelId, DockPanelDef> = {
     id: "stats",
     title: "Stats",
     closable: true,
+    group: "diagnostics",
     renderer: "onlyWhenVisible",
     component: RenderStatsPanel,
   },
@@ -69,6 +75,7 @@ export const SCENE_PANEL_REGISTRY: Record<SceneDockPanelId, DockPanelDef> = {
     id: "profiler",
     title: "Profiler",
     closable: true,
+    group: "diagnostics",
     renderer: "onlyWhenVisible",
     component: ProfilerPanel,
   },
@@ -76,6 +83,7 @@ export const SCENE_PANEL_REGISTRY: Record<SceneDockPanelId, DockPanelDef> = {
     id: "material",
     title: "Material",
     closable: true,
+    group: "editing",
     renderer: "always",
     component: MaterialEditorPanel,
   },
@@ -83,6 +91,7 @@ export const SCENE_PANEL_REGISTRY: Record<SceneDockPanelId, DockPanelDef> = {
     id: "timeline",
     title: "Timeline",
     closable: true,
+    group: "editing",
     renderer: "onlyWhenVisible",
     component: TimelinePanel,
   },
@@ -96,7 +105,8 @@ export const SCENE_PANEL_REGISTRY: Record<SceneDockPanelId, DockPanelDef> = {
   assets: {
     id: "assets",
     title: "Assets",
-    closable: false,
+    closable: true,
+    group: "editing",
     renderer: "always",
     component: AssetsPanel,
   },

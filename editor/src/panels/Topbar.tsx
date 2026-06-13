@@ -3,9 +3,9 @@
 /// the engine's single gizmo state (`set-gizmo`/`get-gizmo`). Clicks set `store.gizmo`
 /// optimistically and fire `set-gizmo`; the reconcile poll's `get-gizmo` read keeps it
 /// in sync with external mutations (e.g. `se set-gizmo`).
+import { Fragment } from "react";
 import {
   Anchor,
-  Clapperboard,
   Move3D,
   Pause,
   Play,
@@ -31,16 +31,23 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ProjectMenu } from "../app/ProjectMenu";
 import { AlarmBadge } from "../components/AlarmBadge";
-import { SCENE_PANEL_REGISTRY } from "@/components/dock/panelRegistry";
+import { SCENE_PANEL_REGISTRY, type PanelGroup } from "@/components/dock/panelRegistry";
 import { logRender } from "../lib/renderLog";
 
-/// The closable Scene panels, in registry order — the Panels-menu reopen list.
+/// The closable Scene panels, in registry order — the Tools-menu reopen list.
 const SCENE_PANEL_MENU = Object.values(SCENE_PANEL_REGISTRY).filter((def) => def.closable);
+
+/// Tools-menu groups, in display order.
+const TOOL_GROUPS: { label: string; group: PanelGroup }[] = [
+  { label: "Editing", group: "editing" },
+  { label: "Diagnostics", group: "diagnostics" },
+];
 
 type GizmoOp = GizmoState["op"];
 type GizmoSpace = GizmoState["space"];
@@ -54,7 +61,6 @@ export function Topbar() {
   const setPlayState = useEditorStore((s) => s.setPlayState);
   const keyBindings = useEditorStore((s) => s.keyBindings);
   const openPanel = useEditorStore((s) => s.openPanel);
-  const resetDockLayout = useEditorStore((s) => s.resetDockLayout);
   const setSettingsOpen = useEditorStore((s) => s.setSettingsOpen);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
@@ -344,20 +350,6 @@ export function Topbar() {
       <div className="flex items-center justify-end gap-1.5">
         <AlarmBadge />
         <div className="flex items-center gap-0.5" role="group" aria-label="Tools">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                onClick={() => openPanel("timeline")}
-                aria-label="Timeline"
-              >
-                <Clapperboard />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Timeline</TooltipContent>
-          </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button type="button" size="icon-sm" variant="ghost" aria-label="Tools">
@@ -365,15 +357,19 @@ export function Topbar() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
-              {SCENE_PANEL_MENU.map((def) => (
-                <DropdownMenuItem key={def.id} onSelect={() => openPanel(def.id)}>
-                  {def.title}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => resetDockLayout("scene")}>
-                Reset layout
-              </DropdownMenuItem>
+              {TOOL_GROUPS.filter((g) => SCENE_PANEL_MENU.some((def) => def.group === g.group)).map(
+                (g, gi) => (
+                  <Fragment key={g.group}>
+                    {gi > 0 ? <DropdownMenuSeparator /> : null}
+                    <DropdownMenuLabel>{g.label}</DropdownMenuLabel>
+                    {SCENE_PANEL_MENU.filter((def) => def.group === g.group).map((def) => (
+                      <DropdownMenuItem key={def.id} onSelect={() => openPanel(def.id)}>
+                        {def.title}
+                      </DropdownMenuItem>
+                    ))}
+                  </Fragment>
+                ),
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
           <Button

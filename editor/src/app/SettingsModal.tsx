@@ -34,12 +34,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-/// Sections of the settings modal; just Keyboard today, structured for more.
-const SECTIONS = [{ id: "keyboard", label: "Keyboard" }] as const;
+/// Sections of the settings modal.
+const SECTIONS = [
+  { id: "keyboard", label: "Keyboard" },
+  { id: "layout", label: "Layout" },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
 
 export function SettingsModal() {
   const open = useEditorStore((s) => s.settingsOpen);
   const setSettingsOpen = useEditorStore((s) => s.setSettingsOpen);
+  const [section, setSection] = useState<SectionId>("keyboard");
   const [capturingId, setCapturingId] = useState<CommandId | null>(null);
 
   // Closing the modal always leaves capture mode behind.
@@ -67,20 +73,60 @@ export function SettingsModal() {
         </DialogHeader>
         <div className="flex min-h-0 flex-1 gap-4">
           <nav className="w-32 flex-none border-r border-border pr-2">
-            {SECTIONS.map((section) => (
+            {SECTIONS.map((sec) => (
               <button
-                key={section.id}
+                key={sec.id}
                 type="button"
-                className="w-full rounded-md bg-accent px-2.5 py-1.5 text-left text-sm font-medium text-foreground"
+                onClick={() => {
+                  setSection(sec.id);
+                  setCapturingId(null);
+                }}
+                className={cn(
+                  "w-full rounded-md px-2.5 py-1.5 text-left text-sm font-medium",
+                  section === sec.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+                )}
               >
-                {section.label}
+                {sec.label}
               </button>
             ))}
           </nav>
-          <KeyboardSection capturingId={capturingId} setCapturingId={setCapturingId} />
+          {section === "keyboard" ? (
+            <KeyboardSection capturingId={capturingId} setCapturingId={setCapturingId} />
+          ) : (
+            <LayoutSection />
+          )}
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/// The Layout section: reset every dock layout (Scene + Asset Editor) to its default
+/// positions. Open panels stay open — only their positions reset.
+function LayoutSection() {
+  const resetDockLayout = useEditorStore((s) => s.resetDockLayout);
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <div className="flex items-start justify-between gap-4 rounded-md border border-border p-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">Reset layout</p>
+          <p className="text-xs text-muted-foreground">
+            Snap every panel back to its default position. Open panels stay open.
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="flex-none"
+          onClick={() => resetDockLayout()}
+        >
+          Reset layout
+        </Button>
+      </div>
+    </div>
   );
 }
 
