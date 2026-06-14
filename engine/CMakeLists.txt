@@ -13,6 +13,8 @@ target_sources(SaffronEngineLib
             source/saffron/geometry/geometry.cppm
             source/saffron/scene/scene.cppm
             source/saffron/animation/animation.cppm
+            source/saffron/physics/physics_types.cppm
+            source/saffron/physics/physics.cppm
             source/saffron/script/script.cppm
             source/saffron/rendering/render_graph.cppm
             source/saffron/rendering/renderer_types.cppm
@@ -41,6 +43,7 @@ target_sources(SaffronEngineLib PRIVATE
     source/saffron/rendering/renderer_profiler.cpp
     source/saffron/scene/scene_component_serde.generated.cpp
     source/saffron/animation/animation.cpp
+    source/saffron/physics/physics.cpp
     source/saffron/script/script_runtime.cpp
     source/saffron/sceneedit/scene_edit_context.cpp
     source/saffron/sceneedit/scene_edit_components.cpp
@@ -52,6 +55,7 @@ target_sources(SaffronEngineLib PRIVATE
     source/saffron/control/control_commands_scene.cpp
     source/saffron/control/control_commands_asset.cpp
     source/saffron/control/control_commands_animation.cpp
+    source/saffron/control/control_commands_physics.cpp
     source/saffron/control/control_server.cpp
     source/saffron/assets/assets_thumbnail.cpp)
 
@@ -59,6 +63,13 @@ target_compile_features(SaffronEngineLib PUBLIC cxx_std_26)
 set_target_properties(SaffronEngineLib PROPERTIES CXX_MODULE_STD ON)
 
 target_link_libraries(SaffronEngineLib PUBLIC saffron_third_party)
+
+# physics.cpp is the only TU that includes <Jolt/...>; it alone needs Jolt's arch +
+# thread flags (captured in Dependencies.cmake and kept off every other TU so the
+# `import std` modules' POSIX-thread config stays consistent). The pimpl keeps Jolt
+# types out of the module boundary, so compiling just this TU with AVX2 is ABI-safe.
+set_source_files_properties(source/saffron/physics/physics.cpp
+    PROPERTIES COMPILE_OPTIONS "${SAFFRON_JOLT_COMPILE_OPTIONS}")
 
 add_library(Saffron::Engine ALIAS SaffronEngineLib)
 

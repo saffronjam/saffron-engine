@@ -493,6 +493,66 @@ const commands: CommandDef[] = [
     summary: "play state, live script instances, error high-water",
   },
   {
+    name: "physics-state",
+    params: "EmptyParams",
+    result: "PhysicsStateResult",
+    summary: "live physics world summary (active, body + dynamic counts)",
+  },
+  {
+    name: "fit-collider",
+    params: "FitColliderParams",
+    result: "FitColliderResult",
+    summary: "re-fit a Collider's shape to the entity's mesh AABB",
+  },
+  {
+    name: "drain-contacts",
+    params: "DrainContactsParams",
+    result: "DrainContactsResult",
+    summary: "drain contact/trigger events (seq cursor)",
+  },
+  {
+    name: "set-kinematic-bones",
+    params: "SetKinematicBonesParams",
+    result: "KinematicBonesResult",
+    summary: "toggle a rig's kinematic-bone physics",
+  },
+  {
+    name: "move-character",
+    params: "MoveCharacterParams",
+    result: "MoveCharacterResult",
+    summary: "set a character controller's desired walk velocity",
+  },
+  {
+    name: "raycast",
+    params: "RaycastParams",
+    result: "RaycastResult",
+    summary: "closest physics ray hit (entity/point/normal/distance)",
+  },
+  {
+    name: "shapecast",
+    params: "ShapecastParams",
+    result: "RaycastResult",
+    summary: "closest sphere-sweep physics hit",
+  },
+  {
+    name: "enable-ragdoll",
+    params: "EnableRagdollParams",
+    result: "RagdollResult",
+    summary: "go limp / restore animation on a rig's powered ragdoll",
+  },
+  {
+    name: "set-ragdoll",
+    params: "SetRagdollParams",
+    result: "RagdollResult",
+    summary: "drive a rig's active-ragdoll blend (motors, body/bone weight)",
+  },
+  {
+    name: "get-ragdoll",
+    params: "GetRagdollParams",
+    result: "RagdollResult",
+    summary: "a rig's ragdoll presence, active flag, and mean blend weight",
+  },
+  {
     name: "drain-script-errors",
     params: "DrainScriptErrorsParams",
     result: "DrainScriptErrorsResult",
@@ -938,6 +998,8 @@ const commandFixtures = new Map<string, string>([
   ["set-foot-ik", "foot-ik-on"],
   ["get-play-state", "empty"],
   ["get-script-status", "empty"],
+  ["physics-state", "empty"],
+  ["drain-contacts", "alarms-since-0"],
   ["drain-script-errors", "alarms-since-0"],
   ["get-script-schema", "script-schema-file"],
   ["set-script-override", "script-override-slot"],
@@ -983,6 +1045,14 @@ const commandSkips = new Map<string, string>([
   ["reimport-model", "requires a model asset id from a prior import"],
   ["model-info", "requires a model asset id from a prior import"],
   ["asset-references", "requires an asset id from a prior import"],
+  ["fit-collider", "needs an entity with a Collider + a resolvable mesh — covered in make e2e"],
+  ["set-kinematic-bones", "needs an imported rig — covered in make e2e"],
+  ["move-character", "needs a character entity in play — covered in make e2e"],
+  ["raycast", "needs a live physics world (play) — covered in make e2e"],
+  ["shapecast", "needs a live physics world (play) — covered in make e2e"],
+  ["enable-ragdoll", "needs a rigged entity in play — covered in make e2e"],
+  ["set-ragdoll", "needs a live ragdoll on a rig in play — covered in make e2e"],
+  ["get-ragdoll", "needs a rigged entity in play — covered in make e2e"],
   ["get-asset-model", "needs an imported model — covered in make e2e"],
   ["enter-asset-preview", "needs an imported model — covered in make e2e"],
   ["exit-asset-preview", "needs an active asset preview — covered in make e2e"],
@@ -1990,6 +2060,12 @@ function componentSchemas(): Record<string, unknown> {
   const vec3 = { $ref: "#/components/schemas/Vec3" };
   const vec4 = { $ref: "#/components/schemas/Vec4" };
   const uuid = { type: "string" };
+  const bvec3 = {
+    type: "object",
+    additionalProperties: false,
+    properties: { x: { type: "boolean" }, y: { type: "boolean" }, z: { type: "boolean" } },
+    required: ["x", "y", "z"],
+  };
   const componentNames = [
     "Name",
     "Transform",
@@ -2008,6 +2084,10 @@ function componentSchemas(): Record<string, unknown> {
     "ModelInstance",
     "FootIk",
     "BonePhysics",
+    "Rigidbody",
+    "Collider",
+    "KinematicBones",
+    "CharacterController",
   ];
   const schemas: Record<string, unknown> = {
     Name: {
@@ -2230,6 +2310,68 @@ function componentSchemas(): Record<string, unknown> {
         },
       },
       required: ["bones"],
+    },
+    Rigidbody: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        motion: { type: "string", enum: ["static", "kinematic", "dynamic"] },
+        mass: { type: "number" },
+        linearDamping: { type: "number" },
+        angularDamping: { type: "number" },
+        gravityFactor: { type: "number" },
+        lockPosition: bvec3,
+        lockRotation: bvec3,
+        collisionLayer: { type: "integer" },
+      },
+      required: [
+        "motion",
+        "mass",
+        "linearDamping",
+        "angularDamping",
+        "gravityFactor",
+        "lockPosition",
+        "lockRotation",
+        "collisionLayer",
+      ],
+    },
+    Collider: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        shape: { type: "string", enum: ["box", "sphere", "capsule", "convexhull", "mesh"] },
+        halfExtents: vec3,
+        sourceMesh: uuid,
+        offset: vec3,
+        material: {
+          type: "object",
+          additionalProperties: false,
+          properties: { friction: { type: "number" }, restitution: { type: "number" } },
+          required: ["friction", "restitution"],
+        },
+        isSensor: { type: "boolean" },
+      },
+      required: ["shape", "halfExtents", "sourceMesh", "offset", "material", "isSensor"],
+    },
+    KinematicBones: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        driven: { type: "array", items: { type: "integer" } },
+      },
+      required: ["enabled", "driven"],
+    },
+    CharacterController: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        maxSpeed: { type: "number" },
+        maxSlopeAngle: { type: "number" },
+        maxStepHeight: { type: "number" },
+        gravityFactor: { type: "number" },
+      },
+      required: ["maxSpeed", "maxSlopeAngle", "maxStepHeight", "gravityFactor"],
     },
     AtmosphereSettingsDto: {
       type: "object",
@@ -2912,6 +3054,142 @@ namespace se
                 c.bones.push_back(b);
             }
         }
+        return {};
+    }
+
+    auto rigidbodyComponentToJson(const RigidbodyComponent& c) -> nlohmann::json
+    {
+        auto motionName = [](RigidbodyComponent::Motion m) -> const char*
+        {
+            switch (m)
+            {
+                case RigidbodyComponent::Motion::Static: return "static";
+                case RigidbodyComponent::Motion::Kinematic: return "kinematic";
+                case RigidbodyComponent::Motion::Dynamic: return "dynamic";
+            }
+            return "dynamic";
+        };
+        return nlohmann::json{ { "motion", motionName(c.motion) },
+                               { "mass", c.mass },
+                               { "linearDamping", c.linearDamping },
+                               { "angularDamping", c.angularDamping },
+                               { "gravityFactor", c.gravityFactor },
+                               { "lockPosition", bvec3ToJson(c.lockPosition) },
+                               { "lockRotation", bvec3ToJson(c.lockRotation) },
+                               { "collisionLayer", c.collisionLayer } };
+    }
+
+    auto rigidbodyComponentFromJson(RigidbodyComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        auto motionFromName = [](const std::string& name) -> RigidbodyComponent::Motion
+        {
+            if (name == "static") { return RigidbodyComponent::Motion::Static; }
+            if (name == "kinematic") { return RigidbodyComponent::Motion::Kinematic; }
+            return RigidbodyComponent::Motion::Dynamic;
+        };
+        c.motion = motionFromName(jsonStringOr(j, "motion", std::string{ "dynamic" }));
+        c.mass = jsonF32Or(j, "mass", 1.0f);
+        c.linearDamping = jsonF32Or(j, "linearDamping", 0.05f);
+        c.angularDamping = jsonF32Or(j, "angularDamping", 0.05f);
+        c.gravityFactor = jsonF32Or(j, "gravityFactor", 1.0f);
+        c.lockPosition = bvec3FromJson(j.value("lockPosition", nlohmann::json::object()));
+        c.lockRotation = bvec3FromJson(j.value("lockRotation", nlohmann::json::object()));
+        c.collisionLayer = static_cast<i32>(j.value("collisionLayer", 0));
+        return {};
+    }
+
+    auto colliderComponentToJson(const ColliderComponent& c) -> nlohmann::json
+    {
+        auto shapeName = [](ColliderComponent::Shape s) -> const char*
+        {
+            switch (s)
+            {
+                case ColliderComponent::Shape::Box: return "box";
+                case ColliderComponent::Shape::Sphere: return "sphere";
+                case ColliderComponent::Shape::Capsule: return "capsule";
+                case ColliderComponent::Shape::ConvexHull: return "convexhull";
+                case ColliderComponent::Shape::Mesh: return "mesh";
+            }
+            return "box";
+        };
+        return nlohmann::json{ { "shape", shapeName(c.shape) },
+                               { "halfExtents", vec3ToJson(c.halfExtents) },
+                               { "sourceMesh", std::to_string(c.sourceMesh.value) },
+                               { "offset", vec3ToJson(c.offset) },
+                               { "material",
+                                 nlohmann::json{ { "friction", c.material.friction },
+                                                 { "restitution", c.material.restitution } } },
+                               { "isSensor", c.isSensor } };
+    }
+
+    auto colliderComponentFromJson(ColliderComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        auto shapeFromName = [](const std::string& name) -> ColliderComponent::Shape
+        {
+            if (name == "sphere") { return ColliderComponent::Shape::Sphere; }
+            if (name == "capsule") { return ColliderComponent::Shape::Capsule; }
+            if (name == "convexhull") { return ColliderComponent::Shape::ConvexHull; }
+            if (name == "mesh") { return ColliderComponent::Shape::Mesh; }
+            return ColliderComponent::Shape::Box;
+        };
+        c.shape = shapeFromName(jsonStringOr(j, "shape", std::string{ "box" }));
+        c.halfExtents = vec3FromJson(j.value("halfExtents", nlohmann::json::object()));
+        c.sourceMesh = Uuid{ u64FromJson(j.value("sourceMesh", nlohmann::json{})) };
+        c.offset = vec3FromJson(j.value("offset", nlohmann::json::object()));
+        const nlohmann::json material = j.value("material", nlohmann::json::object());
+        c.material.friction = jsonF32Or(material, "friction", 0.5f);
+        c.material.restitution = jsonF32Or(material, "restitution", 0.0f);
+        c.isSensor = jsonBoolOr(j, "isSensor", false);
+        return {};
+    }
+
+    auto kinematicBonesComponentToJson(const KinematicBonesComponent& c) -> nlohmann::json
+    {
+        nlohmann::json driven = nlohmann::json::array();
+        for (i32 index : c.driven)
+        {
+            driven.push_back(index);
+        }
+        return nlohmann::json{ { "enabled", c.enabled }, { "driven", std::move(driven) } };
+    }
+
+    auto kinematicBonesComponentFromJson(KinematicBonesComponent& c, const nlohmann::json& j) -> Result<void>
+    {
+        c.enabled = jsonBoolOr(j, "enabled", true);
+        c.driven.clear();
+        if (j.contains("driven") && j["driven"].is_array())
+        {
+            for (const nlohmann::json& entry : j["driven"])
+            {
+                if (entry.is_number())
+                {
+                    c.driven.push_back(static_cast<i32>(entry.get<i64>()));
+                }
+            }
+        }
+        return {};
+    }
+
+    auto characterControllerComponentToJson(const CharacterControllerComponent& c) -> nlohmann::json
+    {
+        // Only the authored movement params round-trip; the runtime velocity/ground state serialize
+        // as their defaults (move-character writes them at play time).
+        return nlohmann::json{ { "maxSpeed", c.maxSpeed },
+                               { "maxSlopeAngle", c.maxSlopeAngle },
+                               { "maxStepHeight", c.maxStepHeight },
+                               { "gravityFactor", c.gravityFactor } };
+    }
+
+    auto characterControllerComponentFromJson(CharacterControllerComponent& c, const nlohmann::json& j)
+        -> Result<void>
+    {
+        c.maxSpeed = jsonF32Or(j, "maxSpeed", 4.0f);
+        c.maxSlopeAngle = jsonF32Or(j, "maxSlopeAngle", 0.785398f);
+        c.maxStepHeight = jsonF32Or(j, "maxStepHeight", 0.3f);
+        c.gravityFactor = jsonF32Or(j, "gravityFactor", 1.0f);
+        c.desiredVelocity = glm::vec3(0.0f);
+        c.verticalVelocity = 0.0f;
+        c.onGround = false;
         return {};
     }
 

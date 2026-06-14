@@ -1,6 +1,6 @@
 # Phase 9 — Active ragdoll (motor-driven blend) + auto-fit ragdoll authoring
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

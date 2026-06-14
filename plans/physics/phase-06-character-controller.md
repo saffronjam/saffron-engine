@@ -1,6 +1,6 @@
 # Phase 6 — Character controller (Jolt `CharacterVirtual`)
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

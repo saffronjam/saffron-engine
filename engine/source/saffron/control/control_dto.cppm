@@ -443,6 +443,129 @@ export namespace se
         i64 errorHighWater;  // last assigned script-error seq
     };
 
+    struct PhysicsStateResult
+    {
+        bool active;       // a PhysicsWorld exists (Playing/Paused)
+        i32 bodyCount;     // bodies in the world
+        i32 dynamicCount;  // of those, Dynamic
+    };
+
+    struct FitColliderParams
+    {
+        EntitySelector entity;
+    };
+
+    struct FitColliderResult
+    {
+        WireUuid entity;
+        std::string shape;  // the shape that was fitted
+        Vec3 halfExtents;   // resulting dims (radius/half-height packed for sphere/capsule)
+        Vec3 offset;        // the fitted centre
+    };
+
+    struct ContactEventDto
+    {
+        i64 seq;
+        std::string kind;  // "begin" | "end"
+        WireUuid entityA;
+        WireUuid entityB;
+        bool sensor;  // either body is a sensor (a trigger overlap, not a solid touch)
+        Vec3 point;
+        Vec3 normal;
+        i64 tick;
+    };
+
+    struct DrainContactsParams
+    {
+        std::optional<i64> since;
+    };
+
+    struct DrainContactsResult
+    {
+        std::vector<ContactEventDto> events;
+        i64 highWaterSeq;
+        i64 oldestSeq;
+        bool overflowed;
+    };
+
+    struct SetKinematicBonesParams
+    {
+        EntitySelector entity;
+        std::optional<bool> enabled;
+    };
+
+    struct KinematicBonesResult
+    {
+        WireUuid entity;
+        bool enabled;
+        i32 boneCount;  // the rig's SkinnedMesh joint count
+    };
+
+    struct MoveCharacterParams
+    {
+        EntitySelector entity;
+        Vec3 velocity;             // desired world-space horizontal velocity (m/s); y ignored
+        std::optional<bool> jump;  // a one-step upward impulse
+    };
+
+    struct MoveCharacterResult
+    {
+        Vec3 position;  // resolved world position after the last step
+        bool onGround;  // ground state from the last step
+    };
+
+    struct RaycastParams
+    {
+        Vec3 origin;
+        Vec3 dir;                    // need not be normalized; `distance` reads back in dir units
+        std::optional<f32> maxDist;  // default 1000
+    };
+
+    struct ShapecastParams
+    {
+        Vec3 origin;
+        Vec3 dir;
+        f32 radius;
+        std::optional<f32> maxDist;  // default 1000
+    };
+
+    struct RaycastResult
+    {
+        bool hit;
+        WireUuid entity;  // 0 when nothing was hit / the hit body has no entity
+        Vec3 point;
+        Vec3 normal;
+        f32 distance;
+    };
+
+    struct EnableRagdollParams
+    {
+        EntitySelector entity;
+        std::optional<bool> enabled;  // default true
+    };
+
+    struct RagdollResult
+    {
+        bool present;    // a ragdoll instance is live this play session
+        bool active;     // motors on (active blend) vs passive limp
+        f32 bodyWeight;  // mean target physics weight across bones
+        i32 bones;       // BonePhysicsComponent.bones count
+    };
+
+    struct SetRagdollParams
+    {
+        EntitySelector entity;
+        std::optional<bool> active;     // motors on (active, drive to animation) vs off (passive limp)
+        std::optional<f32> bodyWeight;  // uniform target physics weight 0..1 across the whole rig
+        std::optional<i32> bone;        // a single bone index to target (with `weight`) for a partial ragdoll
+        std::optional<f32> weight;      // the target physics weight for `bone`
+    };
+
+    struct GetRagdollParams
+    {
+        EntitySelector entity;
+    };
+
     struct ScriptErrorDto
     {
         i64 seq;
@@ -1510,6 +1633,7 @@ export namespace se
         std::string component;
         std::string field;
         Json value;
+        std::optional<i32> index;  // when set, `field` names an array and `value` merges into element `index`
     };
 
     struct SetComponentFieldResult
@@ -1682,6 +1806,14 @@ export namespace se
     auto dtoToJson(const ActiveAlarmDto& value) -> Json;
     auto dtoToJson(const ActiveAlarmsDto& value) -> Json;
     auto dtoToJson(const ScriptStatusResult& value) -> Json;
+    auto dtoToJson(const PhysicsStateResult& value) -> Json;
+    auto dtoToJson(const FitColliderResult& value) -> Json;
+    auto dtoToJson(const ContactEventDto& value) -> Json;
+    auto dtoToJson(const DrainContactsResult& value) -> Json;
+    auto dtoToJson(const KinematicBonesResult& value) -> Json;
+    auto dtoToJson(const MoveCharacterResult& value) -> Json;
+    auto dtoToJson(const RaycastResult& value) -> Json;
+    auto dtoToJson(const RagdollResult& value) -> Json;
     auto dtoToJson(const ScriptErrorDto& value) -> Json;
     auto dtoToJson(const DrainScriptErrorsResult& value) -> Json;
     auto dtoToJson(const ScriptFieldDto& value) -> Json;
@@ -1866,5 +1998,14 @@ export namespace se
     auto parseDto(const Json& params, DtoTag<PickSkeletonJointParams>) -> Result<PickSkeletonJointParams>;
     auto parseDto(const Json& params, DtoTag<SetAssetPreviewOptionsParams>) -> Result<SetAssetPreviewOptionsParams>;
     auto parseDto(const Json& params, DtoTag<SetFootIkParams>) -> Result<SetFootIkParams>;
+    auto parseDto(const Json& params, DtoTag<FitColliderParams>) -> Result<FitColliderParams>;
+    auto parseDto(const Json& params, DtoTag<DrainContactsParams>) -> Result<DrainContactsParams>;
+    auto parseDto(const Json& params, DtoTag<SetKinematicBonesParams>) -> Result<SetKinematicBonesParams>;
+    auto parseDto(const Json& params, DtoTag<MoveCharacterParams>) -> Result<MoveCharacterParams>;
+    auto parseDto(const Json& params, DtoTag<RaycastParams>) -> Result<RaycastParams>;
+    auto parseDto(const Json& params, DtoTag<ShapecastParams>) -> Result<ShapecastParams>;
+    auto parseDto(const Json& params, DtoTag<EnableRagdollParams>) -> Result<EnableRagdollParams>;
+    auto parseDto(const Json& params, DtoTag<SetRagdollParams>) -> Result<SetRagdollParams>;
+    auto parseDto(const Json& params, DtoTag<GetRagdollParams>) -> Result<GetRagdollParams>;
     auto parseDto(const Json& params, DtoTag<GetFootIkParams>) -> Result<GetFootIkParams>;
 }

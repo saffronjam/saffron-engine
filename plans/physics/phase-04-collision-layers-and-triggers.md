@@ -1,6 +1,6 @@
 # Phase 4 — Collision layers + sensors/triggers + contact events
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

@@ -2042,6 +2042,256 @@ namespace se
         return out;
     }
 
+    auto parseDto(const Json& params, DtoTag<FitColliderParams>) -> Result<FitColliderParams>
+    {
+        FitColliderParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<DrainContactsParams>) -> Result<DrainContactsParams>
+    {
+        DrainContactsParams out;
+
+        {
+            auto value = optionalField(params, "since", 0, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readI64(*value, "since");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.since = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetKinematicBonesParams>) -> Result<SetKinematicBonesParams>
+    {
+        SetKinematicBonesParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "enabled", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "enabled");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.enabled = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<MoveCharacterParams>) -> Result<MoveCharacterParams>
+    {
+        MoveCharacterParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+
+        {
+            auto value = requiredField(params, "velocity", 1, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = parseDto(**value, DtoTag<Vec3>{});
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.velocity = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "jump", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "jump");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.jump = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<RaycastParams>) -> Result<RaycastParams>
+    {
+        RaycastParams out;
+
+        {
+            auto value = requiredField(params, "origin", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = parseDto(**value, DtoTag<Vec3>{});
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.origin = std::move(*parsed);
+        }
+
+        {
+            auto value = requiredField(params, "dir", 1, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = parseDto(**value, DtoTag<Vec3>{});
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.dir = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "maxDist", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "maxDist");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.maxDist = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<ShapecastParams>) -> Result<ShapecastParams>
+    {
+        ShapecastParams out;
+
+        {
+            auto value = requiredField(params, "origin", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = parseDto(**value, DtoTag<Vec3>{});
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.origin = std::move(*parsed);
+        }
+
+        {
+            auto value = requiredField(params, "dir", 1, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = parseDto(**value, DtoTag<Vec3>{});
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.dir = std::move(*parsed);
+        }
+
+        {
+            auto value = requiredField(params, "radius", 2, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readF32(**value, "radius");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.radius = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "maxDist", 3, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "maxDist");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.maxDist = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<EnableRagdollParams>) -> Result<EnableRagdollParams>
+    {
+        EnableRagdollParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "enabled", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "enabled");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.enabled = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<SetRagdollParams>) -> Result<SetRagdollParams>
+    {
+        SetRagdollParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "active", 1, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readBool(*value, "active");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.active = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "bodyWeight", 2, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "bodyWeight");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.bodyWeight = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "bone", 3, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readI32(*value, "bone");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.bone = std::move(*parsed);
+            }
+        }
+
+        {
+            auto value = optionalField(params, "weight", 4, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readF32(*value, "weight");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.weight = std::move(*parsed);
+            }
+        }
+        return out;
+    }
+
+    auto parseDto(const Json& params, DtoTag<GetRagdollParams>) -> Result<GetRagdollParams>
+    {
+        GetRagdollParams out;
+
+        {
+            auto value = requiredField(params, "entity", 0, true);
+            if (!value) { return Err(std::move(value.error())); }
+            auto parsed = readEntitySelector(**value, "entity");
+            if (!parsed) { return Err(std::move(parsed.error())); }
+            out.entity = std::move(*parsed);
+        }
+        return out;
+    }
+
     auto parseDto(const Json& params, DtoTag<DrainScriptErrorsParams>) -> Result<DrainScriptErrorsParams>
     {
         DrainScriptErrorsParams out;
@@ -2182,6 +2432,16 @@ namespace se
             auto parsed = readJson(**value, "value");
             if (!parsed) { return Err(std::move(parsed.error())); }
             out.value = std::move(*parsed);
+        }
+
+        {
+            auto value = optionalField(params, "index", 4, true);
+            if (value && !value->is_null())
+            {
+                auto parsed = readI32(*value, "index");
+                if (!parsed) { return Err(std::move(parsed.error())); }
+                out.index = std::move(*parsed);
+            }
         }
         return out;
     }
@@ -3891,6 +4151,87 @@ namespace se
         out["state"] = value.state;
         out["instances"] = value.instances;
         out["errorHighWater"] = value.errorHighWater;
+        return out;
+    }
+
+    auto dtoToJson(const PhysicsStateResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["active"] = value.active;
+        out["bodyCount"] = value.bodyCount;
+        out["dynamicCount"] = value.dynamicCount;
+        return out;
+    }
+
+    auto dtoToJson(const FitColliderResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["entity"] = dtoToJson(value.entity);
+        out["shape"] = value.shape;
+        out["halfExtents"] = dtoToJson(value.halfExtents);
+        out["offset"] = dtoToJson(value.offset);
+        return out;
+    }
+
+    auto dtoToJson(const DrainContactsResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["events"] = dtoVectorToJson(value.events);
+        out["highWaterSeq"] = value.highWaterSeq;
+        out["oldestSeq"] = value.oldestSeq;
+        out["overflowed"] = value.overflowed;
+        return out;
+    }
+
+    auto dtoToJson(const ContactEventDto& value) -> Json
+    {
+        Json out = Json::object();
+        out["seq"] = value.seq;
+        out["kind"] = value.kind;
+        out["entityA"] = dtoToJson(value.entityA);
+        out["entityB"] = dtoToJson(value.entityB);
+        out["sensor"] = value.sensor;
+        out["point"] = dtoToJson(value.point);
+        out["normal"] = dtoToJson(value.normal);
+        out["tick"] = value.tick;
+        return out;
+    }
+
+    auto dtoToJson(const KinematicBonesResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["entity"] = dtoToJson(value.entity);
+        out["enabled"] = value.enabled;
+        out["boneCount"] = value.boneCount;
+        return out;
+    }
+
+    auto dtoToJson(const MoveCharacterResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["position"] = dtoToJson(value.position);
+        out["onGround"] = value.onGround;
+        return out;
+    }
+
+    auto dtoToJson(const RaycastResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["hit"] = value.hit;
+        out["entity"] = dtoToJson(value.entity);
+        out["point"] = dtoToJson(value.point);
+        out["normal"] = dtoToJson(value.normal);
+        out["distance"] = value.distance;
+        return out;
+    }
+
+    auto dtoToJson(const RagdollResult& value) -> Json
+    {
+        Json out = Json::object();
+        out["present"] = value.present;
+        out["active"] = value.active;
+        out["bodyWeight"] = value.bodyWeight;
+        out["bones"] = value.bones;
         return out;
     }
 

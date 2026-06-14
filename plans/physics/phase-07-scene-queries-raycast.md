@@ -1,6 +1,6 @@
 # Phase 7 — Scene queries: raycast / shapecast + script API
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

@@ -1266,6 +1266,186 @@
       }
     },
     {
+      "name": "physics-state",
+      "summary": "live physics world summary (active, body + dynamic counts)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PhysicsStateResult"
+        }
+      }
+    },
+    {
+      "name": "fit-collider",
+      "summary": "re-fit a Collider's shape to the entity's mesh AABB",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/FitColliderParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FitColliderResult"
+        }
+      }
+    },
+    {
+      "name": "drain-contacts",
+      "summary": "drain contact/trigger events (seq cursor)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DrainContactsParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DrainContactsResult"
+        }
+      }
+    },
+    {
+      "name": "set-kinematic-bones",
+      "summary": "toggle a rig's kinematic-bone physics",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetKinematicBonesParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/KinematicBonesResult"
+        }
+      }
+    },
+    {
+      "name": "move-character",
+      "summary": "set a character controller's desired walk velocity",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MoveCharacterParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MoveCharacterResult"
+        }
+      }
+    },
+    {
+      "name": "raycast",
+      "summary": "closest physics ray hit (entity/point/normal/distance)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/RaycastParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RaycastResult"
+        }
+      }
+    },
+    {
+      "name": "shapecast",
+      "summary": "closest sphere-sweep physics hit",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/ShapecastParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RaycastResult"
+        }
+      }
+    },
+    {
+      "name": "enable-ragdoll",
+      "summary": "go limp / restore animation on a rig's powered ragdoll",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/EnableRagdollParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RagdollResult"
+        }
+      }
+    },
+    {
+      "name": "set-ragdoll",
+      "summary": "drive a rig's active-ragdoll blend (motors, body/bone weight)",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SetRagdollParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RagdollResult"
+        }
+      }
+    },
+    {
+      "name": "get-ragdoll",
+      "summary": "a rig's ragdoll presence, active flag, and mean blend weight",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/GetRagdollParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RagdollResult"
+        }
+      }
+    },
+    {
       "name": "drain-script-errors",
       "summary": "drain script errors (seq cursor)",
       "params": [
@@ -3474,6 +3654,46 @@
           "component"
         ]
       },
+      "ContactEventDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "entityA": {
+            "type": "string"
+          },
+          "entityB": {
+            "type": "string"
+          },
+          "sensor": {
+            "type": "boolean"
+          },
+          "point": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "normal": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "tick": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "entityA",
+          "entityB",
+          "sensor",
+          "point",
+          "normal",
+          "tick"
+        ]
+      },
       "CreateAssetFolderParams": {
         "type": "object",
         "additionalProperties": false,
@@ -3718,6 +3938,43 @@
           "overflowed"
         ]
       },
+      "DrainContactsParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "since": {
+            "type": "integer"
+          }
+        },
+        "required": []
+      },
+      "DrainContactsResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContactEventDto"
+            }
+          },
+          "highWaterSeq": {
+            "type": "integer"
+          },
+          "oldestSeq": {
+            "type": "integer"
+          },
+          "overflowed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "highWaterSeq",
+          "oldestSeq",
+          "overflowed"
+        ]
+      },
       "DrainScriptErrorsParams": {
         "type": "object",
         "additionalProperties": false,
@@ -3800,6 +4057,28 @@
         "additionalProperties": false,
         "properties": {},
         "required": []
+      },
+      "EnableRagdollParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity"
+        ]
       },
       "EnterAssetPreviewParams": {
         "type": "object",
@@ -3929,6 +4208,49 @@
         "required": [
           "asset",
           "subAsset"
+        ]
+      },
+      "FitColliderParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "entity"
+        ]
+      },
+      "FitColliderResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "shape": {
+            "type": "string"
+          },
+          "halfExtents": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "offset": {
+            "$ref": "#/components/schemas/Vec3"
+          }
+        },
+        "required": [
+          "entity",
+          "shape",
+          "halfExtents",
+          "offset"
         ]
       },
       "FlyInputParams": {
@@ -4124,6 +4446,25 @@
           "entity"
         ]
       },
+      "GetRagdollParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "entity"
+        ]
+      },
       "GetScriptSchemaParams": {
         "type": "object",
         "additionalProperties": false,
@@ -4290,6 +4631,26 @@
         },
         "required": [
           "asset"
+        ]
+      },
+      "KinematicBonesResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "boneCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity",
+          "enabled",
+          "boneCount"
         ]
       },
       "ListClipsParams": {
@@ -4889,6 +5250,48 @@
           "asset"
         ]
       },
+      "MoveCharacterParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "velocity": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "jump": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity",
+          "velocity"
+        ]
+      },
+      "MoveCharacterResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "onGround": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "position",
+          "onGround"
+        ]
+      },
       "NewProjectParams": {
         "type": "object",
         "additionalProperties": false,
@@ -4977,6 +5380,26 @@
           "frozenMs",
           "vramWarnFrac",
           "vramCritFrac"
+        ]
+      },
+      "PhysicsStateResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "bodyCount": {
+            "type": "integer"
+          },
+          "dynamicCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active",
+          "bodyCount",
+          "dynamicCount"
         ]
       },
       "PickParams": {
@@ -5451,6 +5874,77 @@
         },
         "required": [
           "quitting"
+        ]
+      },
+      "RagdollResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "bodyWeight": {
+            "type": "number"
+          },
+          "bones": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "present",
+          "active",
+          "bodyWeight",
+          "bones"
+        ]
+      },
+      "RaycastParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "dir": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "maxDist": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "origin",
+          "dir"
+        ]
+      },
+      "RaycastResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hit": {
+            "type": "boolean"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "point": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "normal": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "distance": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "hit",
+          "entity",
+          "point",
+          "normal",
+          "distance"
         ]
       },
       "RecaptureProbesResult": {
@@ -6226,7 +6720,10 @@
           "field": {
             "type": "string"
           },
-          "value": {}
+          "value": {},
+          "index": {
+            "type": "integer"
+          }
         },
         "required": [
           "entity",
@@ -6466,6 +6963,28 @@
           "ibl"
         ]
       },
+      "SetKinematicBonesParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity"
+        ]
+      },
       "SetLightParams": {
         "type": "object",
         "additionalProperties": false,
@@ -6621,6 +7140,37 @@
         },
         "required": [
           "probes"
+        ]
+      },
+      "SetRagdollParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "bodyWeight": {
+            "type": "number"
+          },
+          "bone": {
+            "type": "integer"
+          },
+          "weight": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "entity"
         ]
       },
       "SetRestirResult": {
@@ -6867,6 +7417,29 @@
         "required": [
           "width",
           "height"
+        ]
+      },
+      "ShapecastParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "dir": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "radius": {
+            "type": "number"
+          },
+          "maxDist": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "origin",
+          "dir",
+          "radius"
         ]
       },
       "SkeletonOverlayResult": {
@@ -7560,6 +8133,180 @@
           "bones"
         ]
       },
+      "Rigidbody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "motion": {
+            "type": "string",
+            "enum": [
+              "static",
+              "kinematic",
+              "dynamic"
+            ]
+          },
+          "mass": {
+            "type": "number"
+          },
+          "linearDamping": {
+            "type": "number"
+          },
+          "angularDamping": {
+            "type": "number"
+          },
+          "gravityFactor": {
+            "type": "number"
+          },
+          "lockPosition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "boolean"
+              },
+              "y": {
+                "type": "boolean"
+              },
+              "z": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ]
+          },
+          "lockRotation": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "boolean"
+              },
+              "y": {
+                "type": "boolean"
+              },
+              "z": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ]
+          },
+          "collisionLayer": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "motion",
+          "mass",
+          "linearDamping",
+          "angularDamping",
+          "gravityFactor",
+          "lockPosition",
+          "lockRotation",
+          "collisionLayer"
+        ]
+      },
+      "Collider": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "shape": {
+            "type": "string",
+            "enum": [
+              "box",
+              "sphere",
+              "capsule",
+              "convexhull",
+              "mesh"
+            ]
+          },
+          "halfExtents": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "sourceMesh": {
+            "type": "string"
+          },
+          "offset": {
+            "$ref": "#/components/schemas/Vec3"
+          },
+          "material": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "friction": {
+                "type": "number"
+              },
+              "restitution": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "friction",
+              "restitution"
+            ]
+          },
+          "isSensor": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "shape",
+          "halfExtents",
+          "sourceMesh",
+          "offset",
+          "material",
+          "isSensor"
+        ]
+      },
+      "KinematicBones": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "driven": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "enabled",
+          "driven"
+        ]
+      },
+      "CharacterController": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxSpeed": {
+            "type": "number"
+          },
+          "maxSlopeAngle": {
+            "type": "number"
+          },
+          "maxStepHeight": {
+            "type": "number"
+          },
+          "gravityFactor": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "maxSpeed",
+          "maxSlopeAngle",
+          "maxStepHeight",
+          "gravityFactor"
+        ]
+      },
       "AtmosphereSettingsDto": {
         "type": "object",
         "additionalProperties": false,
@@ -7666,6 +8413,18 @@
           },
           "BonePhysics": {
             "$ref": "#/components/schemas/BonePhysics"
+          },
+          "Rigidbody": {
+            "$ref": "#/components/schemas/Rigidbody"
+          },
+          "Collider": {
+            "$ref": "#/components/schemas/Collider"
+          },
+          "KinematicBones": {
+            "$ref": "#/components/schemas/KinematicBones"
+          },
+          "CharacterController": {
+            "$ref": "#/components/schemas/CharacterController"
           }
         }
       },
@@ -7721,6 +8480,18 @@
           },
           {
             "$ref": "#/components/schemas/BonePhysics"
+          },
+          {
+            "$ref": "#/components/schemas/Rigidbody"
+          },
+          {
+            "$ref": "#/components/schemas/Collider"
+          },
+          {
+            "$ref": "#/components/schemas/KinematicBones"
+          },
+          {
+            "$ref": "#/components/schemas/CharacterController"
           }
         ]
       },

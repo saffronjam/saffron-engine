@@ -1,6 +1,6 @@
 # Phase 8 — Ragdoll built from the reserved `BonePhysicsComponent` (physics drives animation)
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

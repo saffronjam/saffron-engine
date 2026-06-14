@@ -492,6 +492,76 @@
       "fixture": "empty"
     },
     {
+      "name": "physics-state",
+      "params": "EmptyParams",
+      "result": "PhysicsStateResult",
+      "status": "typed",
+      "fixture": "empty"
+    },
+    {
+      "name": "fit-collider",
+      "params": "FitColliderParams",
+      "result": "FitColliderResult",
+      "status": "typed",
+      "skip": "needs an entity with a Collider + a resolvable mesh — covered in make e2e"
+    },
+    {
+      "name": "drain-contacts",
+      "params": "DrainContactsParams",
+      "result": "DrainContactsResult",
+      "status": "typed",
+      "fixture": "alarms-since-0"
+    },
+    {
+      "name": "set-kinematic-bones",
+      "params": "SetKinematicBonesParams",
+      "result": "KinematicBonesResult",
+      "status": "typed",
+      "skip": "needs an imported rig — covered in make e2e"
+    },
+    {
+      "name": "move-character",
+      "params": "MoveCharacterParams",
+      "result": "MoveCharacterResult",
+      "status": "typed",
+      "skip": "needs a character entity in play — covered in make e2e"
+    },
+    {
+      "name": "raycast",
+      "params": "RaycastParams",
+      "result": "RaycastResult",
+      "status": "typed",
+      "skip": "needs a live physics world (play) — covered in make e2e"
+    },
+    {
+      "name": "shapecast",
+      "params": "ShapecastParams",
+      "result": "RaycastResult",
+      "status": "typed",
+      "skip": "needs a live physics world (play) — covered in make e2e"
+    },
+    {
+      "name": "enable-ragdoll",
+      "params": "EnableRagdollParams",
+      "result": "RagdollResult",
+      "status": "typed",
+      "skip": "needs a rigged entity in play — covered in make e2e"
+    },
+    {
+      "name": "set-ragdoll",
+      "params": "SetRagdollParams",
+      "result": "RagdollResult",
+      "status": "typed",
+      "skip": "needs a live ragdoll on a rig in play — covered in make e2e"
+    },
+    {
+      "name": "get-ragdoll",
+      "params": "GetRagdollParams",
+      "result": "RagdollResult",
+      "status": "typed",
+      "skip": "needs a rigged entity in play — covered in make e2e"
+    },
+    {
       "name": "drain-script-errors",
       "params": "DrainScriptErrorsParams",
       "result": "DrainScriptErrorsResult",

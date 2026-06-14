@@ -1,6 +1,6 @@
 # Phase 2 — `RigidbodyComponent` + `ColliderComponent` + a box falling on a floor
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

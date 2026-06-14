@@ -826,6 +826,112 @@ export interface ScriptStatusResult {
   errorHighWater: number;
 }
 
+export interface PhysicsStateResult {
+  active: boolean;
+  bodyCount: number;
+  dynamicCount: number;
+}
+
+export interface FitColliderParams {
+  entity: WireUuid | string | number;
+}
+
+export interface FitColliderResult {
+  entity: WireUuid;
+  shape: string;
+  halfExtents: Vec3;
+  offset: Vec3;
+}
+
+export interface DrainContactsParams {
+  since?: number;
+}
+
+export interface DrainContactsResult {
+  events: ContactEventDto[];
+  highWaterSeq: number;
+  oldestSeq: number;
+  overflowed: boolean;
+}
+
+export interface ContactEventDto {
+  seq: number;
+  kind: string;
+  entityA: WireUuid;
+  entityB: WireUuid;
+  sensor: boolean;
+  point: Vec3;
+  normal: Vec3;
+  tick: number;
+}
+
+export interface SetKinematicBonesParams {
+  entity: WireUuid | string | number;
+  enabled?: boolean;
+}
+
+export interface KinematicBonesResult {
+  entity: WireUuid;
+  enabled: boolean;
+  boneCount: number;
+}
+
+export interface MoveCharacterParams {
+  entity: WireUuid | string | number;
+  velocity: Vec3;
+  jump?: boolean;
+}
+
+export interface MoveCharacterResult {
+  position: Vec3;
+  onGround: boolean;
+}
+
+export interface RaycastParams {
+  origin: Vec3;
+  dir: Vec3;
+  maxDist?: number;
+}
+
+export interface RaycastResult {
+  hit: boolean;
+  entity: WireUuid;
+  point: Vec3;
+  normal: Vec3;
+  distance: number;
+}
+
+export interface ShapecastParams {
+  origin: Vec3;
+  dir: Vec3;
+  radius: number;
+  maxDist?: number;
+}
+
+export interface EnableRagdollParams {
+  entity: WireUuid | string | number;
+  enabled?: boolean;
+}
+
+export interface RagdollResult {
+  present: boolean;
+  active: boolean;
+  bodyWeight: number;
+  bones: number;
+}
+
+export interface SetRagdollParams {
+  entity: WireUuid | string | number;
+  active?: boolean;
+  bodyWeight?: number;
+  bone?: number;
+  weight?: number;
+}
+
+export interface GetRagdollParams {
+  entity: WireUuid | string | number;
+}
+
 export interface DrainScriptErrorsParams {
   since?: number;
 }
@@ -885,6 +991,7 @@ export interface SetComponentFieldParams {
   component: string;
   field: string;
   value: unknown;
+  index?: number;
 }
 
 export interface SetComponentFieldResult {
@@ -1520,6 +1627,16 @@ export interface CommandParamsMap {
   "get-foot-ik": GetFootIkParams;
   "set-foot-ik": SetFootIkParams;
   "get-script-status": EmptyParams;
+  "physics-state": EmptyParams;
+  "fit-collider": FitColliderParams;
+  "drain-contacts": DrainContactsParams;
+  "set-kinematic-bones": SetKinematicBonesParams;
+  "move-character": MoveCharacterParams;
+  "raycast": RaycastParams;
+  "shapecast": ShapecastParams;
+  "enable-ragdoll": EnableRagdollParams;
+  "set-ragdoll": SetRagdollParams;
+  "get-ragdoll": GetRagdollParams;
   "drain-script-errors": DrainScriptErrorsParams;
   "get-script-schema": GetScriptSchemaParams;
   "set-script-override": SetScriptOverrideParams;
@@ -1662,6 +1779,16 @@ export interface CommandResultMap {
   "get-foot-ik": FootIkResult;
   "set-foot-ik": FootIkResult;
   "get-script-status": ScriptStatusResult;
+  "physics-state": PhysicsStateResult;
+  "fit-collider": FitColliderResult;
+  "drain-contacts": DrainContactsResult;
+  "set-kinematic-bones": KinematicBonesResult;
+  "move-character": MoveCharacterResult;
+  "raycast": RaycastResult;
+  "shapecast": RaycastResult;
+  "enable-ragdoll": RagdollResult;
+  "set-ragdoll": RagdollResult;
+  "get-ragdoll": RagdollResult;
   "drain-script-errors": DrainScriptErrorsResult;
   "get-script-schema": GetScriptSchemaResult;
   "set-script-override": SetScriptOverrideResult;

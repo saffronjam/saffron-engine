@@ -1,6 +1,6 @@
 # Phase 5 — Kinematic bodies + kinematic bones (animation drives physics)
 
-**Status:** NOT STARTED
+**Status:** COMPLETED
 
 ## Goal
 

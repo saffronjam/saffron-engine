@@ -19,19 +19,22 @@ import Saffron.Rendering;
 import Saffron.Scene;
 import Saffron.SceneEdit;
 import Saffron.Assets;
+import Saffron.Physics;
 
 export namespace se
 {
     using json = nlohmann::json;
 
     /// The slice of live engine state a command may touch. References only; built
-    /// fresh each frame and never stored past it.
+    /// fresh each frame and never stored past it. `physics` is the live play world
+    /// (non-owning, set by the Host) or null in Edit / before the first play.
     struct EngineContext
     {
         Window& window;
         Renderer& renderer;
         SceneEditContext& sceneEdit;
         AssetServer& assets;
+        PhysicsWorld* physics = nullptr;
     };
 
     /// A control command: a name, one-line help, and a handler that runs on the
@@ -84,6 +87,15 @@ export namespace se
 
     auto resolveEntity(EngineContext& ctx, const json& params) -> Result<Entity>;
     auto entityRefDto(Scene& scene, Entity entity) -> EntityRef;
+    // Fit a ColliderComponent's shape to its entity's mesh AABB (the locked auto-fit decision).
+    // Best-effort: a no-op (returns false) when the entity has no Collider or no resolvable mesh.
+    // Called from add-component (on add) and the fit-collider command.
+    auto fitColliderToMesh(EngineContext& ctx, Entity entity) -> bool;
+
+    // Auto-fit a per-bone capsule into BonePhysicsComponent.bones[i].shapeHalfExtents from the rig's
+    // rest skeleton (joint-to-child distance). Adds a BonePhysicsComponent if absent. Called when a
+    // KinematicBonesComponent is added; a no-op (false) when the entity has no SkinnedMesh.
+    auto fitBoneCapsules(EngineContext& ctx, Entity rig) -> bool;
 
     // The built-in commands, grouped by concern. Registered in render → scene → asset
     // order (help/list iterate the registry in insertion order).
@@ -91,6 +103,7 @@ export namespace se
     void registerSceneCommands(CommandRegistry& reg);
     void registerAssetCommands(CommandRegistry& reg);
     void registerAnimationCommands(CommandRegistry& reg);
+    void registerPhysicsCommands(CommandRegistry& reg);
     void registerBuiltinCommands(CommandRegistry& reg);
 
     auto controlSocketPath() -> std::string;
@@ -131,7 +144,7 @@ export namespace se
     void destroyControlContext(ControlContext* ctx);
 
     /// Drains and runs any pending control commands on the calling (main) thread.
-    /// Call once per frame.
+    /// Call once per frame. `physics` is the live play world (non-owning) or null.
     void pollControl(ControlContext& ctx, Window& window, Renderer& renderer, SceneEditContext& editor,
-                     AssetServer& assets);
+                     AssetServer& assets, PhysicsWorld* physics);
 }
